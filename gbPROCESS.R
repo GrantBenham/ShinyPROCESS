@@ -539,7 +539,17 @@ ui <- fluidPage(
       width = 9,
       tabsetPanel(id = "tabset_panel",
         tabPanel("Assumption Checks",
-          h4("Detailed Assumption Check Results"),
+          div(style = "margin-bottom: 20px;",
+            h4("Detailed Assumption Check Results"),
+            conditionalPanel(
+              condition = "output.outcome_is_selected",
+              div(style = "margin-top: 10px;",
+                downloadButton("download_assumptions", "Download Assumption Checks (html)", 
+                  class = "btn-success", 
+                  style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
+              )
+            )
+          ),
           
           # Show a prompt until variables are selected
           conditionalPanel(
@@ -677,33 +687,34 @@ ui <- fluidPage(
             p("Run an analysis to see results here.")
           )
         ),
-        conditionalPanel(
-          condition = "output.is_moderation_model === true",
-          tabPanel("Plots",
-            conditionalPanel(
-              condition = "output.analysis_ready === true",
-              h4("Johnson-Neyman Plot"),
-              plotOutput("jn_plot", height = "500px", width = "800px"),
-              br(),
-              div(style = "margin-top: 20px;",
-                downloadButton("download_jn", "Download JN Plot (JPG)", 
-                  class = "btn-success", 
-                  style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
-              ),
-              br(), br(),
-              h4("Simple Slopes Plot"),
-              plotOutput("slopes_plot", height = "500px", width = "800px"),
-              br(),
-              div(style = "margin-top: 20px;",
-                downloadButton("download_slopes", "Download Simple Slopes Plot (JPG)", 
-                  class = "btn-success", 
-                  style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
-              )
+        tabPanel("Plots",
+          conditionalPanel(
+            condition = "output.is_moderation_model === true && output.analysis_ready === true",
+            h4("Johnson-Neyman Plot"),
+            plotOutput("jn_plot", height = "500px", width = "800px"),
+            br(),
+            div(style = "margin-top: 20px;",
+              downloadButton("download_jn", "Download JN Plot (JPG)", 
+                class = "btn-success", 
+                style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
             ),
-            conditionalPanel(
-              condition = "output.analysis_ready === false",
-              p("Run an analysis to see plots here.")
+            br(), br(),
+            h4("Simple Slopes Plot"),
+            plotOutput("slopes_plot", height = "500px", width = "800px"),
+            br(),
+            div(style = "margin-top: 20px;",
+              downloadButton("download_slopes", "Download Simple Slopes Plot (JPG)", 
+                class = "btn-success", 
+                style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
             )
+          ),
+          conditionalPanel(
+            condition = "output.is_moderation_model === false",
+            p("Plots are only available for moderation models (Models 1, 2, 3, 5, 14, 15, 58, 59, 74).")
+          ),
+          conditionalPanel(
+            condition = "output.is_moderation_model === true && output.analysis_ready === false",
+            p("Run an analysis to see plots here.")
           )
         )
       )
@@ -2903,6 +2914,147 @@ server <- function(input, output, session) {
     })
   })
   
+  # Download handler for assumption checks
+  output$download_assumptions <- downloadHandler(
+    filename = function() {
+      paste0("assumption_checks_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".html")
+    },
+    content = function(file) {
+      req(rv$original_dataset, input$outcome_var, input$predictor_var)
+      
+      # Get the assumption details HTML
+      assumption_html <- tryCatch({
+        # Build formula based on model type
+        formula_terms <- c(input$outcome_var, "~", input$predictor_var)
+        
+        # Add interaction for moderation models
+        if(!is.null(input$moderator_var) && input$moderator_var != "") {
+          formula_terms <- c(formula_terms, "*", input$moderator_var)
+        }
+        
+        # Add mediators for mediation models
+        if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+          formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+        }
+        
+        # Add covariates
+        if(!is.null(input$covariates) && length(input$covariates) > 0) {
+          formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
+        }
+        
+        model_formula <- as.formula(paste(formula_terms, collapse = " "))
+        outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
+        
+        if(outcome_is_binary) {
+          model <- glm(model_formula, data = rv$original_dataset, family = binomial())
+          outlier_text <- paste(outlier_summary(), collapse = "<br>")
+          bin_counts <- c(
+            binary_count_lines(rv$original_dataset, input$outcome_var, "Outcome (original)"),
+            binary_count_lines(rv$original_dataset, input$predictor_var, "Predictor (original)")
+          )
+          if(!is.null(input$moderator_var)) {
+            bin_counts <- c(bin_counts,
+              binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
+          }
+          diagnostics <- diagnostic_report(model)
+          
+          paste(
+            "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
+            "<strong>Note: Binary Outcome Detected</strong><br>",
+            "<em>Your outcome variable is binary (0/1). PROCESS will use logistic regression for this analysis.</em><br><br>",
+            "<strong>Important:</strong> Standard regression assumptions (normality, homoscedasticity) do not apply to logistic regression.<br>",
+            "For binary outcomes, different diagnostic approaches are needed:<br>",
+            "<ul>",
+            "<li><strong>Linearity:</strong> Check linearity of continuous predictors with the logit of the outcome</li>",
+            "<li><strong>Influential observations:</strong> Review leverage values and Cook's distance in the outlier summary above</li>",
+            "<li><strong>Model fit:</strong> Use pseudo-R² measures (McFadden, Cox-Snell, Nagelkerke) shown in PROCESS output</li>",
+            "<li><strong>Multicollinearity:</strong> VIF can still be calculated for predictors</li>",
+            "</ul><br>",
+            if(length(na.omit(bin_counts)) > 0) {
+              paste(
+                "<strong>Binary Variable Counts (original dataset):</strong><br>",
+                paste(na.omit(bin_counts), collapse = "<br>"),
+                "<br><br>"
+              )
+            } else { "" },
+            outlier_text,
+            "<br><br>",
+            "<strong>Additional Diagnostics:</strong><br>",
+            paste(diagnostics, collapse = "<br>"),
+            "<br><em>Note: VIF calculated for all predictors. For binary outcomes, focus on model fit statistics and residual patterns rather than normality/homoscedasticity.</em>",
+            "</div>",
+            sep = ""
+          )
+        } else {
+          model <- lm(model_formula, data = rv$original_dataset)
+          outlier_text <- paste(outlier_summary(), collapse = "<br>")
+          bin_counts <- c(
+            binary_count_lines(rv$original_dataset, input$outcome_var, "Outcome (original)"),
+            binary_count_lines(rv$original_dataset, input$predictor_var, "Predictor (original)")
+          )
+          if(!is.null(input$moderator_var)) {
+            bin_counts <- c(bin_counts,
+              binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
+          }
+          normality <- check_normality(model)
+          homoscedasticity <- test_homoscedasticity(model)
+          diagnostics <- diagnostic_report(model)
+          
+          paste(
+            "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
+            if(length(na.omit(bin_counts)) > 0) {
+              paste(
+                "<strong>Binary Variable Counts (original dataset):</strong><br>",
+                paste(na.omit(bin_counts), collapse = "<br>"),
+                "<br><br>"
+              )
+            } else { "" },
+            outlier_text,
+            "<br><br>",
+            "<strong>Normality Test:</strong><br>",
+            normality$text,
+            "<br><em>Interpretation: A significant p-value (< .05) suggests non-normality. ",
+            "However, with large samples, minor deviations often become significant. ",
+            "Visual inspection of the Q-Q plot is often more informative.</em>",
+            "<br><br>",
+            "<strong>Homoscedasticity Test:</strong><br>",
+            homoscedasticity,
+            "<br><em>Interpretation: A significant p-value suggests non-constant variance. ",
+            "Consider the Residuals vs Fitted plot for visual confirmation.</em>",
+            "<br><br>",
+            "<strong>Additional Diagnostics:</strong><br>",
+            paste(diagnostics, collapse = "<br>"),
+            "<br><em>Interpretation:<br>",
+            "- VIF > 5 suggests potential multicollinearity issues<br>",
+            "- With bootstrapping, these diagnostics become less crucial as bootstrap methods are more robust to violations</em>",
+            "</div>",
+            sep = ""
+          )
+        }
+      }, error = function(e) {
+        paste("<div class='alert alert-danger'>Error in assumption checks: ", e$message, "</div>")
+      })
+      
+      writeLines(sprintf('
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            table { border-collapse: collapse; margin: 10px 0; }
+            th, td { border: 1px solid #dee2e6; padding: 8px; }
+            th { background-color: #f8f9fa; }
+          </style>
+        </head>
+        <body>
+          %s
+        </body>
+      </html>
+      ', assumption_html), file)
+    },
+    contentType = "text/html"
+  )
+  
   # Download handlers
   output$download_results <- downloadHandler(
     filename = function() {
@@ -3569,8 +3721,10 @@ server <- function(input, output, session) {
     tryCatch({
       has_results <- !is.null(analysis_results())
       shinyjs::toggleState("download_slopes", condition = has_results)
+      shinyjs::toggleState("download_assumptions", condition = !is.null(input$outcome_var) && input$outcome_var != "")
     }, error = function(e) {
       shinyjs::disable("download_slopes")
+      shinyjs::disable("download_assumptions")
     })
   })
   
