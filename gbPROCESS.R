@@ -3186,8 +3186,22 @@ server <- function(input, output, session) {
         return()
       }
       
-      data_start <- start_idx + 2
-      end_idx <- which(grepl("^\\s*$", process_output[data_start:length(process_output)]))[1] + data_start - 1
+      # Find the data section - skip header line
+      data_start <- start_idx + 2  # Skip "Conditional effect..." and header line
+      
+      # Find the end of the data section (blank line or next section)
+      end_idx <- which(grepl("^\\s*$|^Data for visualizing|^----------", process_output[data_start:length(process_output)]))[1]
+      if(!is.na(end_idx)) {
+        end_idx <- end_idx + data_start - 1
+      } else {
+        # If no clear end found, look for next major section
+        end_idx <- which(grepl("^-----------|^\\*+", process_output[data_start:length(process_output)]))[1]
+        if(!is.na(end_idx)) {
+          end_idx <- end_idx + data_start - 1
+        } else {
+          end_idx <- min(data_start + 50, length(process_output))  # Safety limit
+        }
+      }
       
       if(is.na(end_idx) || end_idx <= data_start) {
         plot.new()
@@ -3195,10 +3209,67 @@ server <- function(input, output, session) {
         return()
       }
       
+      # Extract data lines and filter out header/non-data lines
       data_lines <- process_output[data_start:end_idx]
-      jn_data <- read.table(text = paste(data_lines, collapse = "\n"),
-                           col.names = c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI"),
-                           stringsAsFactors = FALSE)
+      
+      # Filter lines to only include those that look like data rows (start with number or negative number)
+      data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
+      
+      if(length(data_lines) == 0) {
+        plot.new()
+        text(0.5, 0.5, "No valid Johnson-Neyman data rows found in PROCESS output.", cex = 1.2)
+        return()
+      }
+      
+      # Parse the data with better error handling
+      jn_data <- tryCatch({
+        # Use fill=TRUE to handle lines with missing columns
+        parsed <- read.table(text = paste(data_lines, collapse = "\n"),
+                            col.names = c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI"),
+                            stringsAsFactors = FALSE,
+                            fill = TRUE,
+                            blank.lines.skip = TRUE)
+        
+        # Filter to only rows with exactly 7 columns (all numeric)
+        valid_rows <- apply(parsed, 1, function(row) {
+          # Check if all 7 columns are numeric (or can be coerced to numeric)
+          all(!is.na(suppressWarnings(as.numeric(row[1:7]))))
+        })
+        
+        if(sum(valid_rows) == 0) {
+          stop("No valid data rows with 7 numeric columns found")
+        }
+        
+        parsed[valid_rows, 1:7]
+      }, error = function(e) {
+        print(paste("Error parsing JN data:", e$message))
+        # Try alternative parsing method
+        tryCatch({
+          # Split each line and extract numeric values
+          parsed_lines <- lapply(data_lines, function(line) {
+            parts <- strsplit(trimws(line), "\\s+")[[1]]
+            # Extract first 7 numeric values
+            nums <- suppressWarnings(as.numeric(parts))
+            nums <- nums[!is.na(nums)]
+            if(length(nums) >= 7) {
+              return(nums[1:7])
+            }
+            return(NULL)
+          })
+          
+          # Filter out NULLs and convert to data frame
+          valid_data <- do.call(rbind, Filter(Negate(is.null), parsed_lines))
+          if(is.null(valid_data) || nrow(valid_data) == 0) {
+            stop("Could not parse any valid data rows")
+          }
+          
+          colnames(valid_data) <- c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI")
+          as.data.frame(valid_data)
+        }, error = function(e2) {
+          print(paste("Alternative parsing also failed:", e2$message))
+          stop(e2)
+        })
+      })
       
       jn_data$significant <- jn_data$p < 0.05
       transition_point <- jn_data$Moderator[which.min(abs(jn_data$p - 0.05))]
@@ -3260,14 +3331,64 @@ server <- function(input, output, session) {
         
         start_idx <- which(grepl("Conditional effect of focal predictor", process_output))
         if(length(start_idx) > 0) {
+          # Find the data section - skip header line
           data_start <- start_idx + 2
-          end_idx <- which(grepl("^\\s*$", process_output[data_start:length(process_output)]))[1] + data_start - 1
+          
+          # Find the end of the data section
+          end_idx <- which(grepl("^\\s*$|^Data for visualizing|^----------", process_output[data_start:length(process_output)]))[1]
+          if(!is.na(end_idx)) {
+            end_idx <- end_idx + data_start - 1
+          } else {
+            end_idx <- which(grepl("^-----------|^\\*+", process_output[data_start:length(process_output)]))[1]
+            if(!is.na(end_idx)) {
+              end_idx <- end_idx + data_start - 1
+            } else {
+              end_idx <- min(data_start + 50, length(process_output))
+            }
+          }
           
           if(!is.na(end_idx) && end_idx > data_start) {
+            # Extract data lines and filter to only data rows
             data_lines <- process_output[data_start:end_idx]
-            jn_data <- read.table(text = paste(data_lines, collapse = "\n"),
-                                 col.names = c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI"),
-                                 stringsAsFactors = FALSE)
+            data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
+            
+            if(length(data_lines) > 0) {
+              # Parse with improved error handling
+              jn_data <- tryCatch({
+                parsed <- read.table(text = paste(data_lines, collapse = "\n"),
+                                    col.names = c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI"),
+                                    stringsAsFactors = FALSE,
+                                    fill = TRUE,
+                                    blank.lines.skip = TRUE)
+                
+                # Filter to only rows with exactly 7 numeric columns
+                valid_rows <- apply(parsed, 1, function(row) {
+                  all(!is.na(suppressWarnings(as.numeric(row[1:7]))))
+                })
+                
+                if(sum(valid_rows) > 0) {
+                  parsed[valid_rows, 1:7]
+                } else {
+                  # Fallback: manual parsing
+                  parsed_lines <- lapply(data_lines, function(line) {
+                    parts <- strsplit(trimws(line), "\\s+")[[1]]
+                    nums <- suppressWarnings(as.numeric(parts))
+                    nums <- nums[!is.na(nums)]
+                    if(length(nums) >= 7) return(nums[1:7])
+                    return(NULL)
+                  })
+                  valid_data <- do.call(rbind, Filter(Negate(is.null), parsed_lines))
+                  if(!is.null(valid_data) && nrow(valid_data) > 0) {
+                    colnames(valid_data) <- c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI")
+                    as.data.frame(valid_data)
+                  } else {
+                    stop("No valid data rows found")
+                  }
+                }
+              }, error = function(e) {
+                print(paste("Error parsing JN data in download:", e$message))
+                stop(e)
+              })
             
             jn_data$significant <- jn_data$p < 0.05
             transition_point <- jn_data$Moderator[which.min(abs(jn_data$p - 0.05))]
@@ -3304,11 +3425,20 @@ server <- function(input, output, session) {
                 axis.ticks = element_line(color = "black", linewidth = 0.5)
               )
             
-            ggsave(file, plot = p, device = "jpg", width = 10, height = 8, dpi = 600)
+              ggsave(file, plot = p, device = "jpg", width = 10, height = 8, dpi = 600)
+            } else {
+              stop("No valid JN data found")
+            }
+          } else {
+            stop("Could not find JN data section boundaries")
           }
+        } else {
+          stop("JN data section not found in PROCESS output")
         }
       }, error = function(e) {
         print(paste("Error saving JN plot:", e$message))
+        # Create an error message file instead
+        writeLines(paste("Error generating JN plot:", e$message), file)
       })
     }
   )
