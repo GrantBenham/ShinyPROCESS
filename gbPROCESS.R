@@ -1,0 +1,2789 @@
+# Integrated PROCESS V5 Shiny Application
+# Combines moderation and mediation analyses using Hayes PROCESS V5
+# Based on previous gbMod (app.R) and gbMed (gbMed.R) applications
+
+# Load necessary libraries
+library(shiny)
+library(bslib)
+library(ggplot2)
+library(stringr)
+library(dplyr)
+library(shinyjs)
+library(car)  # For VIF and ncvTest functions
+library(haven)  # For SPSS file support
+# Note: For sortable mediator lists, we'll use a custom implementation
+
+# Increase file upload size to 50MB
+options(shiny.maxRequestSize = 50 * 1024^2)
+
+# ============================================================================
+# ASSUMPTION CHECKS MODULE (Self-contained for easy maintenance)
+# ============================================================================
+
+# Helper function to detect if a variable is binary (0/1 or only 2 unique values)
+is_binary_variable <- function(data, var_name) {
+  if(is.null(data) || is.null(var_name) || !var_name %in% names(data)) {
+    return(FALSE)
+  }
+  var_data <- data[[var_name]]
+  var_data <- var_data[!is.na(var_data)]
+  unique_vals <- unique(var_data)
+  # Check if only 2 unique values
+  if(length(unique_vals) == 2) {
+    return(TRUE)
+  }
+  return(FALSE)
+}
+
+# Helper to detect continuous variables (numeric/integer/labelled and not binary)
+is_continuous_variable <- function(data, var_name) {
+  if(is.null(data) || is.null(var_name) || !var_name %in% names(data)) {
+    return(FALSE)
+  }
+  if(is_binary_variable(data, var_name)) return(FALSE)
+  v <- data[[var_name]]
+  is.numeric(v) || is.integer(v) || inherits(v, "labelled")
+}
+
+# Function to identify outliers based on model type
+identify_outliers_assumption <- function(data, outcome_var, predictor_var, 
+                                         mediator_vars = NULL, moderator_var = NULL,
+                                         covariates = NULL, residual_threshold = 2,
+                                         cooks_threshold_type = "conservative", 
+                                         cooks_threshold_custom = 0.01) {
+  # Build formula based on model type
+  formula_terms <- c(outcome_var, "~", predictor_var)
+  
+  # Add interaction term for moderation models (only if moderator is provided)
+  if(!is.null(moderator_var) && moderator_var != "") {
+    formula_terms <- c(formula_terms, "*", moderator_var)
+  }
+  
+  # Add mediators for mediation models
+  if(!is.null(mediator_vars) && length(mediator_vars) > 0) {
+    formula_terms <- c(formula_terms, "+", paste(mediator_vars, collapse = " + "))
+  }
+  
+  # Add covariates
+  if(!is.null(covariates) && length(covariates) > 0) {
+    formula_terms <- c(formula_terms, "+", paste(covariates, collapse = " + "))
+  }
+  
+  model_formula <- as.formula(paste(formula_terms, collapse = " "))
+  
+  # Check if outcome is binary
+  outcome_is_binary <- is_binary_variable(data, outcome_var)
+  
+  if(outcome_is_binary) {
+    # For binary outcomes, use logistic regression diagnostics
+    model <- glm(model_formula, data = data, family = binomial())
+    
+    # Calculate leverage (hat values) and Cook's distance
+    leverage <- hatvalues(model)
+    cooks_d <- cooks.distance(model)
+    
+    # Get threshold
+    n <- nrow(data)
+    threshold <- if(cooks_threshold_type == "conservative") {
+      4 / n
+    } else if(cooks_threshold_type == "liberal") {
+      1.0
+    } else {
+      cooks_threshold_custom
+    }
+    
+    # Identify influential cases based on Cook's distance
+    influential_cases <- which(cooks_d > threshold)
+    
+    return(list(
+      cases = influential_cases,
+      values = cooks_d[influential_cases],
+      leverage = leverage[influential_cases],
+      count = length(influential_cases),
+      percentage = length(influential_cases) / length(cooks_d) * 100,
+      is_binary = TRUE,
+      threshold = threshold,
+      method = "Cook's Distance"
+    ))
+  } else {
+    # For continuous outcomes, use linear regression
+    model <- lm(model_formula, data = data)
+    std_resid <- rstandard(model)
+    
+    # Identify outliers
+    outlier_cases <- which(abs(std_resid) > residual_threshold)
+    outlier_values <- std_resid[outlier_cases]
+    
+    return(list(
+      cases = outlier_cases,
+      values = outlier_values,
+      count = length(outlier_cases),
+      percentage = length(outlier_cases) / length(std_resid) * 100,
+      is_binary = FALSE,
+      threshold = residual_threshold,
+      method = "Standardized Residuals"
+    ))
+  }
+}
+
+# Function to check normality
+check_normality <- function(model) {
+  # Shapiro-Wilk test
+  sw_test <- shapiro.test(residuals(model))
+  # Create Q-Q plot and capture it
+  qq_plot <- ggplot(data.frame(residuals = residuals(model)), aes(sample = residuals)) +
+    stat_qq() + stat_qq_line() +
+    theme_minimal() +
+    labs(title = "Normal Q-Q Plot of Residuals")
+  
+  return(list(
+    test = sw_test,
+    plot = qq_plot,
+    text = sprintf("Normality (Shapiro-Wilk): W = %.3f, p %s",
+                  sw_test$statistic,
+                  ifelse(sw_test$p.value < .001, "< .001",
+                        sprintf("= %.3f", sw_test$p.value)))
+  ))
+}
+
+# Function to test homoscedasticity
+test_homoscedasticity <- function(model) {
+  # Breusch-Pagan test
+  bp_test <- car::ncvTest(model)
+  return(sprintf("Homoscedasticity (Breusch-Pagan): χ²(%d) = %.3f, p %s",
+                bp_test$Df,
+                bp_test$ChiSquare,
+                ifelse(bp_test$p < .001, "< .001", sprintf("= %.3f", bp_test$p))))
+}
+
+# Function for diagnostic report
+diagnostic_report <- function(model) {
+  tryCatch({
+    # Basic model diagnostics
+    n <- nobs(model)
+    
+    # Check if model is logistic (glm with binomial family)
+    is_logistic <- inherits(model, "glm") && model$family$family == "binomial"
+    
+    # Handle VIF calculation
+    vif_result <- tryCatch({
+      # Get model terms
+      terms <- attr(terms(model), "term.labels")
+      
+      if(length(terms) > 1) {
+        # Calculate VIF for all predictors
+        vif_values <- suppressWarnings(car::vif(model))
+        
+        # Format VIF results
+        sprintf("VIF for predictors: %s", 
+                paste(names(vif_values), sprintf("%.2f", vif_values), 
+                collapse = ", "))
+      } else {
+        "VIF not calculated (insufficient predictors)"
+      }
+    }, error = function(e) {
+      "VIF calculation unavailable"
+    })
+    
+    # Return diagnostics
+    c(
+      sprintf("Sample size: %d", n),
+      vif_result,
+      if(is_logistic) {
+        "Note: VIF calculated for all predictors. For binary outcomes, VIF interpretation is similar to linear regression."
+      } else {
+        "Note: VIF calculated for all predictors"
+      }
+    )
+  }, error = function(e) {
+    c(
+      "Unable to compute some diagnostic measures",
+      paste("Error details:", e$message)
+    )
+  })
+}
+
+# Helper to summarize binary counts
+binary_count_lines <- function(data, var, label) {
+  if (is.null(var) || var == "" || is.null(data)) return(NULL)
+  vals <- data[[var]]
+  vals <- vals[!is.na(vals)]
+  if (length(unique(vals)) > 2) return(NULL)
+  tab <- table(vals)
+  levels_sorted <- sort(unique(vals))
+  counts <- sapply(levels_sorted, function(x) tab[as.character(x)])
+  names(counts) <- levels_sorted
+  sprintf("%s (%s): %s", label, var,
+          paste(sprintf("%s = %d", names(counts), counts), collapse = "; "))
+}
+
+# ============================================================================
+# UI DEFINITION
+# ============================================================================
+
+ui <- fluidPage(
+  useShinyjs(),
+  tags$style(type="text/css", "body { max-width: 1400px; margin: auto; }"),
+  titlePanel("PROCESS V5 Analysis with Hayes PROCESS for R"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      width = 3,
+      h4("Upload Data"),
+      div(
+        id = "file_input_div",
+        fileInput("data_file", "Choose CSV or SAV File", accept = c(".csv", ".sav"))
+      ),
+      
+      h4("Model Selection"),
+      selectInput("process_model", "PROCESS Model Number",
+                  choices = c("Select model" = "", 
+                              "1" = "1", "2" = "2", "3" = "3", "4" = "4", 
+                              "5" = "5", "6" = "6", "7" = "7", "8" = "8",
+                              "9" = "9", "10" = "10", "11" = "11", "12" = "12",
+                              "13" = "13", "14" = "14", "15" = "15", "16" = "16",
+                              "17" = "17", "18" = "18", "19" = "19", "20" = "20",
+                              "21" = "21", "22" = "22", "23" = "23", "24" = "24",
+                              "25" = "25", "26" = "26", "27" = "27", "28" = "28",
+                              "29" = "29", "30" = "30", "31" = "31", "32" = "32",
+                              "33" = "33", "34" = "34", "35" = "35", "36" = "36",
+                              "37" = "37", "38" = "38", "39" = "39", "40" = "40",
+                              "41" = "41", "42" = "42", "43" = "43", "44" = "44",
+                              "45" = "45", "46" = "46", "47" = "47", "48" = "48",
+                              "49" = "49", "50" = "50", "51" = "51", "52" = "52",
+                              "53" = "53", "54" = "54", "55" = "55", "56" = "56",
+                              "57" = "57", "58" = "58", "59" = "59", "60" = "60",
+                              "61" = "61", "62" = "62", "63" = "63", "64" = "64",
+                              "65" = "65", "66" = "66", "67" = "67", "68" = "68",
+                              "69" = "69", "70" = "70", "71" = "71", "72" = "72",
+                              "73" = "73", "74" = "74", "75" = "75", "76" = "76",
+                              "77" = "77", "78" = "78", "79" = "79", "80" = "80",
+                              "81" = "81", "82" = "82", "83" = "83", "84" = "84",
+                              "85" = "85", "86" = "86", "87" = "87", "88" = "88",
+                              "89" = "89", "90" = "90", "91" = "91", "92" = "92",
+                              "93" = "93", "94" = "94", "95" = "95", "96" = "96",
+                              "97" = "97", "98" = "98", "99" = "99", "100" = "100"),
+                  selected = ""),
+      uiOutput("model_description"),
+      
+      # Select Variables (collapsible)
+      tags$details(
+        tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
+                    h4(style = "display: inline; margin: 0;", "Select Variables")),
+        div(style = "margin-left: 15px; margin-top: 10px;",
+          uiOutput("variable_selectors")
+        )
+      ),
+      
+      # Assumption Checks Section (collapsible)
+      tags$details(
+        tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
+                    h4(style = "display: inline; margin: 0;", "Assumption Checks")),
+        div(style = "margin-left: 15px; margin-top: 10px;",
+          # Outlier detection settings
+          conditionalPanel(
+            condition = "output.outcome_is_continuous === true",
+            h5("Outlier Detection (Continuous Outcomes)"),
+            numericInput("residual_threshold", "Standardized Residual Threshold", 
+                        value = 2, min = 1, max = 10, step = 0.1),
+            p(em("Cases with |standardized residual| > threshold will be identified as outliers"))
+          ),
+          conditionalPanel(
+            condition = "output.outcome_is_continuous === false",
+            h5("Influential Case Detection (Binary Outcomes)"),
+            radioButtons("cooks_threshold_type", "Cook's Distance Threshold:",
+              choices = list(
+                "Conservative (4/n)" = "conservative",
+                "Liberal (1.0)" = "liberal",
+                "Custom" = "custom"
+              ),
+              selected = "conservative"
+            ),
+            conditionalPanel(
+              condition = "input.cooks_threshold_type == 'custom'",
+              numericInput("cooks_threshold_custom", "Custom Cook's Distance Threshold", 
+                          value = 0.01, min = 0, max = 1, step = 0.001)
+            ),
+            p(em("Cases with Cook's distance > threshold will be identified as influential"))
+          ),
+          p(em("Note: Additional assumption check features (e.g., univariate outlier analysis) may be added here in future updates."))
+        )
+      ),
+      
+      # PROCESS Options - Organized in collapsible sections
+      conditionalPanel(
+        condition = "input.process_model != ''",
+        h4("PROCESS Options"),
+        
+        # Basic Options (collapsible)
+        tags$details(
+          tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9;", 
+                      "Basic Options"),
+          div(style = "margin-left: 15px; margin-top: 10px;",
+            radioButtons("centering", "Mean Centering:",
+              choices = list(
+                "No centering" = "0",
+                "All variables that define products" = "1",
+                "Only continuous variables that define products" = "2"
+              ),
+              selected = "0"
+            ),
+            checkboxInput("use_bootstrap", "Use bootstrapping", FALSE),
+            conditionalPanel(
+              condition = "input.use_bootstrap == true",
+              numericInput("boot_samples", "Number of bootstrap samples:", 5000, min = 1000, max = 10000)
+            ),
+            numericInput("conf_level", "Confidence Level (%)", 95, min = 80, max = 99, step = 1)
+          )
+        ),
+        
+        # Advanced Options (collapsible)
+        tags$details(
+          tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
+                      "Advanced Options"),
+          div(style = "margin-left: 15px; margin-top: 10px;",
+            selectInput("hc_method", "Heteroscedasticity-consistent inference:",
+              choices = list(
+                "None" = "none",
+                "HC0 (Huber-White)" = "0",
+                "HC1 (Hinkley)" = "1",
+                "HC2" = "2",
+                "HC3 (Davidson-MacKinnon)" = "3",
+                "HC4 (Cribari-Neto)" = "4"
+              ),
+              selected = "none"
+            ),
+            checkboxInput("stand", "Standardized coefficients", FALSE),
+            checkboxInput("normal", "Normal theory tests", FALSE),
+            conditionalPanel(
+              condition = "output.is_mediation_model === true",
+              checkboxInput("pairwise_contrasts", "Pairwise contrasts of indirect effects", FALSE),
+              p(em("Compare indirect effects to determine which mediators are most important"))
+            ),
+            # Note: Johnson-Neyman and conditioning values moved to "Probing Moderation" section
+            numericInput("decimals", "Decimal Places", 4, min = 0, max = 10, step = 1),
+            numericInput("seed", "Random Seed (optional)", value = -999, min = -999, max = 999999)
+          )
+        ),
+        
+        # Output Options (collapsible)
+        tags$details(
+          tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
+                      "Output Options"),
+          div(style = "margin-left: 15px; margin-top: 10px;",
+            checkboxInput("describe", "Descriptives and variable correlations", TRUE),
+            checkboxInput("covcoeff", "Show regression coefficient covariance matrix", FALSE),
+            checkboxInput("effsize", "Scale-free measures of (partial) association", FALSE),
+            checkboxInput("listmiss", "List cases deleted due to missing data", FALSE),
+            checkboxInput("ssquares", "Sums of squares and adjusted R-squared", FALSE),
+            checkboxInput("modelres", "Shrunken R estimates", FALSE),
+            checkboxInput("diagnose", "Model diagnostics and assumptions", TRUE),
+            conditionalPanel(
+              condition = "input.process_model == '0'",
+              checkboxInput("dominate", "Dominance analysis (model 0 only)", FALSE),
+              checkboxInput("subsets", "All subsets regression (model 0 only)", FALSE)
+            ),
+            conditionalPanel(
+              condition = "input.process_model == '4'",
+              checkboxInput("xmint", "Test for X by M interaction (model 4 only)", FALSE),
+              p(em("When checked, this tests whether the effect of the mediator (M) on the outcome (Y) depends on the level of the independent variable (X). PROCESS will automatically handle the analysis."))
+            ),
+            conditionalPanel(
+              condition = "output.is_mediation_model === true && (input.process_model == '4' || input.process_model == '6' || input.process_model == '80' || input.process_model == '81' || input.process_model == '82')",
+              checkboxInput("total", "Total effect of X", FALSE)
+            ),
+            checkboxInput("matrices", "Matrices output", FALSE),
+            checkboxInput("covmy", "Covariance matrix for Y", FALSE),
+            p(em("Warning: 'Covariance matrix for Y' may cause errors if a variable appears as both a covariate and moderator. Only use when variables have distinct roles.")),
+            checkboxInput("save", "Save bootstrap results to file (not recommended in Shiny)", FALSE),
+            p(em("Note: The 'save' option saves files to the R working directory, which may not be accessible in Shiny apps. Use the Download buttons instead.")),
+            conditionalPanel(
+              condition = "input.save == true",
+              radioButtons("save_type", "Information to save:",
+                choices = list(
+                  "Bootstrap estimates" = "boot",
+                  "Output" = "output",
+                  "Regression diagnostics" = "diagnostics"
+                ),
+                selected = "diagnostics"
+              )
+            )
+          )
+        ),
+        
+        # Probing Moderation Options (collapsible) - Only for moderation models
+        conditionalPanel(
+          condition = "output.is_moderation_model === true",
+          tags$details(
+            tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
+                        "Probing Moderation"),
+            div(style = "margin-left: 15px; margin-top: 10px;",
+              checkboxInput("probe_interactions", "Probe interactions", FALSE),
+              conditionalPanel(
+                condition = "input.probe_interactions == true",
+                textInput("probe_threshold", "When to probe:", value = "p < .10"),
+                p(em("Enter threshold for probing (e.g., 'p < .10' or 'p < .05')")),
+                radioButtons("conditioning_values", "Values for nondiscrete moderators:",
+                  choices = list(
+                    "Percentiles (16th, 50th, 84th)" = "1",
+                    "Moments (Mean and ±1 SD)" = "0"
+                  ),
+                  selected = "1"
+                ),
+                checkboxInput("jn", "Johnson-Neyman technique", FALSE)
+              )
+            )
+          )
+        ),
+        
+        # Visualizing Moderation Options (collapsible) - Only for moderation models
+        conditionalPanel(
+          condition = "output.is_moderation_model === true",
+          tags$details(
+            tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
+                        "Visualizing Moderation"),
+            div(style = "margin-left: 15px; margin-top: 10px;",
+              checkboxInput("plot", "Include plot data in output text", FALSE),
+              p(em("This includes data for visualizing moderation in the output text. Note: This will also open R graphics device windows that cannot be easily saved or customized."))
+            )
+          )
+        )
+      ),
+      
+      # Run Analysis buttons
+      conditionalPanel(
+        condition = "input.process_model != ''",
+        h4("Run Analysis"),
+        div(style = "margin-bottom: 10px; width: 100%;",
+          actionButton("run_analysis", "With Original Dataset", 
+            class = "btn-primary",
+            style = "width: 100%;"
+          )
+        ),
+        div(style = "margin-bottom: 20px; width: 100%;",
+          uiOutput("outlier_removal_button")
+        ),
+        
+        h4("Download Options"),
+        downloadButton("download_results", "Results Text"),
+        conditionalPanel(
+          condition = "input.run_analysis_no_outliers > input.run_analysis",
+          h4("Download Reduced Dataset"),
+          radioButtons("filtered_data_format", "Format:",
+            choices = list(
+              "CSV (.csv)" = "csv",
+              "SPSS (.sav)" = "sav"
+            ),
+            selected = "csv",
+            inline = TRUE
+          ),
+          downloadButton("download_filtered_data", "Dataset Without Outliers",
+            class = "btn-warning")
+        )
+      )
+    ),
+    
+    mainPanel(
+      width = 9,
+      tabsetPanel(id = "tabset_panel",
+        tabPanel("Assumption Checks",
+          h4("Detailed Assumption Check Results"),
+          
+          # Show a prompt until variables are selected
+          conditionalPanel(
+            condition = "!output.outcome_is_selected",
+            div(style = "margin-bottom: 20px",
+              p("Select your outcome, predictor, and other variables to view assumption guidance and diagnostics.")
+            )
+          ),
+          
+          # Continuous outcome guidance
+          conditionalPanel(
+            condition = "output.outcome_is_selected && output.outcome_is_continuous === true",
+            div(style = "margin-bottom: 20px",
+              p(strong("Note:"), " These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value.")
+            ),
+            div(style = "margin-bottom: 20px",
+              h5("Understanding Standardized Residual Outliers"),
+              p("Standardized residuals (SR) represent how many standard deviations an observed value deviates from the model's prediction. Outliers can affect analyses in several ways:",
+                tags$ul(
+                  tags$li(strong("Impact on Results:"), " Outliers can inflate or deflate effects and influence statistical significance"),
+                  tags$li(strong("Threshold Guidelines:"), " Common cutoffs include:"),
+                  tags$ul(
+                    tags$li("|SR| > 2: Potentially influential cases"),
+                    tags$li("|SR| > 2.5: More stringent criterion"),
+                    tags$li("|SR| > 3: Very conservative criterion")
+                  ),
+                  tags$li(strong("Handling Outliers:"), " This program offers two approaches:"),
+                  tags$ul(
+                    tags$li("Run analysis with all cases to maintain complete data"),
+                    tags$li("Remove cases above the threshold to assess impact on results")
+                  )
+                )
+              )
+            )
+          ),
+          
+          # Binary outcome guidance
+          conditionalPanel(
+            condition = "output.outcome_is_selected && output.outcome_is_continuous === false",
+            div(style = "margin-bottom: 20px",
+              p(strong("Note:"), " For binary outcomes (0/1), the app uses logistic regression diagnostics. Normality and homoscedasticity assumptions do not apply.")
+            ),
+            div(style = "margin-bottom: 20px",
+              h5("Understanding Influential Cases (Cook's Distance)"),
+              p("Cook's distance measures the influence of each case on all parameter estimates. High values suggest influential cases:",
+                tags$ul(
+                  tags$li(strong("Impact on Results:"), " Influential cases can materially change coefficient estimates and significance"),
+                  tags$li(strong("Threshold Guidelines:"), " Common choices: 4/n (conservative), 1.0 (liberal), or a custom threshold"),
+                  tags$li(strong("Handling Influential Cases:"), " This program offers two approaches:"),
+                  tags$ul(
+                    tags$li("Run analysis with all cases to maintain sample size"),
+                    tags$li("Remove cases with Cook's D above the threshold to assess impact")
+                  )
+                )
+              )
+            )
+          ),
+          
+          htmlOutput("assumption_details"),
+          
+          conditionalPanel(
+            condition = "output.outcome_is_selected",
+            h4("Diagnostic Plots"),
+            conditionalPanel(
+              condition = "output.outcome_is_continuous === true",
+              div(style = "margin-bottom: 30px",
+                h5("Normal Q-Q Plot (Outcome Model)"),
+                p("This plot checks if residuals follow a normal distribution. Points should follow the diagonal line closely.",
+                  "Deviations at the ends are common and usually not problematic.",
+                  "When bootstrapping is used, normality is less crucial as bootstrap methods don't assume normality."),
+                plotOutput("qq_plot", height = "400px", width = "600px")
+              )
+            ),
+            
+            div(style = "margin-bottom: 30px",
+              h5("Residuals vs Fitted Plot (Outcome Model)"),
+              conditionalPanel(
+                condition = "output.outcome_is_continuous === true",
+                p("This plot checks for linearity and homoscedasticity (constant variance).",
+                  "Look for:",
+                  tags$ul(
+                    tags$li("Random scatter around the horizontal line (linearity)"),
+                    tags$li("Even spread of points vertically (homoscedasticity)"),
+                    tags$li("No clear patterns or curves in the blue line")
+                  ),
+                  "With bootstrapping, minor violations of homoscedasticity are less concerning.")
+              ),
+              conditionalPanel(
+                condition = "output.outcome_is_continuous === false",
+                p("For binary outcomes, this plot shows Pearson residuals from logistic regression.",
+                  "The patterns will differ from linear regression:",
+                  tags$ul(
+                    tags$li("Residuals form distinct bands (one for each outcome level)"),
+                    tags$li("Heteroscedasticity is expected and not a violation"),
+                    tags$li("Focus on identifying potential model misspecification or influential cases")
+                  ),
+                  "Note: Homoscedasticity is not an assumption of logistic regression.")
+              ),
+              plotOutput("residual_plot", height = "400px", width = "600px")
+            )
+          ),
+          
+          conditionalPanel(
+            condition = "output.outcome_is_continuous === true && output.outcome_is_selected",
+            div(style = "margin-bottom: 30px",
+              h5("Scale-Location Plot (Outcome Model)"),
+              p("This plot helps assess if the variance of residuals changes across the range of predicted values.",
+                "Look for:",
+                tags$ul(
+                  tags$li("Relatively horizontal blue line"),
+                  tags$li("Even spread of points around the line"),
+                  tags$li("No clear funnel or fan shapes")
+                ),
+                "When bootstrapping is used, this assumption is relaxed somewhat."),
+              plotOutput("scale_location_plot", height = "400px", width = "600px")
+            )
+          ),
+          
+          # Violin plots for continuous variables
+          conditionalPanel(
+            condition = "output.has_continuous_selected === true && output.outcome_is_selected",
+            h4("Continuous Variable Distributions"),
+            p("Distributions are shown for the original dataset and, if cases were removed, the analysis dataset. Only continuous variables are included."),
+            plotOutput("violin_plot", height = "400px", width = "700px")
+          )
+        ),
+        tabPanel("Analysis Results",
+          conditionalPanel(
+            condition = "output.analysis_ready === true",
+            h4("Analysis Results"),
+            htmlOutput("analysis_output")
+          ),
+          conditionalPanel(
+            condition = "output.analysis_ready === false",
+            p("Run an analysis to see results here.")
+          )
+        )
+      )
+    )
+  )
+)
+
+# ============================================================================
+# SERVER LOGIC
+# ============================================================================
+
+server <- function(input, output, session) {
+  
+  # Reactive values for data management
+  rv <- reactiveValues(
+    original_dataset = NULL,
+    current_dataset = NULL,
+    outliers_info = NULL,
+    analysis_results = NULL,
+    current_model = NULL,
+    validation_error = NULL
+  )
+  
+  # Load PROCESS function
+  source("process.R", local = TRUE)
+  
+  # DEBUG: Observer to track button clicks
+  observeEvent(input$run_analysis, {
+    print("DEBUG: Run Analysis button clicked!")
+    print(paste("DEBUG: Button click count:", input$run_analysis))
+  })
+  
+  observeEvent(input$run_analysis_no_outliers, {
+    print("DEBUG: Run Analysis (No Outliers) button clicked!")
+    print(paste("DEBUG: Button click count:", input$run_analysis_no_outliers))
+  })
+  
+  # Update dataset handling
+  observeEvent(input$data_file, {
+    req(input$data_file)
+    ext <- tools::file_ext(input$data_file$datapath)
+    
+    if (ext == "sav") {
+      data <- read_sav(input$data_file$datapath)
+    } else if (ext == "csv") {
+      data <- read.csv(input$data_file$datapath)
+    } else {
+      stop("Invalid file type. Please upload a CSV or SAV file.")
+    }
+    
+    rv$original_dataset <- data
+    rv$current_dataset <- data
+    print(paste("DEBUG - Dataset loaded with", nrow(data), "rows"))
+    rv$analysis_results <- NULL  # Reset analysis results when new file is loaded
+  })
+  
+  # Model description output
+  output$model_description <- renderUI({
+    req(input$process_model)
+    model_num <- as.numeric(input$process_model)
+    
+    # Common model descriptions (based on PROCESS V5)
+    model_descriptions <- list(
+      "1" = "Simple Moderation",
+      "2" = "First Stage Moderation",
+      "3" = "Second Stage Moderation",
+      "4" = "Simple/Parallel Mediation (1 or more mediators)",
+      "5" = "First and Second Stage Moderation (Moderator W + Mediator M)",
+      "6" = "Parallel Mediation (2-6 mediators)",
+      "7" = "Serial Mediation (Two Mediators)",
+      "8" = "Parallel and Serial Mediation",
+      "14" = "Moderated Mediation (Moderator on a path)",
+      "15" = "Conditional Process Model 1",
+      "58" = "Moderated Moderation (Three-way Interaction)",
+      "59" = "Moderated Moderation (Three-way Interaction, Alternative)",
+      "74" = "Moderated Mediation with Two Moderators"
+    )
+    
+    desc <- if(model_num %in% names(model_descriptions)) {
+      model_descriptions[[as.character(model_num)]]
+    } else {
+      "See PROCESS documentation for model description"
+    }
+    
+    p(strong(paste("Model", model_num, ":", desc)))
+  })
+  
+  # Determine if model is moderation or mediation type
+  output$is_moderation_model <- reactive({
+    req(input$process_model)
+    model_num <- as.numeric(input$process_model)
+    # Models 1, 2, 3, 5, 14, 15, 58, 59, 74 are moderation models
+    # Model 4 is mediation, not moderation
+    model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
+  })
+  outputOptions(output, "is_moderation_model", suspendWhenHidden = FALSE)
+  
+  output$is_mediation_model <- reactive({
+    req(input$process_model)
+    model_num <- as.numeric(input$process_model)
+    # Models 4, 5, 6, 7, 8, 14 are mediation models (Model 5 has both moderator and mediator)
+    model_num %in% c(4, 5, 6, 7, 8, 14)
+  })
+  outputOptions(output, "is_mediation_model", suspendWhenHidden = FALSE)
+  
+  # Mediator list UI with M1, M2, M3 display
+  output$mediator_list_ui <- renderUI({
+    req(rv$original_dataset, input$process_model)
+    vars <- names(rv$original_dataset)
+    
+    tagList(
+      selectInput("mediator_vars", "Mediator Variable(s) (M)", 
+                 choices = c("Select variable" = "", vars), 
+                 selected = if(!is.null(input$mediator_vars)) input$mediator_vars else NULL,
+                 multiple = TRUE),
+      # Display selected mediators with M1, M2, M3 labels
+      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        div(style = "margin-top: 10px; padding: 10px; background-color: #f5f5f5; border-radius: 4px;",
+          h6(strong("Mediator Order (order matters for serial mediation):")),
+          lapply(seq_along(input$mediator_vars), function(i) {
+            div(style = "margin: 5px 0;",
+              tags$span(style = "font-weight: bold; color: #0066cc;", paste0("M", i, ": ")),
+              tags$span(input$mediator_vars[i])
+            )
+          }),
+          p(style = "font-size: 11px; color: #666; margin-top: 5px;",
+            em("Note: To reorder mediators, deselect and reselect them in the desired order."))
+        )
+      }
+    )
+  })
+  
+  # Dynamically generate variable selectors based on model
+  output$variable_selectors <- renderUI({
+    req(rv$original_dataset, input$process_model)
+    vars <- names(rv$original_dataset)
+    model_num <- as.numeric(input$process_model)
+    
+    # Build variable selector UI based on model type (predictor first, outcome second)
+    selectors <- tagList(
+      selectInput("predictor_var", "Predictor Variable (X)", 
+                 choices = c("Select variable" = "", vars), 
+                 selected = ""),
+      selectInput("outcome_var", "Outcome Variable (Y)", 
+                 choices = c("Select variable" = "", vars), 
+                 selected = "")
+    )
+    
+    # Add moderator(s) for moderation models
+    if(model_num %in% c(1, 2, 3, 14, 15, 58, 59, 74)) {
+      selectors <- tagList(selectors,
+        selectInput("moderator_var", "Moderator Variable (W)", 
+                   choices = c("Select variable" = "", vars), 
+                   selected = "")
+      )
+      
+      # Add second moderator for dual moderation models
+      if(model_num %in% c(58, 59, 74)) {
+        selectors <- tagList(selectors,
+          selectInput("moderator2_var", "Second Moderator Variable (Z)", 
+                     choices = c("Select variable" = "", vars), 
+                     selected = "")
+        )
+      }
+    }
+    
+    # Model 5: First and Second Stage Moderation (requires W and M)
+    if(model_num == 5) {
+      selectors <- tagList(selectors,
+        selectInput("moderator_var", "Moderator Variable (W)", 
+                   choices = c("Select variable" = "", vars), 
+                   selected = "")
+      )
+    }
+    
+    # Add mediator(s) for mediation models
+    # Model 4: Simple/Parallel mediation (1 or more mediators)
+    if(model_num == 4) {
+      selectors <- tagList(selectors,
+        uiOutput("mediator_list_ui"),
+        p(em("Model 4: Simple or parallel mediation (1 or more mediators)"))
+      )
+    }
+    # Model 5: First and Second Stage Moderation (requires mediator)
+    if(model_num == 5) {
+      selectors <- tagList(selectors,
+        uiOutput("mediator_list_ui"),
+        p(em("Model 5: Requires moderator W and mediator M"))
+      )
+    }
+    # Models 6, 7, 8, 14: Multiple mediators (2-6 for Model 6)
+    if(model_num %in% c(6, 7, 8, 14)) {
+      selectors <- tagList(selectors,
+        uiOutput("mediator_list_ui"),
+        p(em(if(model_num == 6) {
+          "Model 6: Parallel mediation (requires 2-6 mediators)"
+        } else if(model_num == 7) {
+          "Model 7: Serial mediation with two mediators"
+        } else if(model_num == 8) {
+          "Model 8: Parallel and serial mediation"
+        } else {
+          "Select mediator variable(s)"
+        }))
+      )
+    }
+    
+    # Add covariates (always available)
+    selectors <- tagList(selectors,
+      selectInput("covariates", "Covariates (optional)", vars, multiple = TRUE)
+    )
+    
+    selectors
+  })
+  
+  # Output to track if outcome is continuous
+  output$outcome_is_continuous <- reactive({
+    req(rv$original_dataset, input$outcome_var)
+    !is_binary_variable(rv$original_dataset, input$outcome_var)
+  })
+  outputOptions(output, "outcome_is_continuous", suspendWhenHidden = FALSE)
+  
+  # Output to track if outcome is selected
+  output$outcome_is_selected <- reactive({
+    !is.null(input$outcome_var) && input$outcome_var != ""
+  })
+  outputOptions(output, "outcome_is_selected", suspendWhenHidden = FALSE)
+  
+  # Output to track if any continuous variables are selected
+  output$has_continuous_selected <- reactive({
+    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    selected_vars <- c(input$outcome_var, input$predictor_var)
+    if(!is.null(input$mediator_vars)) selected_vars <- c(selected_vars, input$mediator_vars)
+    if(!is.null(input$moderator_var)) selected_vars <- c(selected_vars, input$moderator_var)
+    any(vapply(selected_vars, function(v) is_continuous_variable(rv$original_dataset, v), logical(1)))
+  })
+  outputOptions(output, "has_continuous_selected", suspendWhenHidden = FALSE)
+  
+  # Output to track if analysis results exist
+  output$analysis_ready <- reactive({
+    result <- !is.null(rv$analysis_results)
+    print(paste("DEBUG: analysis_ready reactive called. Result:", result))
+    result
+  })
+  outputOptions(output, "analysis_ready", suspendWhenHidden = FALSE)
+  
+  # Reactive to compute Cook's distance threshold
+  cooks_threshold_value <- reactive({
+    req(rv$original_dataset, input$outcome_var)
+    outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
+    
+    if(!outcome_is_binary) {
+      return(NULL)
+    }
+    
+    n <- nrow(rv$original_dataset)
+    
+    if(input$cooks_threshold_type == "conservative") {
+      return(4 / n)
+    } else if(input$cooks_threshold_type == "liberal") {
+      return(1.0)
+    } else {
+      return(input$cooks_threshold_custom)
+    }
+  })
+  
+  # Function to identify outliers using assumption checks module
+  identify_outliers <- reactive({
+    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    
+    identify_outliers_assumption(
+      data = rv$original_dataset,
+      outcome_var = input$outcome_var,
+      predictor_var = input$predictor_var,
+      mediator_vars = input$mediator_vars,
+      moderator_var = input$moderator_var,
+      covariates = input$covariates,
+      residual_threshold = input$residual_threshold,
+      cooks_threshold_type = input$cooks_threshold_type,
+      cooks_threshold_custom = input$cooks_threshold_custom
+    )
+  })
+  
+  # Outlier summary reactive
+  outlier_summary <- reactive({
+    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    
+    tryCatch({
+      # Build formula based on model type
+      formula_terms <- c(input$outcome_var, "~", input$predictor_var)
+      
+      # Add interaction for moderation models (only if moderator is selected)
+      if(!is.null(input$moderator_var) && input$moderator_var != "") {
+        formula_terms <- c(formula_terms, "*", input$moderator_var)
+      }
+      
+      # Add mediators for mediation models
+      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+      }
+      
+      # Add covariates
+      if(!is.null(input$covariates) && length(input$covariates) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
+      }
+      
+      model_formula <- as.formula(paste(formula_terms, collapse = " "))
+      
+      # Check if outcome is binary
+      outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
+      
+      if(outcome_is_binary) {
+        # For binary outcomes, use logistic regression diagnostics
+        model <- glm(model_formula, data = rv$original_dataset, family = binomial())
+        
+        leverage <- hatvalues(model)
+        cooks_d <- cooks.distance(model)
+        
+        # Get threshold
+        n <- nrow(rv$original_dataset)
+        threshold <- if(input$cooks_threshold_type == "conservative") {
+          4 / n
+        } else if(input$cooks_threshold_type == "liberal") {
+          1.0
+        } else {
+          input$cooks_threshold_custom
+        }
+        
+        # Identify influential cases
+        influential_cases <- which(cooks_d > threshold)
+        
+        if(length(influential_cases) > 0) {
+          # Sort by Cook's distance
+          sorted_indices <- order(-cooks_d[influential_cases])
+          sorted_cases <- influential_cases[sorted_indices]
+          sorted_cooks <- cooks_d[sorted_cases]
+          sorted_leverage <- leverage[sorted_cases]
+          
+          case_summaries <- sapply(seq_along(sorted_cases), function(i) {
+            sprintf("Case %d: Cook's D = %.4f, Leverage = %.4f", 
+                    sorted_cases[i], sorted_cooks[i], sorted_leverage[i])
+          })
+          
+          threshold_label <- if(input$cooks_threshold_type == "conservative") {
+            sprintf("4/n = %.4f", threshold)
+          } else if(input$cooks_threshold_type == "liberal") {
+            "1.0"
+          } else {
+            sprintf("%.4f", threshold)
+          }
+          
+          return(c(
+            "<strong>Influential Case Analysis (Logistic Regression):</strong>",
+            "<em>Note: Your outcome variable is binary (0/1). Using leverage and Cook's distance.</em>",
+            "<br>",
+            sprintf("Cases exceeding threshold (Cook's D > %s):", threshold_label),
+            sprintf("Number of cases: %d (%.1f%%)", 
+                    length(influential_cases),
+                    100 * length(influential_cases) / length(cooks_d)),
+            "<br>",
+            "<strong>Understanding these metrics:</strong>",
+            "<ul>",
+            "<li><strong>Cook's Distance:</strong> Measures the influence of each case on all parameter estimates. Values > 4/n (conservative) or > 1.0 (liberal) suggest influential cases.</li>",
+            "<li><strong>Leverage:</strong> Measures how unusual a case's predictor values are. High leverage cases can have disproportionate influence on the model.</li>",
+            "</ul>",
+            "<strong>Top cases (sorted by Cook's D):</strong>",
+            paste0('<div style="max-height: 100px; overflow-y: auto; border: 1px solid #ddd; padding: 5px; margin: 5px 0;">', 
+                  paste(case_summaries, collapse = "<br>"),
+                  '</div>')
+          ))
+        } else {
+          threshold_label <- if(input$cooks_threshold_type == "conservative") {
+            sprintf("4/n = %.4f", threshold)
+          } else if(input$cooks_threshold_type == "liberal") {
+            "1.0"
+          } else {
+            sprintf("%.4f", threshold)
+          }
+          
+          return(c(
+            "<strong>Influential Case Analysis (Logistic Regression):</strong>",
+            "<em>Note: Your outcome variable is binary (0/1). Using leverage and Cook's distance.</em>",
+            "<br>",
+            sprintf("No cases exceed the threshold (Cook's D > %s)", threshold_label)
+          ))
+        }
+      }
+      
+      # For continuous outcomes, use linear regression
+      model <- lm(model_formula, data = rv$original_dataset)
+      
+      # Get standardized residuals
+      sresid <- rstandard(model)
+      
+      # Find outliers
+      outliers <- which(abs(sresid) > input$residual_threshold)
+      
+      if(length(outliers) > 0) {
+        # Sort outliers by absolute value of residuals
+        sorted_indices <- order(-abs(sresid[outliers]))
+        sorted_cases <- outliers[sorted_indices]
+        sorted_resids <- sresid[sorted_cases]
+        
+        # Create case summaries
+        case_summaries <- sapply(seq_along(sorted_cases), function(i) {
+          sprintf("Case %d: SR = %.3f", sorted_cases[i], sorted_resids[i])
+        })
+        
+        # Create summary text with scrollable div for cases
+        c(
+          "Standardized Residual Analysis:",
+          sprintf("Cases exceeding threshold (|SR| > %.1f):", input$residual_threshold),
+          sprintf("Number of cases: %d (%.1f%%)", 
+                  length(outliers),
+                  100 * length(outliers) / length(sresid)),
+          "Top cases (sorted by |SR|):",
+          paste0('<div style="max-height: 100px; overflow-y: auto; border: 1px solid #ddd; padding: 5px; margin: 5px 0;">', 
+                paste(case_summaries, collapse = "<br>"),
+                '</div>')
+        )
+      } else {
+        c(
+          "Standardized Residual Analysis:",
+          sprintf("No cases exceed the threshold (|SR| > %.1f)", input$residual_threshold)
+        )
+      }
+    }, error = function(e) {
+      c(
+        "Standardized Residual Analysis:",
+        "Unable to compute residuals. Please check that all variables are numeric.",
+        paste("Error details:", e$message)
+      )
+    })
+  })
+  
+  # Assumption details output
+  output$assumption_details <- renderUI({
+    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    
+    tryCatch({
+      # Build formula based on model type
+      formula_terms <- c(input$outcome_var, "~", input$predictor_var)
+      
+      # Add interaction for moderation models (only if moderator is selected)
+      if(!is.null(input$moderator_var) && input$moderator_var != "") {
+        formula_terms <- c(formula_terms, "*", input$moderator_var)
+      }
+      
+      # Add mediators for mediation models
+      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+      }
+      
+      # Add covariates
+      if(!is.null(input$covariates) && length(input$covariates) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
+      }
+      
+      model_formula <- as.formula(paste(formula_terms, collapse = " "))
+      
+      # Check if outcome is binary
+      outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
+      
+      if(outcome_is_binary) {
+        # For binary outcomes, use logistic regression
+        model <- glm(model_formula, data = rv$original_dataset, family = binomial())
+        
+        # Get outlier/influential summary
+        outlier_text <- paste(outlier_summary(), collapse = "<br>")
+        
+        # Build filtered data after removal
+        outliers <- tryCatch(identify_outliers(), error = function(e) NULL)
+        filtered_data <- rv$original_dataset
+        if(!is.null(outliers) && length(outliers$cases) > 0) {
+          filtered_data <- rv$original_dataset[-outliers$cases, ]
+        }
+        
+        # Binary counts
+        bin_counts <- c(
+          binary_count_lines(rv$original_dataset, input$outcome_var, "Outcome (original)"),
+          binary_count_lines(rv$original_dataset, input$predictor_var, "Predictor (original)")
+        )
+        if(!is.null(input$moderator_var)) {
+          bin_counts <- c(bin_counts,
+            binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
+        }
+        if(!is.null(input$mediator_vars)) {
+          for(med in input$mediator_vars) {
+            bin_counts <- c(bin_counts,
+              binary_count_lines(rv$original_dataset, med, paste0("Mediator ", med, " (original)")))
+          }
+        }
+        
+        # For binary outcomes, skip normality and homoscedasticity tests
+        diagnostics <- diagnostic_report(model)
+        
+        output_text <- paste(
+          "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
+          "<strong>Note: Binary Outcome Detected</strong><br>",
+          "<em>Your outcome variable is binary (0/1). PROCESS will use logistic regression for this analysis.</em><br><br>",
+          "<strong>Important:</strong> Standard regression assumptions (normality, homoscedasticity) do not apply to logistic regression.<br>",
+          "For binary outcomes, different diagnostic approaches are needed:<br>",
+          "<ul>",
+          "<li><strong>Linearity:</strong> Check linearity of continuous predictors with the logit of the outcome</li>",
+          "<li><strong>Influential observations:</strong> Review leverage values and Cook's distance in the outlier summary above</li>",
+          "<li><strong>Model fit:</strong> Use pseudo-R² measures (McFadden, Cox-Snell, Nagelkerke) shown in PROCESS output</li>",
+          "<li><strong>Multicollinearity:</strong> VIF can still be calculated for predictors</li>",
+          "</ul><br>",
+          if(length(na.omit(bin_counts)) > 0) {
+            paste(
+              "<strong>Binary Variable Counts (original dataset):</strong><br>",
+              paste(na.omit(bin_counts), collapse = "<br>"),
+              "<br><br>"
+            )
+          } else { "" },
+          outlier_text,
+          "<br><br>",
+          "<strong>Additional Diagnostics:</strong><br>",
+          paste(diagnostics, collapse = "<br>"),
+          "<br><em>Note: VIF calculated for all predictors. For binary outcomes, focus on model fit statistics and residual patterns rather than normality/homoscedasticity.</em>",
+          "</div>",
+          sep = ""
+        )
+      } else {
+        # For continuous outcomes, use linear regression
+        model <- lm(model_formula, data = rv$original_dataset)
+        
+        # Get outlier summary
+        outlier_text <- paste(outlier_summary(), collapse = "<br>")
+        
+        # Build filtered data after removal
+        outliers <- tryCatch(identify_outliers(), error = function(e) NULL)
+        filtered_data <- rv$original_dataset
+        if(!is.null(outliers) && length(outliers$cases) > 0) {
+          filtered_data <- rv$original_dataset[-outliers$cases, ]
+        }
+        
+        # Binary counts (only if binary)
+        bin_counts <- c(
+          binary_count_lines(rv$original_dataset, input$outcome_var, "Outcome (original)"),
+          binary_count_lines(rv$original_dataset, input$predictor_var, "Predictor (original)")
+        )
+        if(!is.null(input$moderator_var)) {
+          bin_counts <- c(bin_counts,
+            binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
+        }
+        if(!is.null(input$mediator_vars)) {
+          for(med in input$mediator_vars) {
+            bin_counts <- c(bin_counts,
+              binary_count_lines(rv$original_dataset, med, paste0("Mediator ", med, " (original)")))
+          }
+        }
+        
+        # Run other diagnostics
+        normality <- check_normality(model)
+        homoscedasticity <- test_homoscedasticity(model)
+        diagnostics <- diagnostic_report(model)
+        
+        # Create final output
+        output_text <- paste(
+          "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
+          if(length(na.omit(bin_counts)) > 0) {
+            paste(
+              "<strong>Binary Variable Counts (original dataset):</strong><br>",
+              paste(na.omit(bin_counts), collapse = "<br>"),
+              "<br><br>"
+            )
+          } else { "" },
+          outlier_text,
+          "<br><br>",
+          "<strong>Normality Test:</strong><br>",
+          normality$text,
+          "<br><em>Interpretation: A significant p-value (< .05) suggests non-normality. ",
+          "However, with large samples, minor deviations often become significant. ",
+          "Visual inspection of the Q-Q plot is often more informative.</em>",
+          "<br><br>",
+          "<strong>Homoscedasticity Test:</strong><br>",
+          homoscedasticity,
+          "<br><em>Interpretation: A significant p-value suggests non-constant variance. ",
+          "Consider the Residuals vs Fitted plot for visual confirmation.</em>",
+          "<br><br>",
+          "<strong>Additional Diagnostics:</strong><br>",
+          paste(diagnostics, collapse = "<br>"),
+          "<br><em>Interpretation:<br>",
+          "- VIF > 5 suggests potential multicollinearity issues<br>",
+          "- With bootstrapping, these diagnostics become less crucial as bootstrap methods are more robust to violations</em>",
+          "</div>",
+          sep = ""
+        )
+      }
+      
+      HTML(output_text)
+      
+    }, error = function(e) {
+      print("Error in assumption checks:")
+      print(e$message)
+      return(HTML(paste(
+        "<div class='alert alert-danger'>",
+        "Error in assumption checks: ", e$message,
+        "</div>"
+      )))
+    })
+  })
+  
+  # Diagnostic plots
+  output$qq_plot <- renderPlot({
+    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    
+    tryCatch({
+      # Build formula
+      formula_terms <- c(input$outcome_var, "~", input$predictor_var)
+      if(!is.null(input$moderator_var)) {
+        formula_terms <- c(formula_terms, "*", input$moderator_var)
+      }
+      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+      }
+      if(!is.null(input$covariates) && length(input$covariates) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
+      }
+      model_formula <- as.formula(paste(formula_terms, collapse = " "))
+      
+      # Check if outcome is binary
+      outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
+      
+      if(outcome_is_binary) {
+        return(NULL)
+      } else {
+        model <- lm(model_formula, data = rv$original_dataset)
+        
+        ggplot(data.frame(residuals = rstandard(model)), aes(sample = residuals)) +
+          stat_qq() + 
+          stat_qq_line() +
+          theme_minimal() +
+          labs(title = "Normal Q-Q Plot",
+               x = "Theoretical Quantiles",
+               y = "Sample Quantiles") +
+          theme(
+            text = element_text(size = 14),
+            axis.title = element_text(size = 16),
+            axis.text = element_text(size = 14),
+            plot.title = element_text(size = 18, hjust = 0.5),
+            axis.line = element_line(color = "black", linewidth = 0.5),
+            axis.ticks = element_line(color = "black", linewidth = 0.5)
+          )
+      }
+    }, error = function(e) {
+      plot.new()
+      text(0.5, 0.5, "Error generating Q-Q plot", cex = 1.2)
+    })
+  })
+  
+  output$residual_plot <- renderPlot({
+    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    
+    tryCatch({
+      # Build formula
+      formula_terms <- c(input$outcome_var, "~", input$predictor_var)
+      if(!is.null(input$moderator_var)) {
+        formula_terms <- c(formula_terms, "*", input$moderator_var)
+      }
+      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+      }
+      if(!is.null(input$covariates) && length(input$covariates) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
+      }
+      model_formula <- as.formula(paste(formula_terms, collapse = " "))
+      
+      # Check if outcome is binary
+      outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
+      
+      if(outcome_is_binary) {
+        model <- glm(model_formula, data = rv$original_dataset, family = binomial())
+        fitted_values <- fitted(model)
+        pearson_resid <- residuals(model, type = "pearson")
+        
+        outliers <- identify_outliers()
+        is_outlier <- seq_along(fitted_values) %in% outliers$cases
+        
+        subtitle_text <- if(outliers$count > 0) {
+          sprintf("Cook's D > %.4f: %d influential case%s highlighted",
+                  outliers$threshold, outliers$count,
+                  ifelse(outliers$count == 1, "", "s"))
+        } else {
+          sprintf("Cook's D ≤ %.4f: No influential cases detected", outliers$threshold)
+        }
+        
+        plot_data <- data.frame(
+          fitted = fitted_values,
+          residuals = pearson_resid,
+          is_outlier = is_outlier
+        )
+        
+        ggplot(plot_data, aes(x = fitted, y = residuals)) +
+          geom_point(aes(color = is_outlier), alpha = 0.6) +
+          scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+          geom_smooth(method = "loess", se = FALSE, color = "blue") +
+          geom_hline(yintercept = 0, linetype = "dashed") +
+          theme_minimal() +
+          labs(title = "Residuals vs Fitted (Logistic Regression)",
+               x = "Fitted probabilities",
+               y = "Pearson residuals",
+               subtitle = subtitle_text,
+               color = "Influential (Cook's D)") +
+          theme(
+            text = element_text(size = 14),
+            axis.title = element_text(size = 16),
+            axis.text = element_text(size = 14),
+            plot.title = element_text(size = 18, hjust = 0.5),
+            plot.subtitle = element_text(size = 12, hjust = 0.5),
+            legend.position = "none",
+            axis.line = element_line(color = "black", linewidth = 0.5),
+            axis.ticks = element_line(color = "black", linewidth = 0.5)
+          )
+      } else {
+        model <- lm(model_formula, data = rv$original_dataset)
+        
+        fitted_values <- fitted(model)
+        residuals <- residuals(model)
+        std_resid <- rstandard(model)
+        is_outlier <- abs(std_resid) > input$residual_threshold
+        
+        plot_data <- data.frame(
+          fitted = fitted_values,
+          residuals = residuals,
+          is_outlier = is_outlier
+        )
+        
+        ggplot(plot_data, aes(x = fitted, y = residuals)) +
+          geom_point(aes(color = is_outlier), alpha = 0.6) +
+          scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+          geom_smooth(method = "loess", se = FALSE, color = "blue") +
+          geom_hline(yintercept = 0, linetype = "dashed") +
+          theme_minimal() +
+          labs(title = "Residuals vs Fitted",
+               x = "Fitted values",
+               y = "Residuals") +
+          theme(
+            text = element_text(size = 14),
+            axis.title = element_text(size = 16),
+            axis.text = element_text(size = 14),
+            plot.title = element_text(size = 18, hjust = 0.5),
+            legend.position = "none",
+            axis.line = element_line(color = "black", linewidth = 0.5),
+            axis.ticks = element_line(color = "black", linewidth = 0.5)
+          )
+      }
+    }, error = function(e) {
+      plot.new()
+      text(0.5, 0.5, "Error generating residuals plot", cex = 1.2)
+    })
+  })
+  
+  output$scale_location_plot <- renderPlot({
+    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    
+    tryCatch({
+      # Build formula
+      formula_terms <- c(input$outcome_var, "~", input$predictor_var)
+      if(!is.null(input$moderator_var)) {
+        formula_terms <- c(formula_terms, "*", input$moderator_var)
+      }
+      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+      }
+      if(!is.null(input$covariates) && length(input$covariates) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
+      }
+      model_formula <- as.formula(paste(formula_terms, collapse = " "))
+      
+      # Check if outcome is binary
+      outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
+      
+      if(outcome_is_binary) {
+        return(NULL)
+      } else {
+        model <- lm(model_formula, data = rv$original_dataset)
+        
+        fitted_values <- fitted(model)
+        std_residuals <- rstandard(model)
+        sqrt_abs_resid <- sqrt(abs(std_residuals))
+        is_outlier <- abs(std_residuals) > input$residual_threshold
+        
+        plot_data <- data.frame(
+          fitted = fitted_values,
+          sqrt_abs_resid = sqrt_abs_resid,
+          is_outlier = is_outlier
+        )
+        
+        ggplot(plot_data, aes(x = fitted, y = sqrt_abs_resid)) +
+          geom_point(aes(color = is_outlier), alpha = 0.6) +
+          scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+          geom_smooth(method = "loess", se = FALSE, color = "blue") +
+          theme_minimal() +
+          labs(title = "Scale-Location Plot",
+               x = "Fitted values",
+               y = expression(sqrt("|Standardized residuals|"))) +
+          theme(
+            text = element_text(size = 14),
+            axis.title = element_text(size = 16),
+            axis.text = element_text(size = 14),
+            plot.title = element_text(size = 18, hjust = 0.5),
+            legend.position = "none",
+            axis.line = element_line(color = "black", linewidth = 0.5),
+            axis.ticks = element_line(color = "black", linewidth = 0.5)
+          )
+      }
+    }, error = function(e) {
+      plot.new()
+      text(0.5, 0.5, "Error generating scale-location plot", cex = 1.2)
+    })
+  })
+  
+  output$violin_plot <- renderPlot({
+    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    
+    tryCatch({
+      selected_vars <- c(input$outcome_var, input$predictor_var)
+      if(!is.null(input$mediator_vars)) selected_vars <- c(selected_vars, input$mediator_vars)
+      if(!is.null(input$moderator_var)) selected_vars <- c(selected_vars, input$moderator_var)
+      
+      cont_vars <- selected_vars[vapply(selected_vars, function(v) is_continuous_variable(rv$original_dataset, v), logical(1))]
+      
+      if(length(cont_vars) == 0) {
+        plot.new()
+        text(0.5, 0.5, "No continuous variables selected.\nViolin plot not shown.", cex = 1.1)
+        return(NULL)
+      }
+      
+      # Build data for original dataset
+      orig_long <- do.call(rbind, lapply(cont_vars, function(v) {
+        data.frame(
+          variable = v,
+          value = rv$original_dataset[[v]],
+          dataset = "Original",
+          stringsAsFactors = FALSE
+        )
+      }))
+      
+      # Build analysis dataset by removing identified outliers
+      outliers <- tryCatch(identify_outliers(), error = function(e) NULL)
+      filtered_data <- rv$original_dataset
+      if(!is.null(outliers) && length(outliers$cases) > 0) {
+        filtered_data <- rv$original_dataset[-outliers$cases, ]
+      }
+      
+      analysis_long <- do.call(rbind, lapply(cont_vars, function(v) {
+        data.frame(
+          variable = v,
+          value = filtered_data[[v]],
+          dataset = "After removal",
+          stringsAsFactors = FALSE
+        )
+      }))
+      
+      plot_data <- rbind(orig_long, analysis_long)
+      plot_data <- plot_data[!is.na(plot_data$value), ]
+      plot_data$value <- suppressWarnings(as.numeric(plot_data$value))
+      plot_data$variable <- factor(plot_data$variable, levels = cont_vars)
+      plot_data$dataset <- factor(plot_data$dataset, levels = c("Original", "After removal"))
+      
+      if(nrow(plot_data) == 0) {
+        plot.new()
+        text(0.5, 0.5, "No data available for violin plot.", cex = 1.1)
+        return(NULL)
+      }
+      
+      ggplot(plot_data, aes(x = dataset, y = value, fill = dataset)) +
+        geom_violin(trim = FALSE, alpha = 0.5, color = NA) +
+        geom_boxplot(width = 0.12, outlier.shape = NA, alpha = 0.6) +
+        facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+        labs(title = "Continuous Variable Distributions",
+             x = "Dataset (Original vs After removal)",
+             y = "Value",
+             fill = "Dataset") +
+        theme_minimal() +
+        theme(
+          text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          axis.text = element_text(size = 14),
+          plot.title = element_text(size = 18, hjust = 0.5),
+          legend.position = "right",
+          strip.text = element_text(size = 14)
+        )
+    }, error = function(e) {
+      plot.new()
+      text(0.5, 0.5, paste("Error generating violin plot:\n", e$message), cex = 1.1)
+    })
+  })
+  
+  # UI output for outlier removal button
+  output$outlier_removal_button <- renderUI({
+    req(rv$original_dataset, input$outcome_var)
+    
+    outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
+    
+    button_text <- if(outcome_is_binary) {
+      "With Cook's Distance Outliers Removed"
+    } else {
+      "With Standardized Residual Outliers Removed"
+    }
+    
+    # Check if button should be enabled
+    button_enabled <- FALSE
+    if (!is.null(input$predictor_var) && input$predictor_var != "" && 
+        !is.null(input$outcome_var) && input$outcome_var != "") {
+      tryCatch({
+        outliers <- identify_outliers()
+        if(!is.null(outliers) && !is.null(outliers$count) && outliers$count > 0 && 
+           !is.null(outliers$cases) && length(outliers$cases) > 0) {
+          # Check if removing outliers would leave enough cases
+          reduced_data <- rv$original_dataset[-outliers$cases, ]
+          all_vars <- c(input$outcome_var, input$predictor_var)
+          if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+            all_vars <- c(all_vars, input$mediator_vars)
+          }
+          if(!is.null(input$moderator_var) && input$moderator_var != "") {
+            all_vars <- c(all_vars, input$moderator_var)
+          }
+          if(!is.null(input$covariates) && length(input$covariates) > 0) {
+            all_vars <- c(all_vars, input$covariates)
+          }
+          complete_cases <- complete.cases(reduced_data[all_vars])
+          n_complete <- sum(complete_cases)
+          button_enabled <- (n_complete >= 3)
+        }
+      }, error = function(e) {
+        print(paste("DEBUG: Error checking outliers for button:", e$message))
+        button_enabled <- FALSE
+      })
+    }
+    
+    actionButton("run_analysis_no_outliers", button_text, 
+                class = "btn-warning",
+                style = "width: 100%;",
+                disabled = !button_enabled)
+  })
+  
+  # Analysis execution - generic function for all PROCESS models
+  original_analysis <- eventReactive(input$run_analysis, {
+    print("DEBUG: ===== original_analysis eventReactive STARTED =====")
+    
+    # Basic validation with detailed debug
+    print("DEBUG: Checking basic validation...")
+    print(paste("DEBUG: rv$original_dataset is NULL?", is.null(rv$original_dataset)))
+    print(paste("DEBUG: input$outcome_var:", input$outcome_var))
+    print(paste("DEBUG: input$predictor_var:", input$predictor_var))
+    print(paste("DEBUG: input$process_model:", input$process_model))
+    
+    validate(
+      need(rv$original_dataset, "Dataset not loaded"),
+      need(input$outcome_var, "Outcome variable not selected"),
+      need(input$predictor_var, "Predictor variable not selected"),
+      need(input$process_model, "PROCESS model not selected"),
+      need(input$outcome_var != input$predictor_var, 
+           "Outcome and predictor must be different variables")
+    )
+    print("DEBUG: Basic validation passed")
+    
+    # Model-specific validation
+    model_num <- as.numeric(input$process_model)
+    print(paste("DEBUG: Model number:", model_num))
+    
+    # Moderation models require moderator (Model 5 handled separately)
+    if(model_num %in% c(1, 2, 3, 14, 15, 58, 59, 74)) {
+      print("DEBUG: This is a moderation model - checking for moderator")
+      print(paste("DEBUG: input$moderator_var:", input$moderator_var))
+      print(paste("DEBUG: moderator_var is NULL?", is.null(input$moderator_var)))
+      print(paste("DEBUG: moderator_var is empty?", is.null(input$moderator_var) || input$moderator_var == ""))
+      validate(
+        need(!is.null(input$moderator_var) && input$moderator_var != "", 
+             "Moderator variable is required for this model")
+      )
+      print("DEBUG: Moderator validation passed")
+    }
+    
+    # Model 4: Simple/Parallel mediation (1 or more mediators, up to 10)
+    if(model_num == 4) {
+      print("DEBUG: This is Model 4 (simple/parallel mediation) - checking for mediator(s)")
+      print(paste("DEBUG: input$mediator_vars:", paste(input$mediator_vars, collapse=", ")))
+      validate(
+        need(!is.null(input$mediator_vars) && length(input$mediator_vars) >= 1, 
+             "Model 4 requires at least one mediator variable")
+      )
+      validate(
+        need(length(input$mediator_vars) <= 10,
+             "Model 4 allows up to 10 mediators")
+      )
+      print("DEBUG: Mediator validation passed (Model 4)")
+    }
+    
+    # Model 5: First and Second Stage Moderation (requires moderator W and mediator M)
+    if(model_num == 5) {
+      print("DEBUG: This is Model 5 - checking for moderator W and mediator M")
+      validate(
+        need(!is.null(input$moderator_var) && input$moderator_var != "", 
+             "Model 5 requires moderator variable W")
+      )
+      validate(
+        need(!is.null(input$mediator_vars) && length(input$mediator_vars) >= 1, 
+             "Model 5 requires at least one mediator variable")
+      )
+      print("DEBUG: Model 5 validation passed")
+    }
+    
+    # Models 6, 7, 8, 14: Multiple mediators
+    if(model_num %in% c(6, 7, 8, 14)) {
+      print("DEBUG: This is a mediation model - checking for mediator(s)")
+      print(paste("DEBUG: input$mediator_vars:", paste(input$mediator_vars, collapse=", ")))
+      validate(
+        need(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0, 
+             "At least one mediator variable is required for this model")
+      )
+      # Model 6 requires 2-6 mediators
+      if(model_num == 6) {
+        validate(
+          need(length(input$mediator_vars) >= 2 && length(input$mediator_vars) <= 6,
+               "Model 6 requires between 2 and 6 mediators")
+        )
+      }
+      print("DEBUG: Mediator validation passed")
+    }
+    
+    print("DEBUG: All validation passed, proceeding with req()")
+    req(rv$original_dataset, input$outcome_var, input$predictor_var, input$process_model)
+    print("DEBUG: req() passed, entering withProgress")
+    
+    withProgress(message = 'Running analysis...', value = 0, {
+      print("DEBUG: Inside withProgress - Running analysis with original dataset")
+      rv$outliers_info <- NULL
+      
+      # Build variable list for complete cases check
+      print("DEBUG: Building variable list for complete cases check")
+      all_vars_orig <- c(input$outcome_var, input$predictor_var)
+      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        all_vars_orig <- c(all_vars_orig, input$mediator_vars)
+      }
+      if(!is.null(input$moderator_var) && input$moderator_var != "") {
+        all_vars_orig <- c(all_vars_orig, input$moderator_var)
+      }
+      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+        all_vars_orig <- c(all_vars_orig, input$moderator2_var)
+      }
+      if(!is.null(input$covariates) && length(input$covariates) > 0) {
+        all_vars_orig <- c(all_vars_orig, input$covariates)
+      }
+      print(paste("DEBUG: Variables for complete cases:", paste(all_vars_orig, collapse=", ")))
+      
+      # Check complete cases
+      print("DEBUG: Checking complete cases...")
+      complete_cases_orig <- complete.cases(rv$original_dataset[all_vars_orig])
+      n_complete_orig <- sum(complete_cases_orig)
+      print(paste("DEBUG: Complete cases:", n_complete_orig, "out of", nrow(rv$original_dataset)))
+      
+      if(n_complete_orig < 3) {
+        print("DEBUG: ERROR - Insufficient complete cases")
+        stop(sprintf("Only %d complete cases available. This is insufficient for analysis.", n_complete_orig))
+      }
+      
+      process_data_orig <- rv$original_dataset[complete_cases_orig, ]
+      print(paste("DEBUG: Process data prepared with", nrow(process_data_orig), "rows"))
+      
+      # Store settings
+      analysis_settings <- list(
+        model = as.numeric(input$process_model),
+        centering = input$centering,
+        use_bootstrap = input$use_bootstrap,
+        boot_samples = if(input$use_bootstrap) input$boot_samples else NULL,
+        hc_method = input$hc_method,
+        conf_level = input$conf_level,
+        dataset_name = tools::file_path_sans_ext(basename(input$data_file$name)),
+        original_n = nrow(rv$original_dataset),
+        outliers_removed = FALSE,
+        outliers_count = 0,
+        outliers_threshold = if(is_binary_variable(rv$original_dataset, input$outcome_var)) {
+          cooks_threshold_value()
+        } else {
+          input$residual_threshold
+        },
+        outliers_method = if(is_binary_variable(rv$original_dataset, input$outcome_var)) {
+          "Cook's Distance"
+        } else {
+          "Standardized Residuals"
+        },
+        predictor_var = input$predictor_var,
+        outcome_var = input$outcome_var,
+        mediator_vars = if(!is.null(input$mediator_vars)) input$mediator_vars else NULL,
+        moderator_var = input$moderator_var,
+        moderator2_var = input$moderator2_var,
+        covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
+      )
+      
+      # Build PROCESS arguments
+      print("DEBUG: Building PROCESS arguments...")
+      model_num <- as.numeric(input$process_model)
+      
+      # Handle xmint option for Model 4 - center must be 0 when xmint is used
+      center_value <- as.numeric(input$centering)
+      if(model_num == 4 && input$xmint) {
+        center_value <- 0  # xmint requires center = 0
+      }
+      
+      process_args <- list(
+        data = process_data_orig,
+        y = input$outcome_var,
+        x = input$predictor_var,
+        model = model_num,
+        center = center_value,
+        conf = input$conf_level,
+        modelbt = if(input$use_bootstrap) 1 else 0,
+        boot = if(input$use_bootstrap) input$boot_samples else 0,
+        hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
+        covcoeff = if(input$covcoeff) 1 else 0,
+        cov = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else "xxxxx"
+      )
+      
+      # Add model-specific variables
+      # Models 4, 5, 6, 7, 8, 14: Mediation models (with mediators)
+      # Note: model_num was already defined above
+      if(model_num %in% c(4, 5, 6, 7, 8, 14)) {
+        if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+          # Validate that mediators are not also used as moderators
+          if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var))
+          }
+          if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var))
+          }
+          # Validate that X, Y, or mediators are not duplicated
+          if(input$predictor_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var))
+          }
+          if(input$outcome_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var))
+          }
+          # Check for duplicate mediators
+          if(length(input$mediator_vars) != length(unique(input$mediator_vars))) {
+            stop("Error: Duplicate mediator variables detected. Please remove duplicates.")
+          }
+          
+          mediator_arg <- if(length(input$mediator_vars) == 1) {
+            input$mediator_vars[1]
+          } else {
+            input$mediator_vars
+          }
+          process_args$m <- mediator_arg
+          
+          # Add contrast for mediation models (Model 4 and 6 with multiple mediators)
+          if(model_num %in% c(4, 6) && input$pairwise_contrasts && length(input$mediator_vars) > 1) {
+            process_args$contrast <- 1
+          }
+        }
+      }
+      
+      # Add moderators ONLY for models that require them (not mediation-only models like 4, 6, 7, 8)
+      # Model 4, 6, 7, 8 are pure mediation models and don't use W or Z
+      # Model 5, 14 use both mediators and moderators
+      if(model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)) {
+        if(!is.null(input$moderator_var) && input$moderator_var != "") {
+          # Validate that moderator is not also used as mediator
+          if(!is.null(input$mediator_vars) && input$moderator_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var))
+          }
+          process_args$w <- input$moderator_var
+          if(input$jn) process_args$jn <- 1
+          if(input$probe_interactions && !is.null(input$conditioning_values)) {
+            process_args$moments <- ifelse(input$conditioning_values == "0", 1, 0)
+          }
+        }
+        
+        if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+          # Validate that moderator2 is not also used as mediator or moderator1
+          if(!is.null(input$mediator_vars) && input$moderator2_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var))
+          }
+          if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
+            stop("Error: W and Z moderators must be different variables.")
+          }
+          process_args$z <- input$moderator2_var
+        }
+      }
+      
+      # Add other options
+      print("DEBUG: Adding optional PROCESS arguments...")
+      if(input$effsize) process_args$effsize <- 1
+      if(input$stand) process_args$stand <- 1
+      if(input$normal) process_args$normal <- 1
+      if(input$matrices) process_args$matrices <- 1
+      if(input$covcoeff) process_args$covcoeff <- 1
+      if(input$covmy) {
+        # When covmy==1, PROCESS excludes covariates from the outcome equation
+        # If a covariate is also a moderator, it appears in all equations as moderator
+        # but is excluded from outcome equation as covariate, making column sum to 0
+        # This triggers error 51: "A variable you specified as a covariate is a moderator in all equations"
+        # Solution: When covmy==1, we must ensure NO covariate is also a moderator
+        if(!is.null(input$covariates) && length(input$covariates) > 0) {
+          # Check if any covariate is also a moderator
+          if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$covariates) {
+            stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator. Please remove it from one of these roles.", input$moderator_var))
+          }
+          if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$covariates) {
+            stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator. Please remove it from one of these roles.", input$moderator2_var))
+          }
+        }
+        process_args$covmy <- 1
+      }
+      if(input$describe) process_args$describe <- 1
+      if(input$listmiss) process_args$listmiss <- 1
+      if(input$diagnose) process_args$diagnose <- 1
+      if(input$ssquares) process_args$ssquares <- 1
+      if(input$modelres) process_args$modelres <- 1
+      if(input$dominate) process_args$dominate <- 1
+      if(input$subsets) process_args$subsets <- 1
+      # xmint only for Model 4 - explicitly set to 0 if not used
+      # When xmint=1 for Model 4, PROCESS automatically:
+      #   - Converts to Model 74 internally (line 807-816)
+      #   - Sets w<-x and model<-74 (line 809)
+      #   - Automatically generates X*M interaction terms (line 2115-2119)
+      #   - Handles interaction term creation - no manual calculation needed
+      # However, for continuous X, PROCESS requires xrefval != 999 (line 1507-1508)
+      # For dichotomous X, PROCESS automatically sets xrefval to [xmn, xmx] if xrefval=999 (line 1509-1510)
+      if(model_num == 4 && input$xmint) {
+        process_args$xmint <- 1
+        # When xmint is used, center must be 0 (already set above, line 814-815)
+        # Check if X is dichotomous (binary)
+        x_is_dichotomous <- is_binary_variable(process_data_orig, input$predictor_var)
+        if(x_is_dichotomous) {
+          # For dichotomous X, don't pass xrefval - PROCESS will handle it automatically (line 1509-1510)
+          # It will set xrefval to [min, max] automatically
+        } else {
+          # For continuous X, PROCESS requires xrefval to be set (not 999)
+          # Use mean as default - PROCESS will add xrefval+1 to create a range for probing (line 1515)
+          x_mean <- mean(process_data_orig[[input$predictor_var]], na.rm = TRUE)
+          process_args$xrefval <- x_mean
+        }
+      } else {
+        # Explicitly set xmint to 0 when not used to prevent any default behavior
+        process_args$xmint <- 0
+      }
+      if(input$total) process_args$total <- 1
+      # Disable save and plot by default to avoid issues in Shiny
+      # save saves to R working directory which may not be accessible
+      # plot opens graphics windows that can't be easily saved
+      if(input$save) {
+        process_args$save <- 1
+        showNotification("Note: Files will be saved to the R working directory. Use Download buttons for easier access.", type = "warning", duration = 5)
+      }
+      # Only enable plot if user explicitly wants it (with warning)
+      if(input$plot) {
+        process_args$plot <- 1
+        showNotification("Note: This will open R graphics device windows that cannot be easily saved or customized.", type = "warning", duration = 5)
+      } else {
+        # Explicitly set plot to 0 to prevent any default plotting
+        process_args$plot <- 0
+      }
+      if(input$probe_interactions) {
+        # Parse probe threshold (e.g., "p < .10" -> 0.10)
+        probe_text <- input$probe_threshold
+        probe_val <- tryCatch({
+          # Extract number from "p < .10" or "p < 0.10"
+          num_match <- regmatches(probe_text, regexpr("0?\\.?\\d+", probe_text))
+          if(length(num_match) > 0) {
+            as.numeric(num_match[1])
+          } else {
+            0.1
+          }
+        }, error = function(e) 0.1)
+        process_args$intprobe <- probe_val
+      }
+      if(input$seed != -999) process_args$seed <- input$seed
+      if(input$decimals != 4) process_args$decimals <- input$decimals
+      print("DEBUG: All PROCESS arguments prepared")
+      
+      # DEBUG: Print process arguments
+      print("=== DEBUG: PROCESS Arguments ===")
+      print(paste("Model:", process_args$model))
+      print(paste("Y:", process_args$y))
+      print(paste("X:", process_args$x))
+      if("w" %in% names(process_args)) print(paste("W:", process_args$w))
+      if("m" %in% names(process_args)) print(paste("M:", paste(process_args$m, collapse=", ")))
+      print(paste("Data rows:", nrow(process_args$data)))
+      print("=================================")
+      
+      # Run PROCESS with error handling
+      tryCatch({
+        print("DEBUG: About to call PROCESS function...")
+        process_output <- capture.output({
+          result <- do.call(process, process_args)
+        })
+        print(paste("DEBUG: PROCESS completed. Output lines:", length(process_output)))
+        
+        # Store results
+        rv$analysis_results <- list(
+          output = process_output,
+          data_used = process_data_orig,
+          original_data = rv$original_dataset,
+          settings = analysis_settings
+        )
+        print("DEBUG: Results stored in rv$analysis_results")
+        print(paste("DEBUG: rv$analysis_results is NULL?", is.null(rv$analysis_results)))
+        print(paste("DEBUG: Number of output lines:", length(rv$analysis_results$output)))
+      }, error = function(e) {
+        print(paste("DEBUG: ERROR in PROCESS execution:", e$message))
+        print(paste("DEBUG: Error class:", class(e)))
+        showNotification(paste("Error running PROCESS analysis:", e$message), type = "error")
+        rv$analysis_results <- NULL
+        stop(e)
+      })
+      
+      print("DEBUG: ===== original_analysis eventReactive COMPLETED =====")
+      print(paste("DEBUG: Returning results. Is NULL?", is.null(rv$analysis_results)))
+      rv$analysis_results
+    })
+  })
+  
+  # Analysis with outliers removed
+  outliers_analysis <- eventReactive(input$run_analysis_no_outliers, {
+    # Clear any previous validation errors
+    rv$validation_error <- NULL
+    
+    # Basic validation
+    tryCatch({
+      validate(
+        need(rv$original_dataset, "Dataset not loaded"),
+        need(input$outcome_var, "Outcome variable not selected"),
+        need(input$predictor_var, "Predictor variable not selected"),
+        need(input$process_model, "PROCESS model not selected")
+      )
+    }, error = function(e) {
+      rv$validation_error <- conditionMessage(e)
+      stop(e)
+    })
+    
+    # Model-specific validation
+    model_num <- as.numeric(input$process_model)
+    if(model_num %in% c(1, 2, 3, 14, 15, 58, 59, 74)) {
+      validate(
+        need(!is.null(input$moderator_var) && input$moderator_var != "", 
+             "Moderator variable is required for this model")
+      )
+    }
+    if(model_num == 4) {
+      validate(
+        need(!is.null(input$mediator_vars) && length(input$mediator_vars) >= 1, 
+             "Model 4 requires at least one mediator variable")
+      )
+      validate(
+        need(length(input$mediator_vars) <= 10,
+             "Model 4 allows up to 10 mediators")
+      )
+    }
+    if(model_num == 5) {
+      validate(
+        need(!is.null(input$moderator_var) && input$moderator_var != "", 
+             "Model 5 requires moderator variable W")
+      )
+      validate(
+        need(!is.null(input$mediator_vars) && length(input$mediator_vars) >= 1, 
+             "Model 5 requires at least one mediator variable")
+      )
+    }
+    if(model_num %in% c(6, 7, 8, 14)) {
+      validate(
+        need(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0, 
+             "At least one mediator variable is required for this model")
+      )
+      if(model_num == 6) {
+        validate(
+          need(length(input$mediator_vars) >= 2 && length(input$mediator_vars) <= 6,
+               "Model 6 requires between 2 and 6 mediators")
+        )
+      }
+    }
+    
+    req(rv$original_dataset, input$outcome_var, input$predictor_var, input$process_model)
+    
+    withProgress(message = 'Running analysis...', value = 0, {
+      print("Running analysis with outliers removed")
+      outliers <- identify_outliers()
+      
+      # Check if outliers were found
+      if(is.null(outliers) || is.null(outliers$cases) || length(outliers$cases) == 0) {
+        stop("No outliers found to remove. Please check your outlier detection settings.")
+      }
+      
+      rv$outliers_info <- list(
+        count = outliers$count,
+        threshold = outliers$threshold
+      )
+      
+      reduced_data <- rv$original_dataset[-outliers$cases, ]
+      
+      # Build variable list
+      all_vars <- c(input$outcome_var, input$predictor_var)
+      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        all_vars <- c(all_vars, input$mediator_vars)
+      }
+      if(!is.null(input$moderator_var)) {
+        all_vars <- c(all_vars, input$moderator_var)
+      }
+      if(!is.null(input$moderator2_var)) {
+        all_vars <- c(all_vars, input$moderator2_var)
+      }
+      if(!is.null(input$covariates) && length(input$covariates) > 0) {
+        all_vars <- c(all_vars, input$covariates)
+      }
+      
+      complete_cases <- complete.cases(reduced_data[all_vars])
+      n_complete <- sum(complete_cases)
+      
+      if(n_complete < 3) {
+        stop(sprintf("After removing outliers, only %d complete cases remain. This is insufficient for analysis.", n_complete))
+      }
+      
+      process_data <- reduced_data[complete_cases, ]
+      
+      # Store settings
+      analysis_settings <- list(
+        model = as.numeric(input$process_model),
+        centering = input$centering,
+        use_bootstrap = input$use_bootstrap,
+        boot_samples = if(input$use_bootstrap) input$boot_samples else NULL,
+        hc_method = input$hc_method,
+        conf_level = input$conf_level,
+        dataset_name = tools::file_path_sans_ext(basename(input$data_file$name)),
+        original_n = nrow(rv$original_dataset),
+        outliers_removed = TRUE,
+        outliers_count = outliers$count,
+        outliers_threshold = outliers$threshold,
+        outliers_method = outliers$method,
+        predictor_var = input$predictor_var,
+        outcome_var = input$outcome_var,
+        mediator_vars = if(!is.null(input$mediator_vars)) input$mediator_vars else NULL,
+        moderator_var = input$moderator_var,
+        moderator2_var = input$moderator2_var,
+        covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
+      )
+      
+      # Build PROCESS arguments (same as original_analysis)
+      model_num <- as.numeric(input$process_model)
+      
+      # Handle xmint option for Model 4 - center must be 0 when xmint is used
+      center_value <- as.numeric(input$centering)
+      if(model_num == 4 && input$xmint) {
+        center_value <- 0  # xmint requires center = 0
+      }
+      
+      process_args <- list(
+        data = process_data,
+        y = input$outcome_var,
+        x = input$predictor_var,
+        model = model_num,
+        center = center_value,
+        conf = input$conf_level,
+        modelbt = if(input$use_bootstrap) 1 else 0,
+        boot = if(input$use_bootstrap) input$boot_samples else 0,
+        hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
+        covcoeff = if(input$covcoeff) 1 else 0,
+        cov = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else "xxxxx"
+      )
+      
+      # Add model-specific variables
+      # Models 4, 5, 6, 7, 8, 14: Mediation models (with mediators)
+      if(model_num %in% c(4, 5, 6, 7, 8, 14)) {
+        if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+          # Validate that mediators are not also used as moderators
+          if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var))
+          }
+          if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var))
+          }
+          # Validate that X, Y, or mediators are not duplicated
+          if(input$predictor_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var))
+          }
+          if(input$outcome_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var))
+          }
+          # Check for duplicate mediators
+          if(length(input$mediator_vars) != length(unique(input$mediator_vars))) {
+            stop("Error: Duplicate mediator variables detected. Please remove duplicates.")
+          }
+          
+          mediator_arg <- if(length(input$mediator_vars) == 1) {
+            input$mediator_vars[1]
+          } else {
+            input$mediator_vars
+          }
+          process_args$m <- mediator_arg
+          
+          # Add contrast for mediation models (Model 4 and 6 with multiple mediators)
+          if(model_num %in% c(4, 6) && input$pairwise_contrasts && length(input$mediator_vars) > 1) {
+            process_args$contrast <- 1
+          }
+        }
+      }
+      
+      # Add moderators ONLY for models that require them (not mediation-only models like 4, 6, 7, 8)
+      # Model 4, 6, 7, 8 are pure mediation models and don't use W or Z
+      # Model 5, 14 use both mediators and moderators
+      if(model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)) {
+        if(!is.null(input$moderator_var) && input$moderator_var != "") {
+          # Validate that moderator is not also used as mediator
+          if(!is.null(input$mediator_vars) && input$moderator_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var))
+          }
+          process_args$w <- input$moderator_var
+          if(input$jn) process_args$jn <- 1
+          if(input$probe_interactions && !is.null(input$conditioning_values)) {
+            process_args$moments <- ifelse(input$conditioning_values == "0", 1, 0)
+          }
+        }
+        
+        if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+          # Validate that moderator2 is not also used as mediator or moderator1
+          if(!is.null(input$mediator_vars) && input$moderator2_var %in% input$mediator_vars) {
+            stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var))
+          }
+          if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
+            stop("Error: W and Z moderators must be different variables.")
+          }
+          process_args$z <- input$moderator2_var
+        }
+      }
+      
+      if(input$effsize) process_args$effsize <- 1
+      if(input$stand) process_args$stand <- 1
+      if(input$normal) process_args$normal <- 1
+      if(input$matrices) process_args$matrices <- 1
+      if(input$covcoeff) process_args$covcoeff <- 1
+      if(input$covmy) {
+        # When covmy==1, PROCESS excludes covariates from the outcome equation
+        # If a covariate is also a moderator, it appears in all equations as moderator
+        # but is excluded from outcome equation as covariate, making column sum to 0
+        # This triggers error 51: "A variable you specified as a covariate is a moderator in all equations"
+        # Solution: When covmy==1, we must ensure NO covariate is also a moderator
+        if(!is.null(input$covariates) && length(input$covariates) > 0) {
+          # Check if any covariate is also a moderator
+          if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$covariates) {
+            stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator. Please remove it from one of these roles.", input$moderator_var))
+          }
+          if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$covariates) {
+            stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator. Please remove it from one of these roles.", input$moderator2_var))
+          }
+        }
+        process_args$covmy <- 1
+      }
+      if(input$describe) process_args$describe <- 1
+      if(input$listmiss) process_args$listmiss <- 1
+      if(input$diagnose) process_args$diagnose <- 1
+      if(input$ssquares) process_args$ssquares <- 1
+      if(input$modelres) process_args$modelres <- 1
+      if(input$dominate) process_args$dominate <- 1
+      if(input$subsets) process_args$subsets <- 1
+      # xmint only for Model 4
+      # When xmint=1 for Model 4, PROCESS automatically:
+      #   - Converts to Model 74 internally (line 807-816)
+      #   - Sets w<-x and model<-74 (line 809)
+      #   - Automatically generates X*M interaction terms (line 2115-2119)
+      #   - Handles interaction term creation - no manual calculation needed
+      # However, for continuous X, PROCESS requires xrefval != 999 (line 1507-1508)
+      # For dichotomous X, PROCESS automatically sets xrefval to [xmn, xmx] if xrefval=999 (line 1509-1510)
+      if(model_num == 4 && input$xmint) {
+        process_args$xmint <- 1
+        # When xmint is used, center must be 0 (already set above, line 814-815)
+        # Check if X is dichotomous (binary)
+        x_is_dichotomous <- is_binary_variable(process_data, input$predictor_var)
+        if(x_is_dichotomous) {
+          # For dichotomous X, don't pass xrefval - PROCESS will handle it automatically (line 1509-1510)
+          # It will set xrefval to [min, max] automatically
+        } else {
+          # For continuous X, PROCESS requires xrefval to be set (not 999)
+          # Use mean as default - PROCESS will add xrefval+1 to create a range for probing (line 1515)
+          x_mean <- mean(process_data[[input$predictor_var]], na.rm = TRUE)
+          process_args$xrefval <- x_mean
+        }
+      } else {
+        # Explicitly set xmint to 0 when not used to prevent any default behavior
+        process_args$xmint <- 0
+      }
+      if(input$total) process_args$total <- 1
+      # Disable save and plot by default to avoid issues in Shiny
+      if(input$save) {
+        process_args$save <- 1
+      }
+      # Only enable plot if user explicitly wants it
+      if(input$plot) {
+        process_args$plot <- 1
+      } else {
+        process_args$plot <- 0
+      }
+      if(input$probe_interactions) {
+        # Parse probe threshold (e.g., "p < .10" -> 0.10)
+        probe_text <- input$probe_threshold
+        probe_val <- tryCatch({
+          # Extract number from "p < .10" or "p < 0.10"
+          num_match <- regmatches(probe_text, regexpr("0?\\.?\\d+", probe_text))
+          if(length(num_match) > 0) {
+            as.numeric(num_match[1])
+          } else {
+            0.1
+          }
+        }, error = function(e) 0.1)
+        process_args$intprobe <- probe_val
+      }
+      if(input$seed != -999) process_args$seed <- input$seed
+      if(input$decimals != 4) process_args$decimals <- input$decimals
+      
+      # DEBUG: Print process arguments
+      print("=== DEBUG: PROCESS Arguments (Outliers Removed) ===")
+      print(paste("Model:", process_args$model))
+      print(paste("Y:", process_args$y))
+      print(paste("X:", process_args$x))
+      if("w" %in% names(process_args)) print(paste("W:", process_args$w))
+      if("m" %in% names(process_args)) print(paste("M:", paste(process_args$m, collapse=", ")))
+      print(paste("Data rows:", nrow(process_args$data)))
+      print("=================================")
+      
+      # Run PROCESS with error handling
+      tryCatch({
+        print("DEBUG: About to call PROCESS function (outliers removed)...")
+        process_output <- capture.output({
+          result <- do.call(process, process_args)
+        })
+        print(paste("DEBUG: PROCESS completed. Output lines:", length(process_output)))
+        
+        # Store results
+        rv$analysis_results <- list(
+          output = process_output,
+          data_used = process_data,
+          original_data = rv$original_dataset,
+          settings = analysis_settings
+        )
+        # Clear validation error on successful run
+        rv$validation_error <- NULL
+        print("DEBUG: Results stored in rv$analysis_results (outliers removed)")
+      }, error = function(e) {
+        print(paste("DEBUG: ERROR in PROCESS execution (outliers removed):", e$message))
+        showNotification(paste("Error running PROCESS analysis:", e$message), type = "error")
+        rv$analysis_results <- NULL
+        stop(e)
+      })
+      
+      rv$analysis_results
+    })
+  }, ignoreNULL = TRUE)
+  
+  # Observer to trigger when original_analysis completes
+  observeEvent(original_analysis(), {
+    print("DEBUG: original_analysis() completed, updating rv$analysis_results")
+    rv$analysis_results <- original_analysis()
+    print(paste("DEBUG: rv$analysis_results updated. Is NULL?", is.null(rv$analysis_results)))
+  }, ignoreNULL = TRUE)
+  
+  # Observer to trigger when outliers_analysis completes
+  observeEvent(outliers_analysis(), {
+    print("DEBUG: outliers_analysis() completed, updating rv$analysis_results")
+    rv$analysis_results <- outliers_analysis()
+    print(paste("DEBUG: rv$analysis_results updated. Is NULL?", is.null(rv$analysis_results)))
+  }, ignoreNULL = TRUE)
+  
+  # Combined results reactive - use stored results from rv
+  analysis_results <- reactive({
+    print(paste("DEBUG: analysis_results reactive called. rv$analysis_results is NULL?", is.null(rv$analysis_results)))
+    if(is.null(rv$analysis_results)) {
+      # Try to get from eventReactive if rv is null
+      if(input$run_analysis > 0 && (input$run_analysis_no_outliers == 0 || input$run_analysis >= input$run_analysis_no_outliers)) {
+        print("DEBUG: rv$analysis_results is NULL, trying to get from original_analysis()")
+        tryCatch({
+          result <- original_analysis()
+          if(!is.null(result)) {
+            rv$analysis_results <- result
+            print("DEBUG: Retrieved results from original_analysis()")
+          }
+        }, error = function(e) {
+          print(paste("DEBUG: Error getting from original_analysis():", e$message))
+        })
+      } else if(input$run_analysis_no_outliers > 0) {
+        print("DEBUG: rv$analysis_results is NULL, trying to get from outliers_analysis()")
+        tryCatch({
+          result <- outliers_analysis()
+          if(!is.null(result)) {
+            rv$analysis_results <- result
+            print("DEBUG: Retrieved results from outliers_analysis()")
+          }
+        }, error = function(e) {
+          print(paste("DEBUG: Error getting from outliers_analysis():", e$message))
+        })
+      }
+    }
+    rv$analysis_results
+  })
+  
+  # Helper function to create bivariate correlations
+  create_bivariate_correlations <- function(data, predictor_var, outcome_var, settings) {
+    outcome_is_binary <- is_binary_variable(data, outcome_var)
+    complete_data <- data[complete.cases(data[c(predictor_var, outcome_var)]), ]
+    n <- nrow(complete_data)
+    
+    dataset_desc <- if(settings$outliers_removed) {
+      sprintf("the original dataset (before %d outlier%s removed)", 
+              settings$outliers_count, ifelse(settings$outliers_count == 1, "", "s"))
+    } else {
+      "the original dataset (all cases included)"
+    }
+    
+    if(outcome_is_binary) {
+      pearson_test <- cor.test(complete_data[[predictor_var]], complete_data[[outcome_var]], 
+                               method = "pearson")
+      pearson_r <- pearson_test$estimate
+      pearson_p <- pearson_test$p.value
+      pearson_ci <- pearson_test$conf.int
+      
+      output <- c(
+        "<br><strong>BIVARIATE CORRELATION: PREDICTOR AND OUTCOME</strong>",
+        sprintf("<em>This shows the zero-order (unadjusted) relationship between the predictor and outcome variables, calculated on %s:</em>", dataset_desc),
+        "",
+        sprintf("<strong>Point-biserial correlation (Pearson's r):</strong> %.4f, 95%% CI [%.4f, %.4f], p %s", 
+                pearson_r, pearson_ci[1], pearson_ci[2],
+                ifelse(pearson_p < .001, "< .001", sprintf("= %.3f", pearson_p))),
+        sprintf("<em>Sample size: %d cases (listwise deletion for these two variables)</em>", n),
+        ""
+      )
+    } else {
+      pearson_test <- cor.test(complete_data[[predictor_var]], complete_data[[outcome_var]], 
+                               method = "pearson")
+      pearson_r <- pearson_test$estimate
+      pearson_p <- pearson_test$p.value
+      pearson_ci <- pearson_test$conf.int
+      
+      spearman_test <- cor.test(complete_data[[predictor_var]], complete_data[[outcome_var]], 
+                                method = "spearman")
+      spearman_rho <- spearman_test$estimate
+      spearman_p <- spearman_test$p.value
+      
+      output <- c(
+        "<br><strong>BIVARIATE CORRELATION: PREDICTOR AND OUTCOME</strong>",
+        sprintf("<em>This shows the zero-order (unadjusted) relationship between the predictor and outcome variables, calculated on %s:</em>", dataset_desc),
+        "",
+        sprintf("<strong>Pearson's r:</strong> %.4f, 95%% CI [%.4f, %.4f], p %s", 
+                pearson_r, pearson_ci[1], pearson_ci[2],
+                ifelse(pearson_p < .001, "< .001", sprintf("= %.3f", pearson_p))),
+        sprintf("<strong>Spearman's ρ:</strong> %.4f, p %s",
+                spearman_rho,
+                ifelse(spearman_p < .001, "< .001", sprintf("= %.3f", spearman_p))),
+        sprintf("<em>Sample size: %d cases (listwise deletion for these two variables)</em>", n),
+        ""
+      )
+    }
+    
+    paste(output, collapse = "<br>")
+  }
+  
+  # Helper function to create missing data breakdown
+  create_missing_data_breakdown <- function(data, settings) {
+    all_vars <- c(settings$outcome_var, settings$predictor_var)
+    if(!is.null(settings$mediator_vars)) all_vars <- c(all_vars, settings$mediator_vars)
+    if(!is.null(settings$moderator_var)) all_vars <- c(all_vars, settings$moderator_var)
+    if(!is.null(settings$moderator2_var)) all_vars <- c(all_vars, settings$moderator2_var)
+    if(!is.null(settings$covariates)) all_vars <- c(all_vars, settings$covariates)
+    
+    missing_breakdown <- sapply(all_vars, function(var) {
+      sum(is.na(data[[var]]))
+    })
+    
+    missing_breakdown <- missing_breakdown[missing_breakdown > 0]
+    
+    if(length(missing_breakdown) > 0) {
+      breakdown_lines <- sapply(names(missing_breakdown), function(var) {
+        count <- missing_breakdown[var]
+        sprintf("  %s: %d case%s missing", var, count, ifelse(count == 1, "", "s"))
+      })
+      paste(breakdown_lines, collapse = "<br>")
+    } else {
+      NULL
+    }
+  }
+  
+  # Format PROCESS output for display
+  create_formatted_output <- function(analysis_results) {
+    if(is.null(analysis_results)) return("")
+    
+    settings <- analysis_results$settings
+    process_output <- analysis_results$output
+    
+    # Build list of main variables (not covariates) for highlighting
+    main_variables <- c(settings$predictor_var, settings$outcome_var)
+    if(!is.null(settings$mediator_vars)) {
+      main_variables <- c(main_variables, settings$mediator_vars)
+    }
+    if(!is.null(settings$moderator_var) && settings$moderator_var != "") {
+      main_variables <- c(main_variables, settings$moderator_var)
+    }
+    if(!is.null(settings$moderator2_var) && settings$moderator2_var != "") {
+      main_variables <- c(main_variables, settings$moderator2_var)
+    }
+    # Get covariate names to exclude
+    covariate_names <- if(!is.null(settings$covariates)) settings$covariates else character(0)
+    
+    # Start with summary
+    output_text <- c(
+      "<strong>ANALYSIS SUMMARY</strong>",
+      "",
+      sprintf("Dataset name: %s", settings$dataset_name),
+      sprintf("Dataset size: %d cases", settings$original_n),
+      sprintf("PROCESS Model: %d", settings$model),
+      if(settings$outliers_removed) {
+        if(settings$outliers_method == "Cook's Distance") {
+          sprintf("%d influential cases (Cook's D > %.4f) removed", 
+                  settings$outliers_count, settings$outliers_threshold)
+        } else {
+          sprintf("%d standardized residual outliers (|SR| > %.1f) removed", 
+                  settings$outliers_count, settings$outliers_threshold)
+        }
+      } else {
+        "Original dataset with all cases"
+      },
+      "",
+      sprintf("Predictor variable: %s", settings$predictor_var),
+      sprintf("Outcome variable: %s", settings$outcome_var),
+      if(!is.null(settings$mediator_vars)) {
+        sprintf("Mediator variable(s): %s", paste(settings$mediator_vars, collapse = ", "))
+      },
+      # Only show moderator variables for models that use them
+      if(!is.null(settings$moderator_var) && settings$moderator_var != "" && 
+         settings$model %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)) {
+        sprintf("Moderator variable: %s", settings$moderator_var)
+      },
+      if(!is.null(settings$moderator2_var) && settings$moderator2_var != "" &&
+         settings$model %in% c(5, 58, 59, 74)) {
+        sprintf("Second Moderator variable: %s", settings$moderator2_var)
+      },
+      if(!is.null(settings$covariates)) {
+        sprintf("Covariate(s): %s", paste(settings$covariates, collapse = ", "))
+      } else {
+        "Covariate(s): none"
+      },
+      "",
+      "<strong>ANALYSIS SETTINGS</strong>",
+      paste("Centering:", switch(settings$centering,
+        "0" = "No centering",
+        "1" = "All variables that define products",
+        "2" = "Only continuous variables that define products"
+      )),
+      if(settings$use_bootstrap) paste("Bootstrap samples:", settings$boot_samples),
+      paste("Confidence level:", settings$conf_level, "%"),
+      paste("Heteroscedasticity-consistent SE:", switch(settings$hc_method,
+        "none" = "None",
+        "0" = "HC0 (Huber-White)",
+        "1" = "HC1 (Hinkley)",
+        "2" = "HC2",
+        "3" = "HC3 (Davidson-MacKinnon)",
+        "4" = "HC4 (Cribari-Neto)"
+      )),
+      ""
+    )
+    
+    # Add bivariate correlations
+    bivariate_cor <- create_bivariate_correlations(
+      analysis_results$original_data,
+      settings$predictor_var,
+      settings$outcome_var,
+      settings
+    )
+    
+    # Process PROCESS output - basic formatting with red highlighting for significant results
+    # Filter out bootstrap progress lines only
+    filtered_output <- process_output[
+      !grepl("^Bootstrap|^Percentile bootstrap|^\\*+ BOOTSTRAP|^Level of confidence|^\\s*$|^\\*+$|^\\s*\\||^\\s*\\d+%|^\\s*>+\\s*$", 
+             process_output, ignore.case = TRUE)
+    ]
+    
+    # Improved formatting - highlight significant p-values more accurately
+    # Only highlight actual statistical results, not matrices or headers
+    processed_output <- character(0)
+    in_covariance_matrix <- FALSE
+    in_direct_indirect_section <- FALSE
+    
+    for(i in seq_along(filtered_output)) {
+      line <- filtered_output[i]
+      
+      # Track sections
+      if(grepl("^Covariance matrix", line, ignore.case = TRUE)) {
+        in_covariance_matrix <- TRUE
+        processed_output <- c(processed_output, line)
+        next
+      }
+      if(grepl("^DIRECT AND INDIRECT|^TOTAL, DIRECT", line, ignore.case = TRUE)) {
+        in_covariance_matrix <- FALSE
+        in_direct_indirect_section <- TRUE
+        processed_output <- c(processed_output, line)
+        next
+      }
+      if(grepl("^ANALYSIS NOTES|^\\*+$", line, ignore.case = TRUE)) {
+        in_covariance_matrix <- FALSE
+        in_direct_indirect_section <- FALSE
+        processed_output <- c(processed_output, line)
+        next
+      }
+      
+      # Skip all covariance matrix content
+      if(in_covariance_matrix) {
+        processed_output <- c(processed_output, line)
+        next
+      }
+      
+      # Skip header lines
+      if(grepl("^\\s*(Model|Outcome|coeff|se\\(|t|p|LLCI|ULCI|R|R-sq|MSE|F\\(|df|Product|Variable|Mean|SD|Min|Max|Pearson|Spearman|constant|int_|effect|Effect|BootSE|BootLLCI|BootULCI|^\\s*$|Direct effect|Indirect effect|TOTAL|Completely standardized|Partially standardized|Specific indirect)", line, ignore.case = TRUE)) {
+        processed_output <- c(processed_output, line)
+        next
+      }
+      
+      # For direct/indirect effects section, check for significant results
+      if(in_direct_indirect_section) {
+        # Direct effect and indirect effects can have significant p-values
+        # Format: effect, se, t, p, LLCI, ULCI (for direct effects)
+        # Or: Effect, BootSE, BootLLCI, BootULCI (for indirect effects with bootstrapping)
+        # Direct effect lines start with spaces and numbers: "     0.8939    0.1079    8.2842    0.0000..."
+        line_parts <- strsplit(trimws(line), "\\s+")[[1]]
+        
+        has_significant_p <- FALSE
+        
+        # Check if this is a data row (has numbers)
+        if(length(line_parts) >= 4) {
+          # Check if first part is a number (direct effect row) or variable name
+          first_part <- line_parts[1]
+          is_data_row <- grepl("^-?\\d+\\.?\\d*$", first_part) || 
+                        !grepl("^(effect|Effect|TOTAL|ULS10|PrSS|C1|C2|C3|C4|C5|C6)$", first_part, ignore.case = TRUE)
+          
+          if(is_data_row) {
+            # Look for p-value in typical position (4th-6th column for direct effects)
+            for(j in 4:min(6, length(line_parts))) {
+              p_val <- line_parts[j]
+              # Check if it looks like a number (could be p-value)
+              if(grepl("^-?\\d+\\.?\\d*$", p_val)) {
+                p_num <- as.numeric(p_val)
+                # Check if it's a valid p-value between 0 and 0.05
+                if(!is.na(p_num) && p_num < 0.05 && p_num >= 0) {
+                  has_significant_p <- TRUE
+                  break
+                }
+              }
+            }
+          }
+        }
+        
+        # Check for explicit "< 0.05" patterns
+        if(grepl("<\\s*0?\\.?0?5|p\\s*<\\s*0?\\.?0?0?1", line, ignore.case = TRUE)) {
+          has_significant_p <- TRUE
+        }
+        
+        if(has_significant_p) {
+          processed_output <- c(processed_output, 
+            paste0("<span style='color: red; font-weight: bold;'>", line, "</span>"))
+        } else {
+          processed_output <- c(processed_output, line)
+        }
+        next
+      }
+      
+      has_significant_p <- FALSE
+      
+      # Pattern 1: Explicit "< 0.05" or "< .05" or "p < .001"
+      if(grepl("<\\s*0?\\.?0?5|p\\s*<\\s*0?\\.?0?0?1", line, ignore.case = TRUE)) {
+        has_significant_p <- TRUE
+      }
+      
+      # Pattern 2: Coefficient table rows with significant p-values
+      # Only highlight MAIN results: key predictors (X, Y, M, W, Z), interaction terms
+      # Skip: constants, covariates, and other variables
+      line_parts <- strsplit(trimws(line), "\\s+")[[1]]
+      if(length(line_parts) >= 5) {
+        first_part <- line_parts[1]
+        # Must start with variable name (not number) and be a main variable
+        # Main variables: interaction terms (int_1, int_2, etc.) or variables in main_variables list
+        # Skip: constant, covariates, and other variables
+        is_main_variable <- grepl("^int_", first_part, ignore.case = TRUE) || 
+                           (first_part %in% main_variables) ||
+                           (!grepl("^-?\\d+\\.?\\d*$", first_part) && 
+                            !grepl("^constant$", first_part, ignore.case = TRUE) &&
+                            !(first_part %in% covariate_names))
+        
+        if(is_main_variable) {
+          # Check for p-value in columns 4-6
+          for(j in 4:min(6, length(line_parts))) {
+            p_val <- line_parts[j]
+            # Check if it looks like a number (could be p-value)
+            if(grepl("^-?\\d+\\.?\\d*$", p_val)) {
+              p_num <- as.numeric(p_val)
+              # Check if it's a valid p-value between 0 and 0.05
+              if(!is.na(p_num) && p_num < 0.05 && p_num >= 0) {
+                has_significant_p <- TRUE
+                break
+              }
+            }
+          }
+        }
+      }
+      
+      # Pattern 3: Model summary lines with significant F-test
+      if(grepl("^\\s+\\d+\\.\\d+\\s+\\d+\\.\\d+\\s+\\d+\\.\\d+\\s+\\d+\\.\\d+\\s+\\d+\\.\\d+\\s+\\d+\\.\\d+\\s+0\\.0000\\s*$", line)) {
+        has_significant_p <- TRUE
+      }
+      
+      if(has_significant_p) {
+        processed_output <- c(processed_output, 
+          paste0("<span style='color: red; font-weight: bold;'>", line, "</span>"))
+      } else {
+        processed_output <- c(processed_output, line)
+      }
+    }
+    
+    # Combine all output
+    paste(
+      "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
+      paste(c(output_text, "", bivariate_cor, "", processed_output), collapse = "<br>"),
+      "</div>"
+    )
+  }
+  
+  # Display analysis results
+  output$analysis_output <- renderUI({
+    print("DEBUG: analysis_output renderUI called")
+    
+    # Check for validation errors first
+    if(!is.null(rv$validation_error)) {
+      print(paste("DEBUG: Validation error found:", rv$validation_error))
+      return(HTML(paste0(
+        "<div style='color: red; font-weight: bold; padding: 15px; border: 2px solid red; background-color: #ffe6e6; margin: 10px 0; border-radius: 5px;'>",
+        "<strong>ERROR:</strong><br><br>",
+        rv$validation_error,
+        "</div>"
+      )))
+    }
+    
+    tryCatch({
+      results <- analysis_results()
+      print(paste("DEBUG: analysis_results() returned NULL?", is.null(results)))
+      if(is.null(results)) {
+        return(HTML("<p>No analysis results available. Please run an analysis.</p>"))
+      }
+      print("DEBUG: Creating formatted output...")
+      HTML(create_formatted_output(results))
+    }, error = function(e) {
+      # Catch other errors and display them in the output
+      error_msg <- conditionMessage(e)
+      print(paste("DEBUG: Error caught in analysis_output:", error_msg))
+      HTML(paste0(
+        "<div style='color: red; font-weight: bold; padding: 15px; border: 2px solid red; background-color: #ffe6e6; margin: 10px 0; border-radius: 5px;'>",
+        "<strong>ERROR:</strong><br><br>",
+        error_msg,
+        "</div>"
+      ))
+    })
+  })
+  
+  # Download handlers
+  output$download_results <- downloadHandler(
+    filename = function() {
+      paste0("process_results_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".html")
+    },
+    content = function(file) {
+      req(analysis_results())
+      output_content <- create_formatted_output(analysis_results())
+      
+      writeLines(sprintf('
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: Courier, monospace; white-space: pre-wrap; padding: 20px; }
+            table { border-collapse: collapse; }
+            th, td { border: 1px solid #dee2e6; padding: 8px; }
+          </style>
+        </head>
+        <body>
+          %s
+        </body>
+        </html>
+      ', output_content), file)
+    },
+    contentType = "text/html"
+  )
+  
+  output$download_filtered_data <- downloadHandler(
+    filename = function() {
+      ext <- if(input$filtered_data_format == "sav") "sav" else "csv"
+      paste0("filtered_dataset_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", ext)
+    },
+    content = function(file) {
+      req(rv$original_dataset, input$outcome_var, input$predictor_var)
+      
+      outliers <- identify_outliers()
+      
+      if(outliers$count == 0) {
+        stop("No outliers/influential cases found to remove")
+      }
+      
+      filtered_data <- rv$original_dataset[-outliers$cases, ]
+      
+      if (input$filtered_data_format == "sav") {
+        haven::write_sav(filtered_data, file)
+      } else {
+        write.csv(filtered_data, file, row.names = FALSE)
+      }
+    }
+  )
+  
+  # Button state observers
+  observe({
+    input$residual_threshold
+    input$cooks_threshold_type
+    input$cooks_threshold_custom
+    input$covariates
+    input$outcome_var
+    input$predictor_var
+    input$mediator_vars
+    input$moderator_var
+    
+    if (is.null(rv$original_dataset) || 
+        is.null(input$outcome_var) || input$outcome_var == "" ||
+        is.null(input$predictor_var) || input$predictor_var == "" ||
+        is.null(input$process_model) || input$process_model == "") {
+      shinyjs::disable("run_analysis")
+      shinyjs::disable("run_analysis_no_outliers")
+    } else {
+      shinyjs::enable("run_analysis")
+      tryCatch({
+        outliers <- identify_outliers()
+        if(!is.null(outliers) && outliers$count > 0) {
+          reduced_data <- rv$original_dataset[-outliers$cases, ]
+          all_vars <- c(input$outcome_var, input$predictor_var)
+          if(!is.null(input$mediator_vars)) all_vars <- c(all_vars, input$mediator_vars)
+          if(!is.null(input$moderator_var)) all_vars <- c(all_vars, input$moderator_var)
+          if(!is.null(input$covariates) && length(input$covariates) > 0) {
+            all_vars <- c(all_vars, input$covariates)
+          }
+          complete_cases <- complete.cases(reduced_data[all_vars])
+          n_complete <- sum(complete_cases)
+          
+          if(n_complete >= 3) {
+            shinyjs::enable("run_analysis_no_outliers")
+          } else {
+            shinyjs::disable("run_analysis_no_outliers")
+          }
+        } else {
+          shinyjs::disable("run_analysis_no_outliers")
+        }
+      }, error = function(e) {
+        shinyjs::disable("run_analysis_no_outliers")
+      })
+    }
+  })
+}
+
+# ============================================================================
+# NOTE: Model-specific visualizations (JN plots, simple slopes) can be added
+# as a future enhancement by extracting data from PROCESS output or running
+# additional analyses. The core functionality is complete and operational.
+# ============================================================================
+
+# Run the app
+shinyApp(ui, server)
