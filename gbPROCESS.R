@@ -328,7 +328,7 @@ ui <- fluidPage(
               ),
               selected = "0"
             ),
-            checkboxInput("use_bootstrap", "Use bootstrapping", FALSE),
+            checkboxInput("use_bootstrap", "Use bootstrapping", TRUE),
             conditionalPanel(
               condition = "input.use_bootstrap == true",
               numericInput("boot_samples", "Number of bootstrap samples:", 5000, min = 1000, max = 10000)
@@ -353,12 +353,17 @@ ui <- fluidPage(
               ),
               selected = "none"
             ),
-            checkboxInput("stand", "Standardized coefficients", FALSE),
-            checkboxInput("normal", "Normal theory tests", FALSE),
+            tags$div(title = "Requests standardized regression coefficients. Useful for comparing effects across variables with different scales.",
+              checkboxInput("stand", "Standardized coefficients", FALSE)
+            ),
+            tags$div(title = "Uses normal theory (z-tests) instead of t-tests for significance testing. Less conservative than t-tests but assumes large sample sizes.",
+              checkboxInput("normal", "Normal theory tests", FALSE)
+            ),
             conditionalPanel(
-              condition = "output.is_mediation_model === true",
-              checkboxInput("pairwise_contrasts", "Pairwise contrasts of indirect effects", FALSE),
-              p(em("Compare indirect effects to determine which mediators are most important"))
+              condition = "output.is_mediation_model === true && output.mediator_count > 1",
+              tags$div(title = "Compares indirect effects to determine which mediators are most important. Only available when multiple mediators are selected.",
+                checkboxInput("pairwise_contrasts", "Pairwise contrasts of indirect effects", FALSE)
+              )
             ),
             # Note: Johnson-Neyman and conditioning values moved to "Probing Moderation" section
             numericInput("decimals", "Decimal Places", 4, min = 0, max = 10, step = 1),
@@ -391,7 +396,7 @@ ui <- fluidPage(
               checkboxInput("modelres", "Shrunken R estimates", FALSE)
             ),
             tags$div(title = "Provides comprehensive regression diagnostics including residual analysis, influential cases, multicollinearity (VIF), and assumption tests. Essential for evaluating model quality.",
-              checkboxInput("diagnose", "Model diagnostics and assumptions", TRUE)
+              checkboxInput("diagnose", "Model diagnostics and assumptions", FALSE)
             ),
             conditionalPanel(
               condition = "input.process_model == '0'",
@@ -483,11 +488,9 @@ ui <- fluidPage(
         ),
         
         h4("Download Options"),
-        downloadButton("download_results", "Results Text"),
-        conditionalPanel(
-          condition = "input.use_bootstrap == true",
-          tags$div(title = "Download bootstrap results as a CSV file. Contains bootstrap estimates for all effects. Only available when bootstrapping is enabled.",
-            downloadButton("download_bootstrap", "Bootstrap Results (CSV)")
+        div(style = "margin-top: 10px;",
+          tags$div(title = "Download analysis results as an HTML file. Contains all output from the PROCESS analysis.",
+            downloadButton("download_results", "Results output (html)", class = "btn-success", style = "background-color: #90EE90; border-color: #90EE90; color: #000; margin-bottom: 10px;")
           )
         ),
         conditionalPanel(
@@ -751,6 +754,16 @@ server <- function(input, output, session) {
     model_num %in% c(4, 5, 6, 7, 8, 14)
   })
   outputOptions(output, "is_mediation_model", suspendWhenHidden = FALSE)
+  
+  # Count of mediators for conditional display
+  output$mediator_count <- reactive({
+    if(is.null(input$mediator_vars)) {
+      0
+    } else {
+      length(input$mediator_vars)
+    }
+  })
+  outputOptions(output, "mediator_count", suspendWhenHidden = FALSE)
   
   # Mediator list UI with M1, M2, M3 display
   output$mediator_list_ui <- renderUI({
@@ -2422,7 +2435,11 @@ server <- function(input, output, session) {
     print(paste("DEBUG: analysis_results reactive called. rv$analysis_results is NULL?", is.null(rv$analysis_results)))
     if(is.null(rv$analysis_results)) {
       # Try to get from eventReactive if rv is null
-      if(input$run_analysis > 0 && (input$run_analysis_no_outliers == 0 || input$run_analysis >= input$run_analysis_no_outliers)) {
+      # Check if inputs exist and have valid values before comparing
+      run_analysis_val <- if(!is.null(input$run_analysis) && length(input$run_analysis) > 0) input$run_analysis else 0
+      run_no_outliers_val <- if(!is.null(input$run_analysis_no_outliers) && length(input$run_analysis_no_outliers) > 0) input$run_analysis_no_outliers else 0
+      
+      if(run_analysis_val > 0 && (run_no_outliers_val == 0 || run_analysis_val >= run_no_outliers_val)) {
         print("DEBUG: rv$analysis_results is NULL, trying to get from original_analysis()")
         tryCatch({
           result <- original_analysis()
@@ -2433,7 +2450,7 @@ server <- function(input, output, session) {
         }, error = function(e) {
           print(paste("DEBUG: Error getting from original_analysis():", e$message))
         })
-      } else if(input$run_analysis_no_outliers > 0) {
+      } else if(run_no_outliers_val > 0) {
         print("DEBUG: rv$analysis_results is NULL, trying to get from outliers_analysis()")
         tryCatch({
           result <- outliers_analysis()
@@ -2877,6 +2894,18 @@ server <- function(input, output, session) {
       }
     }
   )
+  
+  # Disable download buttons until analysis is run
+  observe({
+    tryCatch({
+      results <- analysis_results()
+      has_results <- !is.null(results)
+      shinyjs::toggleState("download_results", condition = has_results)
+    }, error = function(e) {
+      # If analysis_results() fails (e.g., inputs not initialized), disable all buttons
+      shinyjs::disable("download_results")
+    })
+  })
   
   output$download_filtered_data <- downloadHandler(
     filename = function() {
