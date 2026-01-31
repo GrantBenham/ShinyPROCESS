@@ -1,3 +1,8 @@
 # Ignore Data and OLD folders
 Data/
 OLD/
+Resources/
+Results/
+*pdf
+*.html
+.Rproj.user
