@@ -48,7 +48,8 @@ is_continuous_variable <- function(data, var_name) {
 # Function to identify outliers based on model type
 identify_outliers_assumption <- function(data, outcome_var, predictor_var, 
                                          mediator_vars = NULL, moderator_var = NULL,
-                                         covariates = NULL, residual_threshold = 2,
+                                         moderator2_var = NULL, covariates = NULL, 
+                                         residual_threshold = 2,
                                          cooks_threshold_type = "conservative", 
                                          cooks_threshold_custom = 0.01) {
   # Build formula based on model type
@@ -57,6 +58,12 @@ identify_outliers_assumption <- function(data, outcome_var, predictor_var,
   # Add interaction term for moderation models (only if moderator is provided)
   if(!is.null(moderator_var) && moderator_var != "") {
     formula_terms <- c(formula_terms, "*", moderator_var)
+  }
+  
+  # Add second moderator interaction if provided
+  if(!is.null(moderator2_var) && moderator2_var != "") {
+    # For models with two moderators, add the second moderator interaction
+    formula_terms <- c(formula_terms, "*", moderator2_var)
   }
   
   # Add mediators for mediation models
@@ -857,6 +864,10 @@ server <- function(input, output, session) {
     )
   })
   
+  # Define which models require a second moderator (Z)
+  # This list can be easily extended by adding model numbers
+  models_with_second_moderator <- c(2, 3, 9, 10, 58, 59, 74)
+  
   # Dynamically generate variable selectors based on model
   output$variable_selectors <- renderUI({
     req(rv$original_dataset, input$process_model)
@@ -881,8 +892,8 @@ server <- function(input, output, session) {
                    selected = "")
       )
       
-      # Add second moderator for dual moderation models
-      if(model_num %in% c(58, 59, 74)) {
+      # Add second moderator for models that require it
+      if(model_num %in% models_with_second_moderator) {
         selectors <- tagList(selectors,
           selectInput("moderator2_var", "Second Moderator Variable (Z)", 
                      choices = c("Select variable" = "", vars), 
@@ -958,6 +969,7 @@ server <- function(input, output, session) {
     selected_vars <- c(input$outcome_var, input$predictor_var)
     if(!is.null(input$mediator_vars)) selected_vars <- c(selected_vars, input$mediator_vars)
     if(!is.null(input$moderator_var)) selected_vars <- c(selected_vars, input$moderator_var)
+    if(!is.null(input$moderator2_var)) selected_vars <- c(selected_vars, input$moderator2_var)
     any(vapply(selected_vars, function(v) is_continuous_variable(rv$original_dataset, v), logical(1)))
   })
   outputOptions(output, "has_continuous_selected", suspendWhenHidden = FALSE)
@@ -1000,6 +1012,7 @@ server <- function(input, output, session) {
       predictor_var = input$predictor_var,
       mediator_vars = input$mediator_vars,
       moderator_var = input$moderator_var,
+      moderator2_var = input$moderator2_var,
       covariates = input$covariates,
       residual_threshold = input$residual_threshold,
       cooks_threshold_type = input$cooks_threshold_type,
@@ -1018,6 +1031,11 @@ server <- function(input, output, session) {
       # Add interaction for moderation models (only if moderator is selected)
       if(!is.null(input$moderator_var) && input$moderator_var != "") {
         formula_terms <- c(formula_terms, "*", input$moderator_var)
+      }
+      
+      # Add second moderator interaction if provided
+      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+        formula_terms <- c(formula_terms, "*", input$moderator2_var)
       }
       
       # Add mediators for mediation models
@@ -1170,6 +1188,11 @@ server <- function(input, output, session) {
       # Add interaction for moderation models (only if moderator is selected)
       if(!is.null(input$moderator_var) && input$moderator_var != "") {
         formula_terms <- c(formula_terms, "*", input$moderator_var)
+      }
+      
+      # Add second moderator interaction if provided
+      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+        formula_terms <- c(formula_terms, "*", input$moderator2_var)
       }
       
       # Add mediators for mediation models
@@ -1696,9 +1719,20 @@ server <- function(input, output, session) {
       print(paste("DEBUG: moderator_var is empty?", is.null(input$moderator_var) || input$moderator_var == ""))
       validate(
         need(!is.null(input$moderator_var) && input$moderator_var != "", 
-             "Moderator variable is required for this model")
+             "Moderator variable (W) is required for this model")
       )
       print("DEBUG: Moderator validation passed")
+      
+      # Models with second moderator require it to be selected
+      if(model_num %in% models_with_second_moderator) {
+        print("DEBUG: This model requires a second moderator (Z)")
+        print(paste("DEBUG: input$moderator2_var:", input$moderator2_var))
+        validate(
+          need(!is.null(input$moderator2_var) && input$moderator2_var != "", 
+               "Second moderator variable (Z) is required for this model")
+        )
+        print("DEBUG: Second moderator validation passed")
+      }
     }
     
     # Model 4: Simple/Parallel mediation (1 or more mediators, up to 10)
@@ -1813,7 +1847,7 @@ server <- function(input, output, session) {
         outcome_var = input$outcome_var,
         mediator_vars = if(!is.null(input$mediator_vars)) input$mediator_vars else NULL,
         moderator_var = input$moderator_var,
-        moderator2_var = input$moderator2_var,
+        moderator2_var = if(!is.null(input$moderator2_var) && input$moderator2_var != "") input$moderator2_var else NULL,
         covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
       )
       
@@ -2116,8 +2150,16 @@ server <- function(input, output, session) {
     if(model_num %in% c(1, 2, 3, 14, 15, 58, 59, 74)) {
       validate(
         need(!is.null(input$moderator_var) && input$moderator_var != "", 
-             "Moderator variable is required for this model")
+             "Moderator variable (W) is required for this model")
       )
+      
+      # Models with second moderator require it to be selected
+      if(model_num %in% models_with_second_moderator) {
+        validate(
+          need(!is.null(input$moderator2_var) && input$moderator2_var != "", 
+               "Second moderator variable (Z) is required for this model")
+        )
+      }
     }
     if(model_num == 4) {
       validate(
@@ -2212,7 +2254,7 @@ server <- function(input, output, session) {
         outcome_var = input$outcome_var,
         mediator_vars = if(!is.null(input$mediator_vars)) input$mediator_vars else NULL,
         moderator_var = input$moderator_var,
-        moderator2_var = input$moderator2_var,
+        moderator2_var = if(!is.null(input$moderator2_var) && input$moderator2_var != "") input$moderator2_var else NULL,
         covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
       )
       
@@ -3785,6 +3827,7 @@ server <- function(input, output, session) {
     input$predictor_var
     input$mediator_vars
     input$moderator_var
+    input$moderator2_var
     
     if (is.null(rv$original_dataset) || 
         is.null(input$outcome_var) || input$outcome_var == "" ||
