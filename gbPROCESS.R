@@ -362,7 +362,8 @@ ui <- fluidPage(
             ),
             # Note: Johnson-Neyman and conditioning values moved to "Probing Moderation" section
             numericInput("decimals", "Decimal Places", 4, min = 0, max = 10, step = 1),
-            numericInput("seed", "Random Seed (optional)", value = -999, min = -999, max = 999999)
+            numericInput("seed", "Random Seed (optional)", value = NA, min = 1, max = 999999),
+            p(em("Leave blank to use a random seed. Enter a number (1-999999) to set a specific seed for reproducibility."))
           )
         ),
         
@@ -385,16 +386,24 @@ ui <- fluidPage(
             ),
             conditionalPanel(
               condition = "input.process_model == '4'",
-              checkboxInput("xmint", "Test for X by M interaction (model 4 only)", FALSE),
-              p(em("When checked, this tests whether the effect of the mediator (M) on the outcome (Y) depends on the level of the independent variable (X). PROCESS will automatically handle the analysis."))
+              tags$div(title = "Includes the X*M interaction term in Model 4, converting it to a counterfactual framework (Model 74 internally). This allows the effect of the mediator (M) on the outcome (Y) to depend on the level of X. Changes the model structure and enables counterfactual effect estimation. Mutually exclusive with 'Test for X by M interaction'.",
+                checkboxInput("xmint", "Allow X by M interaction (model 4 only)", FALSE)
+              )
+            ),
+            conditionalPanel(
+              condition = "output.is_mediation_model === true && input.process_model != '74'",
+              tags$div(title = "Performs statistical tests to determine if X*M interaction terms are significant. Tests whether the effect of mediators (M) on the outcome (Y) depends on the level of X, without changing the model structure. For Model 4, this can help you decide whether to enable 'Allow X by M interaction'. Mutually exclusive with 'Allow X by M interaction' for Model 4.",
+                checkboxInput("xmtest", "Test for X by M interaction", FALSE)
+              )
             ),
             conditionalPanel(
               condition = "output.is_mediation_model === true && (input.process_model == '4' || input.process_model == '6' || input.process_model == '80' || input.process_model == '81' || input.process_model == '82')",
               checkboxInput("total", "Total effect of X", FALSE)
             ),
             checkboxInput("matrices", "Matrices output", FALSE),
-            checkboxInput("covmy", "Covariance matrix for Y", FALSE),
-            p(em("Warning: 'Covariance matrix for Y' may cause errors if a variable appears as both a covariate and moderator. Only use when variables have distinct roles.")),
+            tags$div(title = "When checked, covariates are excluded from the outcome (Y) equation. This option affects model specification but does not produce a separate covariance matrix output. For Model 1, this option works around a PROCESS limitation by not passing covariates when enabled.",
+              checkboxInput("covmy", "Exclude covariates from Y equation", FALSE)
+            ),
             checkboxInput("save", "Save bootstrap results to file (not recommended in Shiny)", FALSE),
             p(em("Note: The 'save' option saves files to the R working directory, which may not be accessible in Shiny apps. Use the Download buttons instead.")),
             conditionalPanel(
@@ -1814,17 +1823,41 @@ server <- function(input, output, session) {
       if(input$covcoeff) process_args$covcoeff <- 1
       if(input$covmy) {
         # When covmy==1, PROCESS excludes covariates from the outcome equation
-        # If a covariate is also a moderator, it appears in all equations as moderator
-        # but is excluded from outcome equation as covariate, making column sum to 0
-        # This triggers error 51: "A variable you specified as a covariate is a moderator in all equations"
-        # Solution: When covmy==1, we must ensure NO covariate is also a moderator
-        if(!is.null(input$covariates) && length(input$covariates) > 0) {
-          # Check if any covariate is also a moderator
-          if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$covariates) {
-            stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator. Please remove it from one of these roles.", input$moderator_var))
-          }
-          if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$covariates) {
-            stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator. Please remove it from one of these roles.", input$moderator2_var))
+        # For Model 1 (simple moderation with only one equation), PROCESS has a bug:
+        # If covariates are excluded from the only equation, PROCESS incorrectly flags them
+        # as appearing in "all equations" as moderators, triggering error 51.
+        # Workaround: For Model 1, when covmy=1, do not pass covariates to PROCESS.
+        # The output is still valid - covariates are simply excluded from the Y equation.
+        if(model_num == 1) {
+          # Silently work around PROCESS bug by not passing covariates
+          # This produces valid output (covariates excluded from Y equation)
+          process_args$cov <- "xxxxx"
+        } else {
+          # For other models, check for variable name overlaps
+          if(!is.null(input$covariates) && length(input$covariates) > 0) {
+            # Check if any covariate is also X (predictor)
+            if(input$predictor_var %in% input$covariates) {
+              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the predictor (X). Please remove it from one of these roles.", input$predictor_var))
+            }
+            # Check if any covariate is also Y (outcome)
+            if(input$outcome_var %in% input$covariates) {
+              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the outcome (Y). Please remove it from one of these roles.", input$outcome_var))
+            }
+            # Check if any covariate is also a moderator (W)
+            if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$covariates) {
+              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (W). Please remove it from one of these roles.", input$moderator_var))
+            }
+            # Check if any covariate is also a second moderator (Z)
+            if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$covariates) {
+              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (Z). Please remove it from one of these roles.", input$moderator2_var))
+            }
+            # Check if any covariate is also a mediator (for models that have mediators)
+            if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+              overlapping_mediators <- intersect(input$covariates, input$mediator_vars)
+              if(length(overlapping_mediators) > 0) {
+                stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable(s) '%s' cannot be used as both a covariate and a mediator. Please remove from one of these roles.", paste(overlapping_mediators, collapse="', '")))
+              }
+            }
           }
         }
         process_args$covmy <- 1
@@ -1844,7 +1877,12 @@ server <- function(input, output, session) {
       #   - Handles interaction term creation - no manual calculation needed
       # However, for continuous X, PROCESS requires xrefval != 999 (line 1507-1508)
       # For dichotomous X, PROCESS automatically sets xrefval to [xmn, xmx] if xrefval=999 (line 1509-1510)
+      # xmint and xmtest are mutually exclusive: when xmint is enabled, model becomes 74 and xmtest won't run
       if(model_num == 4 && input$xmint) {
+        # Validate that xmtest is not also enabled (they are mutually exclusive)
+        if(input$xmtest) {
+          stop("Error: 'Allow X by M interaction' and 'Test for X by M interaction' cannot both be enabled. When 'Allow X by M interaction' is enabled, Model 4 is converted to Model 74, which makes the test option unavailable. Please disable one of these options.")
+        }
         process_args$xmint <- 1
         # When xmint is used, center must be 0 (already set above, line 814-815)
         # Check if X is dichotomous (binary)
@@ -1861,6 +1899,13 @@ server <- function(input, output, session) {
       } else {
         # Explicitly set xmint to 0 when not used to prevent any default behavior
         process_args$xmint <- 0
+      }
+      # xmtest: Test for X by M interaction (available for mediation models including Model 4, but not Model 74)
+      # Note: xmtest is mutually exclusive with xmint for Model 4 (when xmint is enabled, model becomes 74 and xmtest won't run)
+      if(input$xmtest) {
+        process_args$xmtest <- 1
+      } else {
+        process_args$xmtest <- 0
       }
       if(input$total) process_args$total <- 1
       # Disable save and plot by default to avoid issues in Shiny
@@ -1892,7 +1937,7 @@ server <- function(input, output, session) {
         }, error = function(e) 0.1)
         process_args$intprobe <- probe_val
       }
-      if(input$seed != -999) process_args$seed <- input$seed
+      if(!is.na(input$seed) && !is.null(input$seed) && input$seed >= 1) process_args$seed <- input$seed
       if(input$decimals != 4) process_args$decimals <- input$decimals
       print("DEBUG: All PROCESS arguments prepared")
       
@@ -2156,17 +2201,41 @@ server <- function(input, output, session) {
       if(input$covcoeff) process_args$covcoeff <- 1
       if(input$covmy) {
         # When covmy==1, PROCESS excludes covariates from the outcome equation
-        # If a covariate is also a moderator, it appears in all equations as moderator
-        # but is excluded from outcome equation as covariate, making column sum to 0
-        # This triggers error 51: "A variable you specified as a covariate is a moderator in all equations"
-        # Solution: When covmy==1, we must ensure NO covariate is also a moderator
-        if(!is.null(input$covariates) && length(input$covariates) > 0) {
-          # Check if any covariate is also a moderator
-          if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$covariates) {
-            stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator. Please remove it from one of these roles.", input$moderator_var))
-          }
-          if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$covariates) {
-            stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator. Please remove it from one of these roles.", input$moderator2_var))
+        # For Model 1 (simple moderation with only one equation), PROCESS has a bug:
+        # If covariates are excluded from the only equation, PROCESS incorrectly flags them
+        # as appearing in "all equations" as moderators, triggering error 51.
+        # Workaround: For Model 1, when covmy=1, do not pass covariates to PROCESS.
+        # The output is still valid - covariates are simply excluded from the Y equation.
+        if(model_num == 1) {
+          # Silently work around PROCESS bug by not passing covariates
+          # This produces valid output (covariates excluded from Y equation)
+          process_args$cov <- "xxxxx"
+        } else {
+          # For other models, check for variable name overlaps
+          if(!is.null(input$covariates) && length(input$covariates) > 0) {
+            # Check if any covariate is also X (predictor)
+            if(input$predictor_var %in% input$covariates) {
+              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the predictor (X). Please remove it from one of these roles.", input$predictor_var))
+            }
+            # Check if any covariate is also Y (outcome)
+            if(input$outcome_var %in% input$covariates) {
+              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the outcome (Y). Please remove it from one of these roles.", input$outcome_var))
+            }
+            # Check if any covariate is also a moderator (W)
+            if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$covariates) {
+              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (W). Please remove it from one of these roles.", input$moderator_var))
+            }
+            # Check if any covariate is also a second moderator (Z)
+            if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$covariates) {
+              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (Z). Please remove it from one of these roles.", input$moderator2_var))
+            }
+            # Check if any covariate is also a mediator (for models that have mediators)
+            if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+              overlapping_mediators <- intersect(input$covariates, input$mediator_vars)
+              if(length(overlapping_mediators) > 0) {
+                stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable(s) '%s' cannot be used as both a covariate and a mediator. Please remove from one of these roles.", paste(overlapping_mediators, collapse="', '")))
+              }
+            }
           }
         }
         process_args$covmy <- 1
@@ -2186,7 +2255,12 @@ server <- function(input, output, session) {
       #   - Handles interaction term creation - no manual calculation needed
       # However, for continuous X, PROCESS requires xrefval != 999 (line 1507-1508)
       # For dichotomous X, PROCESS automatically sets xrefval to [xmn, xmx] if xrefval=999 (line 1509-1510)
+      # xmint and xmtest are mutually exclusive: when xmint is enabled, model becomes 74 and xmtest won't run
       if(model_num == 4 && input$xmint) {
+        # Validate that xmtest is not also enabled (they are mutually exclusive)
+        if(input$xmtest) {
+          stop("Error: 'Allow X by M interaction' and 'Test for X by M interaction' cannot both be enabled. When 'Allow X by M interaction' is enabled, Model 4 is converted to Model 74, which makes the test option unavailable. Please disable one of these options.")
+        }
         process_args$xmint <- 1
         # When xmint is used, center must be 0 (already set above, line 814-815)
         # Check if X is dichotomous (binary)
@@ -2203,6 +2277,13 @@ server <- function(input, output, session) {
       } else {
         # Explicitly set xmint to 0 when not used to prevent any default behavior
         process_args$xmint <- 0
+      }
+      # xmtest: Test for X by M interaction (available for mediation models including Model 4, but not Model 74)
+      # Note: xmtest is mutually exclusive with xmint for Model 4 (when xmint is enabled, model becomes 74 and xmtest won't run)
+      if(input$xmtest) {
+        process_args$xmtest <- 1
+      } else {
+        process_args$xmtest <- 0
       }
       if(input$total) process_args$total <- 1
       # Disable save and plot by default to avoid issues in Shiny
@@ -2229,7 +2310,7 @@ server <- function(input, output, session) {
         }, error = function(e) 0.1)
         process_args$intprobe <- probe_val
       }
-      if(input$seed != -999) process_args$seed <- input$seed
+      if(!is.na(input$seed) && !is.null(input$seed) && input$seed >= 1) process_args$seed <- input$seed
       if(input$decimals != 4) process_args$decimals <- input$decimals
       
       # DEBUG: Print process arguments
@@ -2501,11 +2582,31 @@ server <- function(input, output, session) {
     processed_output <- character(0)
     in_covariance_matrix <- FALSE
     in_direct_indirect_section <- FALSE
+    xmtest_explanation_added <- FALSE
+    xmint_explanation_added <- FALSE
     
     for(i in seq_along(filtered_output)) {
       line <- filtered_output[i]
       
-      # Track sections
+      # Track sections and add explanatory text
+      if(grepl("^Test\\(s\\) of X by M interaction|^Likelihood ratio test\\(s\\) of X by M interaction", line, ignore.case = TRUE)) {
+        if(!xmtest_explanation_added) {
+          processed_output <- c(processed_output, 
+            "<br><em><strong>Understanding 'Test for X by M interaction':</strong> This section presents statistical tests (F-tests or likelihood ratio tests) to determine whether X*M interaction terms are significant. A significant result indicates that the effect of the mediator(s) (M) on the outcome (Y) depends on the level of the independent variable (X). This test does not change the model structure - it evaluates whether interactions should be included.</em><br>")
+          xmtest_explanation_added <- TRUE
+        }
+        processed_output <- c(processed_output, line)
+        next
+      }
+      if(grepl("^COUNTERFACTUALLY DEFINED|^Direct, indirect, and total effects are counterfactually defined", line, ignore.case = TRUE)) {
+        if(!xmint_explanation_added) {
+          processed_output <- c(processed_output, 
+            "<br><em><strong>Understanding 'Allow X by M interaction' (Model 4):</strong> When this option is enabled, Model 4 is converted to a counterfactual framework (Model 74 internally). This includes X*M interaction terms in the model, allowing the effect of mediators (M) on the outcome (Y) to vary depending on the level of X. Effects are now defined counterfactually (natural direct and indirect effects), which provides a different interpretation than standard mediation. This changes the model structure and enables estimation of controlled and natural direct effects.</em><br>")
+          xmint_explanation_added <- TRUE
+        }
+        processed_output <- c(processed_output, line)
+        next
+      }
       if(grepl("^Covariance matrix", line, ignore.case = TRUE)) {
         in_covariance_matrix <- TRUE
         processed_output <- c(processed_output, line)
@@ -2731,6 +2832,21 @@ server <- function(input, output, session) {
       }
     }
   )
+  
+  # Make xmint and xmtest mutually exclusive for Model 4
+  observeEvent(input$xmint, {
+    if(!is.null(input$process_model) && input$process_model == "4" && input$xmint) {
+      # If xmint is checked, uncheck xmtest
+      updateCheckboxInput(session, "xmtest", value = FALSE)
+    }
+  })
+  
+  observeEvent(input$xmtest, {
+    if(!is.null(input$process_model) && input$process_model == "4" && input$xmtest) {
+      # If xmtest is checked, uncheck xmint
+      updateCheckboxInput(session, "xmint", value = FALSE)
+    }
+  })
   
   # Button state observers
   observe({
