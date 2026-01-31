@@ -267,7 +267,7 @@ ui <- fluidPage(
       uiOutput("model_description"),
       
       # Select Variables (collapsible)
-      tags$details(
+      tags$details(id = "details_select_vars",
         tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                     h4(style = "display: inline; margin: 0;", "Select Variables")),
         div(style = "margin-left: 15px; margin-top: 10px;",
@@ -276,7 +276,7 @@ ui <- fluidPage(
       ),
       
       # Assumption Checks Section (collapsible)
-      tags$details(
+      tags$details(id = "details_assumption_checks",
         tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                     h4(style = "display: inline; margin: 0;", "Assumption Checks")),
         div(style = "margin-left: 15px; margin-top: 10px;",
@@ -316,7 +316,7 @@ ui <- fluidPage(
         h4("PROCESS Options"),
         
         # Basic Options (collapsible)
-        tags$details(
+        tags$details(id = "details_basic_options",
           tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9;", 
                       "Basic Options"),
           div(style = "margin-left: 15px; margin-top: 10px;",
@@ -338,7 +338,7 @@ ui <- fluidPage(
         ),
         
         # Advanced Options (collapsible)
-        tags$details(
+        tags$details(id = "details_advanced_options",
           tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                       "Advanced Options"),
           div(style = "margin-left: 15px; margin-top: 10px;",
@@ -373,7 +373,7 @@ ui <- fluidPage(
         ),
         
         # Output Options (collapsible)
-        tags$details(
+        tags$details(id = "details_output_options",
           tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                       "Output Options"),
           div(style = "margin-left: 15px; margin-top: 10px;",
@@ -437,7 +437,7 @@ ui <- fluidPage(
         # Probing Moderation Options (collapsible) - Only for moderation models
         conditionalPanel(
           condition = "output.is_moderation_model === true",
-          tags$details(
+          tags$details(id = "details_probing_moderation",
             tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                         "Probing Moderation"),
             div(style = "margin-left: 15px; margin-top: 10px;",
@@ -3469,6 +3469,22 @@ server <- function(input, output, session) {
   # Observe JN availability to enable/disable download button
   observe({
     shinyjs::toggleState("download_jn", condition = jn_available() && !is.null(analysis_results()))
+  })
+  
+  # Collapse menu sections when Plots tab is selected
+  observeEvent(input$tabset_panel, {
+    if(!is.null(input$tabset_panel) && input$tabset_panel == "Plots") {
+      # Collapse all sections above Plot Options
+      shinyjs::runjs("
+        var sections = ['details_select_vars', 'details_assumption_checks', 
+                        'details_basic_options', 'details_advanced_options', 
+                        'details_output_options', 'details_probing_moderation'];
+        sections.forEach(function(id) {
+          var elem = document.getElementById(id);
+          if(elem) elem.removeAttribute('open');
+        });
+      ")
+    }
   })
   
   # Download handlers for plots
