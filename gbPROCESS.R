@@ -464,10 +464,35 @@ ui <- fluidPage(
           condition = "output.is_moderation_model === true",
           tags$details(
             tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
-                        "Visualizing Moderation"),
+                        "Plot Options"),
             div(style = "margin-left: 15px; margin-top: 10px;",
-              checkboxInput("plot", "Include plot data in output text", FALSE),
-              p(em("This includes data for visualizing moderation in the output text. Note: This will also open R graphics device windows that cannot be easily saved or customized."))
+              h5("Simple Slopes Plot Settings"),
+              selectInput("slopes_type", "Plot Type:",
+                choices = list(
+                  "Full range of predictor" = "full",
+                  "Restricted range (matching conditioning points)" = "restricted"
+                ),
+                selected = "full"
+              ),
+              textInput("slopes_title", "Plot Title", "Simple Slopes Plot"),
+              checkboxInput("use_color_lines", "Use color for lines", value = TRUE),
+              checkboxInput("custom_y_axis", "Customize y-axis range", value = FALSE),
+              conditionalPanel(
+                condition = "input.custom_y_axis == true",
+                numericInput("y_axis_min", "Y-axis minimum", value = 0),
+                numericInput("y_axis_max", "Y-axis maximum", value = 100)
+              ),
+              textInput("x_label", "Label for Predictor", ""),
+              textInput("y_label", "Label for Outcome", ""),
+              textInput("moderator_label", "Label for Moderator", ""),
+              numericInput("decimal_places", "Decimal Places for Moderator Levels", 2, min = 0, max = 5),
+              radioButtons("plot_conditioning_values", "Values for moderator levels:",
+                choices = list(
+                  "Percentiles (16th, 50th, 84th)" = "1",
+                  "Moments (Mean and ±1 SD)" = "0"
+                ),
+                selected = "1"
+              )
             )
           )
         )
@@ -650,6 +675,35 @@ ui <- fluidPage(
           conditionalPanel(
             condition = "output.analysis_ready === false",
             p("Run an analysis to see results here.")
+          )
+        ),
+        conditionalPanel(
+          condition = "output.is_moderation_model === true",
+          tabPanel("Plots",
+            conditionalPanel(
+              condition = "output.analysis_ready === true",
+              h4("Johnson-Neyman Plot"),
+              plotOutput("jn_plot", height = "500px", width = "800px"),
+              br(),
+              div(style = "margin-top: 20px;",
+                downloadButton("download_jn", "Download JN Plot (JPG)", 
+                  class = "btn-success", 
+                  style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
+              ),
+              br(), br(),
+              h4("Simple Slopes Plot"),
+              plotOutput("slopes_plot", height = "500px", width = "800px"),
+              br(),
+              div(style = "margin-top: 20px;",
+                downloadButton("download_slopes", "Download Simple Slopes Plot (JPG)", 
+                  class = "btn-success", 
+                  style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
+              )
+            ),
+            conditionalPanel(
+              condition = "output.analysis_ready === false",
+              p("Run an analysis to see plots here.")
+            )
           )
         )
       )
@@ -1824,8 +1878,8 @@ server <- function(input, output, session) {
             stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var))
           }
           process_args$w <- input$moderator_var
-          if(input$jn) process_args$jn <- 1
-          if(input$probe_interactions && !is.null(input$conditioning_values)) {
+          if(isTRUE(input$jn)) process_args$jn <- 1
+          if(isTRUE(input$probe_interactions) && !is.null(input$conditioning_values) && length(input$conditioning_values) > 0) {
             process_args$moments <- ifelse(input$conditioning_values == "0", 1, 0)
           }
         }
@@ -1844,12 +1898,12 @@ server <- function(input, output, session) {
       
       # Add other options
       print("DEBUG: Adding optional PROCESS arguments...")
-      if(input$effsize) process_args$effsize <- 1
-      if(input$stand) process_args$stand <- 1
-      if(input$normal) process_args$normal <- 1
-      if(input$matrices) process_args$matrices <- 1
-      if(input$covcoeff) process_args$covcoeff <- 1
-      if(input$covmy) {
+      if(isTRUE(input$effsize)) process_args$effsize <- 1
+      if(isTRUE(input$stand)) process_args$stand <- 1
+      if(isTRUE(input$normal)) process_args$normal <- 1
+      if(isTRUE(input$matrices)) process_args$matrices <- 1
+      if(isTRUE(input$covcoeff)) process_args$covcoeff <- 1
+      if(isTRUE(input$covmy)) {
         # When covmy==1, PROCESS excludes covariates from the outcome equation
         # For Model 1 (simple moderation with only one equation), PROCESS has a bug:
         # If covariates are excluded from the only equation, PROCESS incorrectly flags them
@@ -1893,10 +1947,10 @@ server <- function(input, output, session) {
       if(input$describe) process_args$describe <- 1
       if(input$listmiss) process_args$listmiss <- 1
       if(input$diagnose) process_args$diagnose <- 1
-      if(input$ssquares) process_args$ssquares <- 1
-      if(input$modelres) process_args$modelres <- 1
-      if(input$dominate) process_args$dominate <- 1
-      if(input$subsets) process_args$subsets <- 1
+      if(isTRUE(input$ssquares)) process_args$ssquares <- 1
+      if(isTRUE(input$modelres)) process_args$modelres <- 1
+      if(isTRUE(input$dominate)) process_args$dominate <- 1
+      if(isTRUE(input$subsets)) process_args$subsets <- 1
       # xmint only for Model 4 - explicitly set to 0 if not used
       # When xmint=1 for Model 4, PROCESS automatically:
       #   - Converts to Model 74 internally (line 807-816)
@@ -1930,26 +1984,26 @@ server <- function(input, output, session) {
       }
       # xmtest: Test for X by M interaction (available for mediation models including Model 4, but not Model 74)
       # Note: xmtest is mutually exclusive with xmint for Model 4 (when xmint is enabled, model becomes 74 and xmtest won't run)
-      if(input$xmtest) {
+      if(isTRUE(input$xmtest)) {
         process_args$xmtest <- 1
       } else {
         process_args$xmtest <- 0
       }
-      if(input$total) process_args$total <- 1
+      if(isTRUE(input$total)) process_args$total <- 1
       # Capture bootstrap results for download when bootstrapping is enabled
       # Set save=1 to get bootstrap results in return value (but don't save to file)
-      if(input$use_bootstrap) {
+      if(isTRUE(input$use_bootstrap)) {
         process_args$save <- 1  # This makes PROCESS return bootstrap results
       }
       # Only enable plot if user explicitly wants it (with warning)
-      if(input$plot) {
+      if(isTRUE(input$plot)) {
         process_args$plot <- 1
         showNotification("Note: This will open R graphics device windows that cannot be easily saved or customized.", type = "warning", duration = 5)
       } else {
         # Explicitly set plot to 0 to prevent any default plotting
         process_args$plot <- 0
       }
-      if(input$probe_interactions) {
+      if(isTRUE(input$probe_interactions)) {
         # Parse probe threshold (e.g., "p < .10" -> 0.10)
         probe_text <- input$probe_threshold
         probe_val <- tryCatch({
@@ -2221,8 +2275,8 @@ server <- function(input, output, session) {
             stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var))
           }
           process_args$w <- input$moderator_var
-          if(input$jn) process_args$jn <- 1
-          if(input$probe_interactions && !is.null(input$conditioning_values)) {
+          if(isTRUE(input$jn)) process_args$jn <- 1
+          if(isTRUE(input$probe_interactions) && !is.null(input$conditioning_values) && length(input$conditioning_values) > 0) {
             process_args$moments <- ifelse(input$conditioning_values == "0", 1, 0)
           }
         }
@@ -2286,9 +2340,9 @@ server <- function(input, output, session) {
         process_args$covmy <- 1
       }
       if(input$describe) process_args$describe <- 1
-      if(input$listmiss) process_args$listmiss <- 1
-      if(input$diagnose) process_args$diagnose <- 1
-      if(input$ssquares) process_args$ssquares <- 1
+      if(isTRUE(input$listmiss)) process_args$listmiss <- 1
+      if(isTRUE(input$diagnose)) process_args$diagnose <- 1
+      if(isTRUE(input$ssquares)) process_args$ssquares <- 1
       if(input$modelres) process_args$modelres <- 1
       if(input$dominate) process_args$dominate <- 1
       if(input$subsets) process_args$subsets <- 1
@@ -2330,18 +2384,18 @@ server <- function(input, output, session) {
       } else {
         process_args$xmtest <- 0
       }
-      if(input$total) process_args$total <- 1
+      if(isTRUE(input$total)) process_args$total <- 1
       # Capture bootstrap results for download when bootstrapping is enabled
-      if(input$use_bootstrap) {
+      if(isTRUE(input$use_bootstrap)) {
         process_args$save <- 1  # This makes PROCESS return bootstrap results
       }
       # Only enable plot if user explicitly wants it
-      if(input$plot) {
+      if(isTRUE(input$plot)) {
         process_args$plot <- 1
       } else {
         process_args$plot <- 0
       }
-      if(input$probe_interactions) {
+      if(isTRUE(input$probe_interactions)) {
         # Parse probe threshold (e.g., "p < .10" -> 0.10)
         probe_text <- input$probe_threshold
         probe_val <- tryCatch({
@@ -2877,24 +2931,6 @@ server <- function(input, output, session) {
     contentType = "text/html"
   )
   
-  # Download bootstrap results
-  output$download_bootstrap <- downloadHandler(
-    filename = function() {
-      paste0("bootstrap_results_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv")
-    },
-    content = function(file) {
-      req(analysis_results())
-      bootstrap_data <- analysis_results()$bootstrap_data
-      if(is.null(bootstrap_data)) {
-        showNotification("No bootstrap results available. Enable bootstrapping and run analysis first.", type = "warning")
-        # Create empty file with message
-        write.csv(data.frame(Message = "No bootstrap results available. Enable bootstrapping and run analysis first."), file, row.names = FALSE)
-      } else {
-        write.csv(bootstrap_data, file, row.names = FALSE)
-      }
-    }
-  )
-  
   # Disable download buttons until analysis is run
   observe({
     tryCatch({
@@ -2930,6 +2966,499 @@ server <- function(input, output, session) {
       }
     }
   )
+  
+  # ============================================================================
+  # PLOTS MODULE - Moderation Visualizations
+  # ============================================================================
+  
+  # Helper function to extract coefficients from PROCESS output for moderation models
+  extract_coefficients <- function(process_output, predictor_var, moderator_var) {
+    coef_data <- numeric(4)
+    names(coef_data) <- c("constant", "predictor", "moderator", "interaction")
+    
+    # Find the Model section
+    coef_start <- which(grepl("^Model:", process_output))
+    if(length(coef_start) == 0) return(NULL)
+    
+    # Find where the coefficient section ends
+    coef_end <- coef_start + 2
+    for(i in (coef_start + 3):min(length(process_output), coef_start + 20)) {
+      if(i > length(process_output)) break
+      line <- trimws(process_output[i])
+      if(line == "" || grepl("^Product terms key:", line) || 
+         grepl("^Covariance matrix", line) || grepl("^Test\\(s\\)", line)) {
+        coef_end <- i - 1
+        break
+      }
+    }
+    
+    coef_lines <- process_output[(coef_start + 3):coef_end]
+    
+    for(i in seq_along(coef_lines)) {
+      parts <- strsplit(trimws(coef_lines[i]), "\\s+")[[1]]
+      if(length(parts) >= 2) {
+        var_name <- parts[1]
+        coef_value <- tryCatch(as.numeric(parts[2]), error = function(e) NA)
+        if(!is.na(coef_value)) {
+          if(grepl("constant|Intercept", var_name, ignore.case = TRUE)) {
+            coef_data["constant"] <- coef_value
+          } else if(grepl(paste0("^", predictor_var, "$"), var_name)) {
+            coef_data["predictor"] <- coef_value
+          } else if(grepl(paste0("^", moderator_var, "$"), var_name)) {
+            coef_data["moderator"] <- coef_value
+          } else if(grepl("^int_1|^Int_1", var_name, ignore.case = TRUE)) {
+            coef_data["interaction"] <- coef_value
+          }
+        }
+      }
+    }
+    
+    # Check if we got all coefficients
+    if(any(is.na(coef_data)) || all(coef_data == 0)) {
+      return(NULL)
+    }
+    
+    return(coef_data)
+  }
+  
+  # Reactive to track JN plot availability (only for continuous moderators)
+  jn_available <- reactiveVal(TRUE)
+  
+  # Update JN availability based on moderator type
+  observe({
+    if(!is.null(input$moderator_var) && input$moderator_var != "" && 
+       !is.null(rv$original_dataset)) {
+      if(is_binary_variable(rv$original_dataset, input$moderator_var)) {
+        jn_available(FALSE)
+      } else {
+        jn_available(TRUE)
+      }
+    }
+  })
+  
+  # Simple Slopes Plot
+  output$slopes_plot <- renderPlot({
+    req(analysis_results())
+    req(input$moderator_var)
+    req(input$predictor_var)
+    
+    # Extract coefficients
+    coeffs <- extract_coefficients(
+      analysis_results()$output,
+      input$predictor_var,
+      input$moderator_var
+    )
+    
+    if(is.null(coeffs)) {
+      plot.new()
+      text(0.5, 0.5, "Unable to extract coefficients from PROCESS output.", cex = 1.2)
+      return()
+    }
+    
+    data_used <- analysis_results()$data_used
+    
+    # Check if outcome is binary
+    outcome_is_binary <- is_binary_variable(data_used, input$outcome_var)
+    
+    # Get moderator levels
+    if(is_binary_variable(data_used, input$moderator_var)) {
+      moderator_levels <- sort(unique(data_used[[input$moderator_var]][!is.na(data_used[[input$moderator_var]])]))
+      moderator_levels <- round(moderator_levels, input$decimal_places)
+    } else {
+      # Use plot_conditioning_values if available, otherwise default to percentiles
+      cond_val <- if(!is.null(input$plot_conditioning_values)) input$plot_conditioning_values else "1"
+      moderator_levels <- if(cond_val == "0") {
+        mod_mean <- mean(data_used[[input$moderator_var]], na.rm = TRUE)
+        mod_sd <- sd(data_used[[input$moderator_var]], na.rm = TRUE)
+        values <- c(mod_mean - mod_sd, mod_mean, mod_mean + mod_sd)
+        round(values, input$decimal_places)
+      } else {
+        values <- quantile(data_used[[input$moderator_var]], 
+                          probs = c(0.16, 0.50, 0.84), 
+                          na.rm = TRUE)
+        round(values, input$decimal_places)
+      }
+    }
+    
+    # Create predictor sequence
+    if(input$slopes_type == "full") {
+      pred_seq <- seq(
+        min(data_used[[input$predictor_var]], na.rm = TRUE),
+        max(data_used[[input$predictor_var]], na.rm = TRUE),
+        length.out = 100
+      )
+    } else {
+      # Use plot_conditioning_values if available, otherwise default to percentiles
+      cond_val <- if(!is.null(input$plot_conditioning_values)) input$plot_conditioning_values else "1"
+      if(cond_val == "0") {
+        predictor_mean <- mean(data_used[[input$predictor_var]], na.rm = TRUE)
+        predictor_sd <- sd(data_used[[input$predictor_var]], na.rm = TRUE)
+        pred_seq <- c(predictor_mean - predictor_sd, predictor_mean, predictor_mean + predictor_sd)
+      } else {
+        pred_seq <- quantile(data_used[[input$predictor_var]], 
+                           probs = c(0.16, 0.50, 0.84), 
+                           na.rm = TRUE)
+      }
+    }
+    
+    # Create plotting data frame
+    plot_data <- expand.grid(
+      Predictor = pred_seq,
+      Moderator = moderator_levels
+    )
+    
+    # Calculate predicted values
+    if(outcome_is_binary) {
+      log_odds <- coeffs["constant"] +
+        coeffs["predictor"] * plot_data$Predictor +
+        coeffs["moderator"] * plot_data$Moderator +
+        coeffs["interaction"] * plot_data$Predictor * plot_data$Moderator
+      plot_data$Outcome <- plogis(log_odds)
+    } else {
+      plot_data$Outcome <- coeffs["constant"] +
+        coeffs["predictor"] * plot_data$Predictor +
+        coeffs["moderator"] * plot_data$Moderator +
+        coeffs["interaction"] * plot_data$Predictor * plot_data$Moderator
+    }
+    
+    # Create plot
+    y_label_text <- if(outcome_is_binary) {
+      if(input$y_label != "") paste(input$y_label, "(Probability)") else "Predicted Probability"
+    } else {
+      if(input$y_label != "") input$y_label else input$outcome_var
+    }
+    
+    x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
+    mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(input$moderator_var, " Levels")
+    
+    p <- ggplot(plot_data, aes(
+      x = Predictor, 
+      y = Outcome,
+      color = if(input$use_color_lines) 
+        factor(Moderator, labels = format(moderator_levels, nsmall = input$decimal_places)) else NULL,
+      linetype = if(!input$use_color_lines) 
+        factor(Moderator, labels = format(moderator_levels, nsmall = input$decimal_places)) else NULL
+    )) +
+      geom_line(linewidth = 1) +
+      {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
+      {if(outcome_is_binary && !input$custom_y_axis) coord_cartesian(ylim = c(0, 1))} +
+      labs(
+        title = input$slopes_title,
+        x = x_label_text,
+        y = y_label_text,
+        color = if(input$use_color_lines) mod_label_text else NULL,
+        linetype = if(!input$use_color_lines) mod_label_text else NULL
+      ) +
+      theme_minimal() +
+      theme(
+        text = element_text(size = 14),
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 14),
+        plot.title = element_text(size = 18, hjust = 0.5),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(color = "black", linewidth = 0.5),
+        axis.ticks = element_line(color = "black", linewidth = 0.5)
+      )
+    
+    print(p)
+  })
+  
+  # Johnson-Neyman Plot
+  output$jn_plot <- renderPlot({
+    req(analysis_results())
+    req(input$moderator_var)
+    
+    if(!jn_available()) {
+      plot.new()
+      text(0.5, 0.5, 
+           "Johnson-Neyman plot not available for categorical moderators.\nUse the simple slopes plots instead.", 
+           cex = 1.2)
+      return()
+    }
+    
+    tryCatch({
+      process_output <- analysis_results()$output
+      start_idx <- which(grepl("Conditional effect of focal predictor", process_output))
+      
+      if(length(start_idx) == 0) {
+        plot.new()
+        text(0.5, 0.5, "Johnson-Neyman data not found in PROCESS output.", cex = 1.2)
+        return()
+      }
+      
+      data_start <- start_idx + 2
+      end_idx <- which(grepl("^\\s*$", process_output[data_start:length(process_output)]))[1] + data_start - 1
+      
+      if(is.na(end_idx) || end_idx <= data_start) {
+        plot.new()
+        text(0.5, 0.5, "Unable to parse Johnson-Neyman data from PROCESS output.", cex = 1.2)
+        return()
+      }
+      
+      data_lines <- process_output[data_start:end_idx]
+      jn_data <- read.table(text = paste(data_lines, collapse = "\n"),
+                           col.names = c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI"),
+                           stringsAsFactors = FALSE)
+      
+      jn_data$significant <- jn_data$p < 0.05
+      transition_point <- jn_data$Moderator[which.min(abs(jn_data$p - 0.05))]
+      
+      x_label_text <- if(input$moderator_label != "") input$moderator_label else input$moderator_var
+      y_label_text <- if(input$x_label != "") paste("Effect of", input$x_label) else paste("Effect of", input$predictor_var)
+      
+      p <- ggplot(jn_data, aes(x = Moderator, y = Effect)) +
+        geom_ribbon(aes(ymin = LLCI, ymax = ULCI, fill = !significant), alpha = 0.4) +
+        scale_fill_manual(values = if(input$use_color_lines) 
+                          c(`TRUE` = "pink", `FALSE` = "lightblue") else 
+                          c(`TRUE` = "grey70", `FALSE` = "grey50"),
+                        labels = c(`TRUE` = "n.s.", `FALSE` = "p < .05"),
+                        name = "") +
+        geom_line(linewidth = 1, 
+                 color = if(input$use_color_lines) "blue" else "black") +
+        geom_hline(yintercept = 0, linetype = "dashed") +
+        geom_vline(xintercept = transition_point,
+                  linetype = "dashed", 
+                  color = if(input$use_color_lines) "cyan" else "grey40") +
+        theme_minimal() +
+        labs(title = "Johnson-Neyman Plot",
+             x = x_label_text,
+             y = y_label_text) +
+        theme(
+          text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          axis.text = element_text(size = 14),
+          plot.title = element_text(size = 18, hjust = 0.5),
+          legend.title = element_blank(),
+          legend.text = element_text(size = 14),
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(color = "black", linewidth = 0.5),
+          axis.ticks = element_line(color = "black", linewidth = 0.5)
+        )
+      
+      print(p)
+    }, error = function(e) {
+      plot.new()
+      text(0.5, 0.5, paste("Error generating JN plot:", e$message), cex = 1.2)
+      print(paste("Error in JN plot:", e$message))
+    })
+  })
+  
+  # Observe JN availability to enable/disable download button
+  observe({
+    shinyjs::toggleState("download_jn", condition = jn_available() && !is.null(analysis_results()))
+  })
+  
+  # Download handlers for plots
+  output$download_jn <- downloadHandler(
+    filename = function() {
+      paste0("jn_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+    },
+    content = function(file) {
+      tryCatch({
+        req(analysis_results())
+        process_output <- analysis_results()$output
+        
+        start_idx <- which(grepl("Conditional effect of focal predictor", process_output))
+        if(length(start_idx) > 0) {
+          data_start <- start_idx + 2
+          end_idx <- which(grepl("^\\s*$", process_output[data_start:length(process_output)]))[1] + data_start - 1
+          
+          if(!is.na(end_idx) && end_idx > data_start) {
+            data_lines <- process_output[data_start:end_idx]
+            jn_data <- read.table(text = paste(data_lines, collapse = "\n"),
+                                 col.names = c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI"),
+                                 stringsAsFactors = FALSE)
+            
+            jn_data$significant <- jn_data$p < 0.05
+            transition_point <- jn_data$Moderator[which.min(abs(jn_data$p - 0.05))]
+            
+            x_label_text <- if(input$moderator_label != "") input$moderator_label else input$moderator_var
+            y_label_text <- if(input$x_label != "") paste("Effect of", input$x_label) else paste("Effect of", input$predictor_var)
+            
+            p <- ggplot(jn_data, aes(x = Moderator, y = Effect)) +
+              geom_ribbon(aes(ymin = LLCI, ymax = ULCI, fill = !significant), alpha = 0.4) +
+              scale_fill_manual(values = if(input$use_color_lines) 
+                                c(`TRUE` = "pink", `FALSE` = "lightblue") else 
+                                c(`TRUE` = "grey70", `FALSE` = "grey50"),
+                              labels = c(`TRUE` = "n.s.", `FALSE` = "p < .05"),
+                              name = "") +
+              geom_line(linewidth = 1, 
+                       color = if(input$use_color_lines) "blue" else "black") +
+              geom_hline(yintercept = 0, linetype = "dashed") +
+              geom_vline(xintercept = transition_point,
+                        linetype = "dashed", 
+                        color = if(input$use_color_lines) "cyan" else "grey40") +
+              theme_minimal() +
+              labs(title = "Johnson-Neyman Plot",
+                   x = x_label_text,
+                   y = y_label_text) +
+              theme(
+                text = element_text(size = 14),
+                axis.title = element_text(size = 16),
+                axis.text = element_text(size = 14),
+                plot.title = element_text(size = 18, hjust = 0.5),
+                legend.title = element_blank(),
+                legend.text = element_text(size = 14),
+                panel.grid.minor = element_blank(),
+                axis.line = element_line(color = "black", linewidth = 0.5),
+                axis.ticks = element_line(color = "black", linewidth = 0.5)
+              )
+            
+            ggsave(file, plot = p, device = "jpg", width = 10, height = 8, dpi = 600)
+          }
+        }
+      }, error = function(e) {
+        print(paste("Error saving JN plot:", e$message))
+      })
+    }
+  )
+  
+  output$download_slopes <- downloadHandler(
+    filename = function() {
+      paste0("slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+    },
+    content = function(file) {
+      tryCatch({
+        req(analysis_results())
+        req(input$moderator_var)
+        req(input$predictor_var)
+        
+        coeffs <- extract_coefficients(
+          analysis_results()$output,
+          input$predictor_var,
+          input$moderator_var
+        )
+        
+        if(is.null(coeffs)) {
+          stop("Unable to extract coefficients from PROCESS output.")
+        }
+        
+        data_used <- analysis_results()$data_used
+        outcome_is_binary <- is_binary_variable(data_used, input$outcome_var)
+        
+        if(is_binary_variable(data_used, input$moderator_var)) {
+          moderator_levels <- sort(unique(data_used[[input$moderator_var]][!is.na(data_used[[input$moderator_var]])]))
+          moderator_levels <- round(moderator_levels, input$decimal_places)
+        } else {
+          # Use plot_conditioning_values if available, otherwise default to percentiles
+      cond_val <- if(!is.null(input$plot_conditioning_values)) input$plot_conditioning_values else "1"
+      moderator_levels <- if(cond_val == "0") {
+            mod_mean <- mean(data_used[[input$moderator_var]], na.rm = TRUE)
+            mod_sd <- sd(data_used[[input$moderator_var]], na.rm = TRUE)
+            c(mod_mean - mod_sd, mod_mean, mod_mean + mod_sd)
+          } else {
+            quantile(data_used[[input$moderator_var]], probs = c(0.16, 0.50, 0.84), na.rm = TRUE)
+          }
+          moderator_levels <- round(moderator_levels, input$decimal_places)
+        }
+        
+        if(input$slopes_type == "full") {
+          pred_seq <- seq(
+            min(data_used[[input$predictor_var]], na.rm = TRUE),
+            max(data_used[[input$predictor_var]], na.rm = TRUE),
+            length.out = 100
+          )
+        } else {
+      # Use plot_conditioning_values if available, otherwise default to percentiles
+      cond_val <- if(!is.null(input$plot_conditioning_values)) input$plot_conditioning_values else "1"
+      if(cond_val == "0") {
+        predictor_mean <- mean(data_used[[input$predictor_var]], na.rm = TRUE)
+        predictor_sd <- sd(data_used[[input$predictor_var]], na.rm = TRUE)
+        pred_seq <- c(predictor_mean - predictor_sd, predictor_mean, predictor_mean + predictor_sd)
+      } else {
+        pred_seq <- quantile(data_used[[input$predictor_var]], 
+                           probs = c(0.16, 0.50, 0.84), 
+                           na.rm = TRUE)
+      }
+        }
+        
+        plot_data <- expand.grid(
+          Predictor = pred_seq,
+          Moderator = moderator_levels
+        )
+        
+        if(outcome_is_binary) {
+          log_odds <- coeffs["constant"] +
+            coeffs["predictor"] * plot_data$Predictor +
+            coeffs["moderator"] * plot_data$Moderator +
+            coeffs["interaction"] * plot_data$Predictor * plot_data$Moderator
+          plot_data$Outcome <- plogis(log_odds)
+        } else {
+          plot_data$Outcome <- coeffs["constant"] +
+            coeffs["predictor"] * plot_data$Predictor +
+            coeffs["moderator"] * plot_data$Moderator +
+            coeffs["interaction"] * plot_data$Predictor * plot_data$Moderator
+        }
+        
+        y_label_text <- if(outcome_is_binary) {
+          if(input$y_label != "") paste(input$y_label, "(Probability)") else "Predicted Probability"
+        } else {
+          if(input$y_label != "") input$y_label else input$outcome_var
+        }
+        
+        x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
+        mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(input$moderator_var, " Levels")
+        
+        p <- ggplot(plot_data, aes(
+          x = Predictor, 
+          y = Outcome,
+          color = if(input$use_color_lines) factor(Moderator) else NULL,
+          linetype = if(!input$use_color_lines) factor(Moderator) else NULL
+        )) +
+          geom_line(linewidth = 1) +
+          {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
+          {if(outcome_is_binary && !input$custom_y_axis) coord_cartesian(ylim = c(0, 1))} +
+          labs(
+            title = input$slopes_title,
+            x = x_label_text,
+            y = y_label_text,
+            color = if(input$use_color_lines) mod_label_text else NULL,
+            linetype = if(!input$use_color_lines) mod_label_text else NULL
+          ) +
+          theme_minimal() +
+          theme(
+            text = element_text(size = 14),
+            axis.title = element_text(size = 16),
+            axis.text = element_text(size = 14),
+            plot.title = element_text(size = 18, hjust = 0.5),
+            legend.title = element_text(size = 14),
+            legend.text = element_text(size = 14),
+            axis.line = element_line(color = "black", linewidth = 0.5),
+            axis.ticks = element_line(color = "black", linewidth = 0.5)
+          )
+        
+        ggsave(file, plot = p, device = "jpg", width = 10, height = 8, dpi = 600)
+      }, error = function(e) {
+        print(paste("Error saving slopes plot:", e$message))
+      })
+    }
+  )
+  
+  # Disable plot download buttons until analysis is run
+  observe({
+    tryCatch({
+      has_results <- !is.null(analysis_results())
+      shinyjs::toggleState("download_slopes", condition = has_results)
+    }, error = function(e) {
+      shinyjs::disable("download_slopes")
+    })
+  })
+  
+  # Auto-populate plot labels from selected variables (only for moderation models)
+  # This automatically updates labels when variables are selected, matching the old app behavior
+  # Users can then edit these labels if they want clearer/more descriptive text
+  observe({
+    if(!is.null(input$process_model) && input$process_model %in% c("1", "2", "3", "5", "14", "15", "58", "59", "74")) {
+      # Only update if all required variables are selected (matching old app req() behavior)
+      if(!is.null(input$predictor_var) && input$predictor_var != "" &&
+         !is.null(input$outcome_var) && input$outcome_var != "" &&
+         !is.null(input$moderator_var) && input$moderator_var != "") {
+        updateTextInput(session, "x_label", value = input$predictor_var)
+        updateTextInput(session, "y_label", value = input$outcome_var)
+        updateTextInput(session, "moderator_label", value = input$moderator_var)
+      }
+    }
+  })
   
   # Make xmint and xmtest mutually exclusive for Model 4
   observeEvent(input$xmint, {
