@@ -372,50 +372,59 @@ ui <- fluidPage(
           tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                       "Output Options"),
           div(style = "margin-left: 15px; margin-top: 10px;",
-            checkboxInput("describe", "Descriptives and variable correlations", TRUE),
-            checkboxInput("covcoeff", "Show regression coefficient covariance matrix", FALSE),
-            checkboxInput("effsize", "Scale-free measures of (partial) association", FALSE),
-            checkboxInput("listmiss", "List cases deleted due to missing data", FALSE),
-            checkboxInput("ssquares", "Sums of squares and adjusted R-squared", FALSE),
-            checkboxInput("modelres", "Shrunken R estimates", FALSE),
-            checkboxInput("diagnose", "Model diagnostics and assumptions", TRUE),
+            tags$div(title = "Displays descriptive statistics (means, SDs, min, max) and correlation matrices for all variables in the analysis.",
+              checkboxInput("describe", "Descriptives and variable correlations", TRUE)
+            ),
+            tags$div(title = "Shows the covariance matrix of regression parameter estimates. Useful for understanding relationships between coefficients and for advanced analyses.",
+              checkboxInput("covcoeff", "Show regression coefficient covariance matrix", FALSE)
+            ),
+            tags$div(title = "Provides scale-free measures including partial correlations, semi-partial correlations, and standardized coefficients. Useful for comparing effects across variables with different scales.",
+              checkboxInput("effsize", "Scale-free measures of (partial) association", FALSE)
+            ),
+            tags$div(title = "Lists all cases that were excluded from analysis due to missing data on any variable. Helps identify data quality issues.",
+              checkboxInput("listmiss", "List cases deleted due to missing data", FALSE)
+            ),
+            tags$div(title = "Displays sums of squares (regression, residual, total), degrees of freedom, mean squares, and adjusted R-squared. Provides detailed model fit information.",
+              checkboxInput("ssquares", "Sums of squares and adjusted R-squared", FALSE)
+            ),
+            tags$div(title = "Shows shrunken R estimates, which are cross-validated R-squared values that adjust for overfitting. These estimates indicate how well the model would perform on new data. Only available for continuous outcomes with multiple mediators.",
+              checkboxInput("modelres", "Shrunken R estimates", FALSE)
+            ),
+            tags$div(title = "Provides comprehensive regression diagnostics including residual analysis, influential cases, multicollinearity (VIF), and assumption tests. Essential for evaluating model quality.",
+              checkboxInput("diagnose", "Model diagnostics and assumptions", TRUE)
+            ),
             conditionalPanel(
               condition = "input.process_model == '0'",
-              checkboxInput("dominate", "Dominance analysis (model 0 only)", FALSE),
-              checkboxInput("subsets", "All subsets regression (model 0 only)", FALSE)
+              tags$div(title = "Determines the relative importance of each predictor by comparing their contributions to R-squared. Shows which predictors contribute most to model fit. Only available for Model 0 with 2-15 predictors.",
+                checkboxInput("dominate", "Dominance analysis (model 0 only)", FALSE)
+              ),
+              tags$div(title = "Tests all possible combinations of predictors to find the best subset model. Compares models with different predictor combinations based on R-squared and adjusted R-squared. Only available for Model 0 with 2-15 predictors.",
+                checkboxInput("subsets", "All subsets regression (model 0 only)", FALSE)
+              )
             ),
             conditionalPanel(
               condition = "input.process_model == '4'",
-              tags$div(title = "Includes the X*M interaction term in Model 4, converting it to a counterfactual framework (Model 74 internally). This allows the effect of the mediator (M) on the outcome (Y) to depend on the level of X. Changes the model structure and enables counterfactual effect estimation. Mutually exclusive with 'Test for X by M interaction'.",
+              tags$div(title = "Includes the X*M interaction term in Model 4, allowing the effect of the mediator (M) on the outcome (Y) to depend on the level of X. Changes the model to a counterfactual framework with different effect interpretations. Mutually exclusive with 'Test for X by M interaction'.",
                 checkboxInput("xmint", "Allow X by M interaction (model 4 only)", FALSE)
               )
             ),
             conditionalPanel(
               condition = "output.is_mediation_model === true && input.process_model != '74'",
-              tags$div(title = "Performs statistical tests to determine if X*M interaction terms are significant. Tests whether the effect of mediators (M) on the outcome (Y) depends on the level of X, without changing the model structure. For Model 4, this can help you decide whether to enable 'Allow X by M interaction'. Mutually exclusive with 'Allow X by M interaction' for Model 4.",
+              tags$div(title = "Tests whether X*M interaction terms are significant. Determines if the effect of mediators (M) on the outcome (Y) depends on the level of X, without changing the model structure. For Model 4, use this to decide whether to enable 'Allow X by M interaction'. Mutually exclusive with 'Allow X by M interaction' for Model 4.",
                 checkboxInput("xmtest", "Test for X by M interaction", FALSE)
               )
             ),
             conditionalPanel(
               condition = "output.is_mediation_model === true && (input.process_model == '4' || input.process_model == '6' || input.process_model == '80' || input.process_model == '81' || input.process_model == '82')",
-              checkboxInput("total", "Total effect of X", FALSE)
+              tags$div(title = "Shows the total effect of X on Y (direct + indirect effects combined). Useful for understanding the overall relationship before examining mediation pathways.",
+                checkboxInput("total", "Total effect of X", FALSE)
+              )
             ),
-            checkboxInput("matrices", "Matrices output", FALSE),
+            tags$div(title = "Displays model definition matrices showing which paths are estimated and which variables moderate which paths. Useful for understanding the model structure.",
+              checkboxInput("matrices", "Matrices output", FALSE)
+            ),
             tags$div(title = "When checked, covariates are excluded from the outcome (Y) equation. This option affects model specification but does not produce a separate covariance matrix output. For Model 1, this option works around a PROCESS limitation by not passing covariates when enabled.",
               checkboxInput("covmy", "Exclude covariates from Y equation", FALSE)
-            ),
-            checkboxInput("save", "Save bootstrap results to file (not recommended in Shiny)", FALSE),
-            p(em("Note: The 'save' option saves files to the R working directory, which may not be accessible in Shiny apps. Use the Download buttons instead.")),
-            conditionalPanel(
-              condition = "input.save == true",
-              radioButtons("save_type", "Information to save:",
-                choices = list(
-                  "Bootstrap estimates" = "boot",
-                  "Output" = "output",
-                  "Regression diagnostics" = "diagnostics"
-                ),
-                selected = "diagnostics"
-              )
             )
           )
         ),
@@ -475,6 +484,12 @@ ui <- fluidPage(
         
         h4("Download Options"),
         downloadButton("download_results", "Results Text"),
+        conditionalPanel(
+          condition = "input.use_bootstrap == true",
+          tags$div(title = "Download bootstrap results as a CSV file. Contains bootstrap estimates for all effects. Only available when bootstrapping is enabled.",
+            downloadButton("download_bootstrap", "Bootstrap Results (CSV)")
+          )
+        ),
         conditionalPanel(
           condition = "input.run_analysis_no_outliers > input.run_analysis",
           h4("Download Reduced Dataset"),
@@ -1908,12 +1923,10 @@ server <- function(input, output, session) {
         process_args$xmtest <- 0
       }
       if(input$total) process_args$total <- 1
-      # Disable save and plot by default to avoid issues in Shiny
-      # save saves to R working directory which may not be accessible
-      # plot opens graphics windows that can't be easily saved
-      if(input$save) {
-        process_args$save <- 1
-        showNotification("Note: Files will be saved to the R working directory. Use Download buttons for easier access.", type = "warning", duration = 5)
+      # Capture bootstrap results for download when bootstrapping is enabled
+      # Set save=1 to get bootstrap results in return value (but don't save to file)
+      if(input$use_bootstrap) {
+        process_args$save <- 1  # This makes PROCESS return bootstrap results
       }
       # Only enable plot if user explicitly wants it (with warning)
       if(input$plot) {
@@ -1959,12 +1972,31 @@ server <- function(input, output, session) {
         })
         print(paste("DEBUG: PROCESS completed. Output lines:", length(process_output)))
         
-        # Store results
+        # Store results including bootstrap data if available
+        bootstrap_data <- NULL
+        if(input$use_bootstrap && !is.null(result)) {
+          # PROCESS returns bootstrap results when save=1 and bootstrapping is enabled
+          print(paste("DEBUG: Bootstrap enabled, result type:", class(result)))
+          if(is.data.frame(result)) {
+            bootstrap_data <- result
+            print(paste("DEBUG: Bootstrap data captured (data.frame), rows:", nrow(bootstrap_data)))
+          } else if(is.list(result) && length(result) > 0) {
+            print(paste("DEBUG: Result is list with", length(result), "elements"))
+            if(is.data.frame(result[[1]])) {
+              bootstrap_data <- result[[1]]  # First element is bootstrap results
+              print(paste("DEBUG: Bootstrap data captured (list[[1]]), rows:", nrow(bootstrap_data)))
+            }
+          }
+        } else {
+          print(paste("DEBUG: Bootstrap not enabled or result is NULL. use_bootstrap:", input$use_bootstrap, "result is null:", is.null(result)))
+        }
+        
         rv$analysis_results <- list(
           output = process_output,
           data_used = process_data_orig,
           original_data = rv$original_dataset,
-          settings = analysis_settings
+          settings = analysis_settings,
+          bootstrap_data = bootstrap_data
         )
         print("DEBUG: Results stored in rv$analysis_results")
         print(paste("DEBUG: rv$analysis_results is NULL?", is.null(rv$analysis_results)))
@@ -2286,9 +2318,9 @@ server <- function(input, output, session) {
         process_args$xmtest <- 0
       }
       if(input$total) process_args$total <- 1
-      # Disable save and plot by default to avoid issues in Shiny
-      if(input$save) {
-        process_args$save <- 1
+      # Capture bootstrap results for download when bootstrapping is enabled
+      if(input$use_bootstrap) {
+        process_args$save <- 1  # This makes PROCESS return bootstrap results
       }
       # Only enable plot if user explicitly wants it
       if(input$plot) {
@@ -2331,12 +2363,31 @@ server <- function(input, output, session) {
         })
         print(paste("DEBUG: PROCESS completed. Output lines:", length(process_output)))
         
-        # Store results
+        # Store results including bootstrap data if available
+        bootstrap_data <- NULL
+        if(input$use_bootstrap && !is.null(result)) {
+          # PROCESS returns bootstrap results when save=1 and bootstrapping is enabled
+          print(paste("DEBUG: Bootstrap enabled, result type:", class(result)))
+          if(is.data.frame(result)) {
+            bootstrap_data <- result
+            print(paste("DEBUG: Bootstrap data captured (data.frame), rows:", nrow(bootstrap_data)))
+          } else if(is.list(result) && length(result) > 0) {
+            print(paste("DEBUG: Result is list with", length(result), "elements"))
+            if(is.data.frame(result[[1]])) {
+              bootstrap_data <- result[[1]]  # First element is bootstrap results
+              print(paste("DEBUG: Bootstrap data captured (list[[1]]), rows:", nrow(bootstrap_data)))
+            }
+          }
+        } else {
+          print(paste("DEBUG: Bootstrap not enabled or result is NULL. use_bootstrap:", input$use_bootstrap, "result is null:", is.null(result)))
+        }
+        
         rv$analysis_results <- list(
           output = process_output,
           data_used = process_data,
           original_data = rv$original_dataset,
-          settings = analysis_settings
+          settings = analysis_settings,
+          bootstrap_data = bootstrap_data
         )
         # Clear validation error on successful run
         rv$validation_error <- NULL
@@ -2807,6 +2858,24 @@ server <- function(input, output, session) {
       ', output_content), file)
     },
     contentType = "text/html"
+  )
+  
+  # Download bootstrap results
+  output$download_bootstrap <- downloadHandler(
+    filename = function() {
+      paste0("bootstrap_results_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv")
+    },
+    content = function(file) {
+      req(analysis_results())
+      bootstrap_data <- analysis_results()$bootstrap_data
+      if(is.null(bootstrap_data)) {
+        showNotification("No bootstrap results available. Enable bootstrapping and run analysis first.", type = "warning")
+        # Create empty file with message
+        write.csv(data.frame(Message = "No bootstrap results available. Enable bootstrapping and run analysis first."), file, row.names = FALSE)
+      } else {
+        write.csv(bootstrap_data, file, row.names = FALSE)
+      }
+    }
   )
   
   output$download_filtered_data <- downloadHandler(
