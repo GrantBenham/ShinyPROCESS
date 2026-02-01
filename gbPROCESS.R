@@ -3968,6 +3968,122 @@ server <- function(input, output, session) {
         # Don't return here - let the code continue to check if cond_effect_data was set
       })
       
+      # If still not found, try "Data for visualizing the conditional effect of the focal predictor:"
+      if(is.null(cond_effect_data)) {
+        # Ensure process_output is available
+        if(!exists("process_output") || is.null(process_output)) {
+          process_output <- results$output
+        }
+        viz_idx <- which(grepl("Data for visualizing the conditional effect of the focal predictor:", process_output, ignore.case = TRUE))
+        if(length(viz_idx) > 0) {
+          # The data section should start 2 lines after this header (header line + column names line)
+          data_start <- viz_idx[1] + 2
+          data_end <- min(data_start + 100, length(process_output))  # Increase range to get all data
+          potential_data_lines <- process_output[data_start:data_end]
+          # Filter to lines that start with numbers (data rows)
+          potential_data_lines <- potential_data_lines[grepl("^\\s*-?\\d", potential_data_lines)]
+          
+          if(length(potential_data_lines) > 0) {
+            # Parse as 7 columns: X, W, Z, Y, se, LLCI, ULCI
+            parsed_viz <- tryCatch({
+              data_text <- paste(potential_data_lines, collapse = "\n")
+              parsed_viz <- read.table(text = data_text,
+                                      col.names = c("X", "W", "Z", "Y", "se", "LLCI", "ULCI"),
+                                      stringsAsFactors = FALSE, 
+                                      fill = TRUE, 
+                                      blank.lines.skip = TRUE,
+                                      na.strings = c("NA", ""))
+              
+              # Convert to numeric
+              for(col in 1:ncol(parsed_viz)) {
+                parsed_viz[, col] <- as.numeric(parsed_viz[, col])
+              }
+              
+              parsed_viz
+            }, error = function(e) {
+              print(paste("DEBUG: Error parsing visualization data:", e$message))
+              NULL
+            })
+            
+            if(!is.null(parsed_viz) && ncol(parsed_viz) == 7 && nrow(parsed_viz) > 0) {
+              print(paste("DEBUG: Successfully parsed visualization data with", nrow(parsed_viz), "rows"))
+              print("DEBUG: First few rows:")
+              print(head(parsed_viz, 5))
+              
+              # For Model 3 conditional effect plot, we need to show the effect of X*W across Z
+              # This means we need to hold X and W constant at their median values
+              # and plot the predicted Y (or conditional effect) across Z
+              
+              # Get unique X and W values
+              unique_x <- unique(parsed_viz$X)
+              unique_w <- unique(parsed_viz$W)
+              unique_x <- unique_x[!is.na(unique_x)]
+              unique_w <- unique_w[!is.na(unique_w)]
+              
+              if(length(unique_x) > 0 && length(unique_w) > 0) {
+                # Use median X and median W
+                x_median <- median(unique_x, na.rm = TRUE)
+                w_median <- median(unique_w, na.rm = TRUE)
+                
+                # Find rows where X and W are closest to their medians
+                x_distances <- abs(parsed_viz$X - x_median)
+                w_distances <- abs(parsed_viz$W - w_median)
+                min_x_dist <- min(x_distances, na.rm = TRUE)
+                min_w_dist <- min(w_distances, na.rm = TRUE)
+                tolerance_x <- max(0.01, min_x_dist * 1.5)
+                tolerance_w <- max(0.01, min_w_dist * 1.5)
+                
+                rows_at_median <- x_distances <= tolerance_x & w_distances <= tolerance_w
+                
+                if(sum(rows_at_median) > 0) {
+                  # Extract Z, Y, se, LLCI, ULCI for rows at median X and W
+                  cond_effect_data <- parsed_viz[rows_at_median, c("Z", "Y", "se", "LLCI", "ULCI")]
+                  # Rename Y to Effect for consistency with plot code
+                  colnames(cond_effect_data) <- c("Z", "Effect", "se", "LLCI", "ULCI")
+                  
+                  # Add placeholder columns for t and p (not needed for plotting)
+                  cond_effect_data$t <- NA
+                  cond_effect_data$p <- NA
+                  
+                  # Remove any duplicate Z values (keep first occurrence)
+                  cond_effect_data <- cond_effect_data[!duplicated(cond_effect_data$Z), ]
+                  
+                  # Sort by Z to ensure smooth line
+                  cond_effect_data <- cond_effect_data[order(cond_effect_data$Z), ]
+                  
+                  # Validate that we have valid data
+                  valid_rows <- !is.na(cond_effect_data$Z) & !is.na(cond_effect_data$Effect) & 
+                                is.finite(cond_effect_data$Z) & is.finite(cond_effect_data$Effect)
+                  if(sum(valid_rows) >= 3) {
+                    cond_effect_data <- cond_effect_data[valid_rows, ]
+                    print(paste("DEBUG: Extracted conditional effect data from visualization section"))
+                    print(paste("DEBUG: Using X =", x_median, "and W =", w_median))
+                    print(paste("DEBUG: Found", nrow(cond_effect_data), "unique Z values"))
+                    print("DEBUG: Z range:", range(cond_effect_data$Z, na.rm = TRUE))
+                    print("DEBUG: Effect range:", range(cond_effect_data$Effect, na.rm = TRUE))
+                  } else {
+                    print("DEBUG: Not enough valid rows after filtering")
+                    cond_effect_data <- NULL
+                  }
+                } else {
+                  print("DEBUG: No rows found at median X and W")
+                  cond_effect_data <- NULL
+                }
+              } else {
+                print("DEBUG: Could not determine unique X or W values")
+                cond_effect_data <- NULL
+              }
+            } else {
+              print("DEBUG: Failed to parse visualization data as 7 columns")
+              cond_effect_data <- NULL
+            }
+          } else {
+            print("DEBUG: No data lines found in visualization section")
+            cond_effect_data <- NULL
+          }
+        }
+      }
+      
       # After tryCatch, check if we have conditional effect data
       if(is.null(cond_effect_data)) {
         plot.new()
