@@ -771,18 +771,21 @@ server <- function(input, output, session) {
     rv$analysis_results <- NULL  # Reset analysis results when new file is loaded
   })
   
-  # Clear analysis results when model changes
+  # Clear analysis results and all variables when model changes
   observeEvent(input$process_model, {
     rv$analysis_results <- NULL
-    print("DEBUG - Model changed, clearing analysis results")
+    rv$validation_error <- NULL
+    print("DEBUG - Model changed, clearing analysis results and all variables")
     
-    # Clear moderator2_var if new model doesn't require it
-    model_num <- tryCatch(as.numeric(input$process_model), error = function(e) NULL)
-    if(!is.null(model_num) && !(model_num %in% models_with_second_moderator)) {
-      # New model doesn't need second moderator, so clear it
-      updateSelectInput(session, "moderator2_var", selected = "")
-      print("DEBUG - Cleared moderator2_var for model that doesn't require it")
-    }
+    # Clear all variable selections
+    updateSelectInput(session, "predictor_var", selected = "")
+    updateSelectInput(session, "outcome_var", selected = "")
+    updateSelectInput(session, "moderator_var", selected = "")
+    updateSelectInput(session, "moderator2_var", selected = "")
+    updateSelectInput(session, "mediator_vars", selected = NULL)
+    updateSelectInput(session, "covariates", selected = NULL)
+    
+    print("DEBUG - Cleared all variable selections")
   })
   
   # Clear analysis results when key variables change (to prevent stale data)
@@ -1938,21 +1941,51 @@ server <- function(input, output, session) {
         if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
           # Validate that mediators are not also used as moderators
           if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var))
+            showNotification(
+              sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var),
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var)
+            return(NULL)
           }
           if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var))
+            showNotification(
+              sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var),
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var)
+            return(NULL)
           }
           # Validate that X, Y, or mediators are not duplicated
           if(input$predictor_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var))
+            showNotification(
+              sprintf("Error: Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var),
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- sprintf("Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var)
+            return(NULL)
           }
           if(input$outcome_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var))
+            showNotification(
+              sprintf("Error: Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var),
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- sprintf("Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var)
+            return(NULL)
           }
           # Check for duplicate mediators
           if(length(input$mediator_vars) != length(unique(input$mediator_vars))) {
-            stop("Error: Duplicate mediator variables detected. Please remove duplicates.")
+            showNotification(
+              "Error: Duplicate mediator variables detected. Please remove duplicates.",
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- "Duplicate mediator variables detected. Please remove duplicates."
+            return(NULL)
           }
           
           mediator_arg <- if(length(input$mediator_vars) == 1) {
@@ -1976,7 +2009,13 @@ server <- function(input, output, session) {
         if(!is.null(input$moderator_var) && input$moderator_var != "") {
           # Validate that moderator is not also used as mediator
           if(!is.null(input$mediator_vars) && input$moderator_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var))
+            showNotification(
+              sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var),
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var)
+            return(NULL)
           }
           process_args$w <- input$moderator_var
           # Always generate JN data for moderation models (for plotting), regardless of checkbox
@@ -1993,7 +2032,13 @@ server <- function(input, output, session) {
           if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
             # Validate that moderator2 is not also used as mediator or moderator1
             if(!is.null(input$mediator_vars) && input$moderator2_var %in% input$mediator_vars) {
-              stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var))
+              showNotification(
+                sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var),
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var)
+              return(NULL)
             }
             if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
               showNotification(
@@ -2032,25 +2077,55 @@ server <- function(input, output, session) {
           if(!is.null(input$covariates) && length(input$covariates) > 0) {
             # Check if any covariate is also X (predictor)
             if(input$predictor_var %in% input$covariates) {
-              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the predictor (X). Please remove it from one of these roles.", input$predictor_var))
+              showNotification(
+                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the predictor (X). Please remove it from one of these roles.", input$predictor_var),
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and the predictor (X).", input$predictor_var)
+              return(NULL)
             }
             # Check if any covariate is also Y (outcome)
             if(input$outcome_var %in% input$covariates) {
-              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the outcome (Y). Please remove it from one of these roles.", input$outcome_var))
+              showNotification(
+                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the outcome (Y). Please remove it from one of these roles.", input$outcome_var),
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and the outcome (Y).", input$outcome_var)
+              return(NULL)
             }
             # Check if any covariate is also a moderator (W)
             if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$covariates) {
-              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (W). Please remove it from one of these roles.", input$moderator_var))
+              showNotification(
+                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (W). Please remove it from one of these roles.", input$moderator_var),
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and a moderator (W).", input$moderator_var)
+              return(NULL)
             }
             # Check if any covariate is also a second moderator (Z)
             if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$covariates) {
-              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (Z). Please remove it from one of these roles.", input$moderator2_var))
+              showNotification(
+                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (Z). Please remove it from one of these roles.", input$moderator2_var),
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and a moderator (Z).", input$moderator2_var)
+              return(NULL)
             }
             # Check if any covariate is also a mediator (for models that have mediators)
             if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
               overlapping_mediators <- intersect(input$covariates, input$mediator_vars)
               if(length(overlapping_mediators) > 0) {
-                stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable(s) '%s' cannot be used as both a covariate and a mediator. Please remove from one of these roles.", paste(overlapping_mediators, collapse="', '")))
+                showNotification(
+                  sprintf("Error: When 'Covariance matrix for Y' is checked, variable(s) '%s' cannot be used as both a covariate and a mediator. Please remove from one of these roles.", paste(overlapping_mediators, collapse="', '")),
+                  type = "error",
+                  duration = 10
+                )
+                rv$validation_error <- sprintf("Variable(s) '%s' cannot be used as both a covariate and a mediator.", paste(overlapping_mediators, collapse="', '"))
+                return(NULL)
               }
             }
           }
@@ -2479,21 +2554,51 @@ server <- function(input, output, session) {
         if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
           # Validate that mediators are not also used as moderators
           if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var))
+            showNotification(
+              sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var),
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var)
+            return(NULL)
           }
           if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var))
+            showNotification(
+              sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var),
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var)
+            return(NULL)
           }
           # Validate that X, Y, or mediators are not duplicated
           if(input$predictor_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var))
+            showNotification(
+              sprintf("Error: Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var),
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- sprintf("Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var)
+            return(NULL)
           }
           if(input$outcome_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var))
+            showNotification(
+              sprintf("Error: Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var),
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- sprintf("Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var)
+            return(NULL)
           }
           # Check for duplicate mediators
           if(length(input$mediator_vars) != length(unique(input$mediator_vars))) {
-            stop("Error: Duplicate mediator variables detected. Please remove duplicates.")
+            showNotification(
+              "Error: Duplicate mediator variables detected. Please remove duplicates.",
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- "Duplicate mediator variables detected. Please remove duplicates."
+            return(NULL)
           }
           
           mediator_arg <- if(length(input$mediator_vars) == 1) {
@@ -2517,7 +2622,13 @@ server <- function(input, output, session) {
         if(!is.null(input$moderator_var) && input$moderator_var != "") {
           # Validate that moderator is not also used as mediator
           if(!is.null(input$mediator_vars) && input$moderator_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var))
+            showNotification(
+              sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var),
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var)
+            return(NULL)
           }
           process_args$w <- input$moderator_var
           # Always generate JN data for moderation models (for plotting), regardless of checkbox
@@ -2534,7 +2645,13 @@ server <- function(input, output, session) {
           if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
             # Validate that moderator2 is not also used as mediator or moderator1
             if(!is.null(input$mediator_vars) && input$moderator2_var %in% input$mediator_vars) {
-              stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var))
+              showNotification(
+                sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var),
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var)
+              return(NULL)
             }
             if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
               showNotification(
@@ -2571,25 +2688,55 @@ server <- function(input, output, session) {
           if(!is.null(input$covariates) && length(input$covariates) > 0) {
             # Check if any covariate is also X (predictor)
             if(input$predictor_var %in% input$covariates) {
-              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the predictor (X). Please remove it from one of these roles.", input$predictor_var))
+              showNotification(
+                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the predictor (X). Please remove it from one of these roles.", input$predictor_var),
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and the predictor (X).", input$predictor_var)
+              return(NULL)
             }
             # Check if any covariate is also Y (outcome)
             if(input$outcome_var %in% input$covariates) {
-              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the outcome (Y). Please remove it from one of these roles.", input$outcome_var))
+              showNotification(
+                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the outcome (Y). Please remove it from one of these roles.", input$outcome_var),
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and the outcome (Y).", input$outcome_var)
+              return(NULL)
             }
             # Check if any covariate is also a moderator (W)
             if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$covariates) {
-              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (W). Please remove it from one of these roles.", input$moderator_var))
+              showNotification(
+                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (W). Please remove it from one of these roles.", input$moderator_var),
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and a moderator (W).", input$moderator_var)
+              return(NULL)
             }
             # Check if any covariate is also a second moderator (Z)
             if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$covariates) {
-              stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (Z). Please remove it from one of these roles.", input$moderator2_var))
+              showNotification(
+                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (Z). Please remove it from one of these roles.", input$moderator2_var),
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and a moderator (Z).", input$moderator2_var)
+              return(NULL)
             }
             # Check if any covariate is also a mediator (for models that have mediators)
             if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
               overlapping_mediators <- intersect(input$covariates, input$mediator_vars)
               if(length(overlapping_mediators) > 0) {
-                stop(sprintf("Error: When 'Covariance matrix for Y' is checked, variable(s) '%s' cannot be used as both a covariate and a mediator. Please remove from one of these roles.", paste(overlapping_mediators, collapse="', '")))
+                showNotification(
+                  sprintf("Error: When 'Covariance matrix for Y' is checked, variable(s) '%s' cannot be used as both a covariate and a mediator. Please remove from one of these roles.", paste(overlapping_mediators, collapse="', '")),
+                  type = "error",
+                  duration = 10
+                )
+                rv$validation_error <- sprintf("Variable(s) '%s' cannot be used as both a covariate and a mediator.", paste(overlapping_mediators, collapse="', '"))
+                return(NULL)
               }
             }
           }
