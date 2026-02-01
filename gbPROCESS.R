@@ -807,7 +807,7 @@ server <- function(input, output, session) {
     updateSelectInput(session, "mediator_vars", selected = NULL)
     updateSelectInput(session, "covariates", selected = NULL)
     
-    # Clear mediator order tracking
+    # Clear mediator order tracking (must be done BEFORE clearing mediator_vars)
     rv$mediator_order <- NULL
     
     print("DEBUG - Cleared all variable selections")
@@ -2289,7 +2289,9 @@ server <- function(input, output, session) {
         process_args$intprobe <- probe_val
       }
       if(!is.na(input$seed) && !is.null(input$seed) && input$seed >= 1) process_args$seed <- input$seed
-      if(input$decimals != 4) process_args$decimals <- input$decimals
+      # PROCESS expects decimals in format "9.4" (9 digits before decimal, 4 after)
+      # Convert user's decimal places (e.g., 2) to format PROCESS expects (e.g., "9.2")
+      if(input$decimals != 4) process_args$decimals <- paste0("9.", input$decimals)
       
       # Check if this is a moderation model
       model_num <- as.numeric(input$process_model)
@@ -2926,7 +2928,9 @@ server <- function(input, output, session) {
         process_args$intprobe <- probe_val
       }
       if(!is.na(input$seed) && !is.null(input$seed) && input$seed >= 1) process_args$seed <- input$seed
-      if(input$decimals != 4) process_args$decimals <- input$decimals
+      # PROCESS expects decimals in format "9.4" (9 digits before decimal, 4 after)
+      # Convert user's decimal places (e.g., 2) to format PROCESS expects (e.g., "9.2")
+      if(input$decimals != 4) process_args$decimals <- paste0("9.", input$decimals)
       
       # DEBUG: Print process arguments
       print("=== DEBUG: PROCESS Arguments (Outliers Removed) ===")
@@ -3271,11 +3275,81 @@ server <- function(input, output, session) {
     processed_output <- character(0)
     in_covariance_matrix <- FALSE
     in_direct_indirect_section <- FALSE
+    in_bootstrap_section <- FALSE
+    in_model_summary <- FALSE
+    in_model_coefficients <- FALSE
     xmtest_explanation_added <- FALSE
     xmint_explanation_added <- FALSE
+    model_coeff_header <- NULL  # Store header to identify column positions
+    p_col_idx <- NULL
+    llci_col_idx <- NULL
+    ulci_col_idx <- NULL
     
     for(i in seq_along(filtered_output)) {
       line <- filtered_output[i]
+      
+      # Highlight important headers
+      if(grepl("^Outcome Variable:", line, ignore.case = TRUE)) {
+        processed_output <- c(processed_output, 
+          paste0("<strong style='font-size: 1.1em;'>", line, "</strong>"))
+        next
+      }
+      if(grepl("^Test\\(s\\) of highest order unconditional interaction\\(s\\):", line, ignore.case = TRUE)) {
+        processed_output <- c(processed_output, 
+          paste0("<strong style='font-size: 1.1em;'>", line, "</strong>"))
+        next
+      }
+      
+      # Track bootstrap results section - skip highlighting here (different criteria)
+      if(grepl("^\\*+ BOOTSTRAP RESULTS|^BOOTSTRAP RESULTS FOR", line, ignore.case = TRUE)) {
+        in_bootstrap_section <- TRUE
+        in_model_summary <- FALSE
+        in_model_coefficients <- FALSE
+        model_coeff_header <- NULL
+        processed_output <- c(processed_output, line)
+        next
+      }
+      if(grepl("^Outcome variable:", line, ignore.case = TRUE) && in_bootstrap_section) {
+        # This is a bootstrap results table header
+        processed_output <- c(processed_output, line)
+        next
+      }
+      if(grepl("^(Coeff|BootMean|BootSE|BootLLCI|BootULCI)", line, ignore.case = TRUE) && in_bootstrap_section) {
+        # Bootstrap table column headers - skip highlighting
+        processed_output <- c(processed_output, line)
+        next
+      }
+      
+      # Track Model Summary section
+      if(grepl("^Model Summary", line, ignore.case = TRUE)) {
+        in_model_summary <- TRUE
+        in_model_coefficients <- FALSE
+        in_bootstrap_section <- FALSE
+        model_coeff_header <- NULL
+        processed_output <- c(processed_output, line)
+        next
+      }
+      
+      # Track Model (coefficients) section
+      if(grepl("^Model$", line, ignore.case = TRUE) && !in_bootstrap_section) {
+        in_model_coefficients <- TRUE
+        in_model_summary <- FALSE
+        in_bootstrap_section <- FALSE
+        model_coeff_header <- NULL
+        processed_output <- c(processed_output, line)
+        next
+      }
+      
+      # Identify column positions from header row in Model section
+      if(in_model_coefficients && grepl("^(coeff|se|t|p|LLCI|ULCI)", line, ignore.case = TRUE)) {
+        model_coeff_header <- strsplit(trimws(line), "\\s+")[[1]]
+        # Find column indices
+        p_col_idx <- which(grepl("^p$", model_coeff_header, ignore.case = TRUE))[1]
+        llci_col_idx <- which(grepl("^LLCI$", model_coeff_header, ignore.case = TRUE))[1]
+        ulci_col_idx <- which(grepl("^ULCI$", model_coeff_header, ignore.case = TRUE))[1]
+        processed_output <- c(processed_output, line)
+        next
+      }
       
       # Track sections and add explanatory text
       if(grepl("^Test\\(s\\) of X by M interaction|^Likelihood ratio test\\(s\\) of X by M interaction", line, ignore.case = TRUE)) {
@@ -3310,6 +3384,10 @@ server <- function(input, output, session) {
       if(grepl("^ANALYSIS NOTES|^\\*+$", line, ignore.case = TRUE)) {
         in_covariance_matrix <- FALSE
         in_direct_indirect_section <- FALSE
+        in_model_summary <- FALSE
+        in_model_coefficients <- FALSE
+        in_bootstrap_section <- FALSE
+        model_coeff_header <- NULL
         processed_output <- c(processed_output, line)
         next
       }
@@ -3320,8 +3398,16 @@ server <- function(input, output, session) {
         next
       }
       
-      # Skip header lines
-      if(grepl("^\\s*(Model|Outcome|coeff|se\\(|t|p|LLCI|ULCI|R|R-sq|MSE|F\\(|df|Product|Variable|Mean|SD|Min|Max|Pearson|Spearman|constant|int_|effect|Effect|BootSE|BootLLCI|BootULCI|^\\s*$|Direct effect|Indirect effect|TOTAL|Completely standardized|Partially standardized|Specific indirect)", line, ignore.case = TRUE)) {
+      # Skip header lines (but NOT variable names like "constant" or "int_1" which are actual data rows)
+      # Only skip lines that are clearly headers (column names, section titles, etc.)
+      # But NOT if we're in bootstrap section (already handled above)
+      if(!in_bootstrap_section && grepl("^\\s*(Model|Outcome|coeff|se\\(|t|p|LLCI|ULCI|R|R-sq|MSE|F\\(|df|Product|Variable|Mean|SD|Min|Max|Pearson|Spearman|effect|Effect|BootSE|BootLLCI|BootULCI|^\\s*$|Direct effect|Indirect effect|TOTAL|Completely standardized|Partially standardized|Specific indirect)", line, ignore.case = TRUE)) {
+        processed_output <- c(processed_output, line)
+        next
+      }
+      
+      # Skip bootstrap section rows (they use different significance criteria)
+      if(in_bootstrap_section) {
         processed_output <- c(processed_output, line)
         next
       }
@@ -3348,8 +3434,9 @@ server <- function(input, output, session) {
             for(j in 4:min(6, length(line_parts))) {
               p_val <- line_parts[j]
               # Check if it looks like a number (could be p-value)
+              # Match numbers with any number of decimal places
               if(grepl("^-?\\d+\\.?\\d*$", p_val)) {
-                p_num <- as.numeric(p_val)
+                p_num <- tryCatch(as.numeric(p_val), warning = function(e) NA, error = function(e) NA)
                 # Check if it's a valid p-value between 0 and 0.05
                 if(!is.na(p_num) && p_num < 0.05 && p_num >= 0) {
                   has_significant_p <- TRUE
@@ -3376,45 +3463,47 @@ server <- function(input, output, session) {
       
       has_significant_p <- FALSE
       
-      # Pattern 1: Explicit "< 0.05" or "< .05" or "p < .001"
-      if(grepl("<\\s*0?\\.?0?5|p\\s*<\\s*0?\\.?0?0?1", line, ignore.case = TRUE)) {
-        has_significant_p <- TRUE
+      # Pattern 1: Model Summary section - check for significant p-value
+      if(in_model_summary) {
+        # Model summary format: R, R-sq, MSE, F, df1, df2, p
+        # Look for line with numbers ending in p-value
+        line_parts <- strsplit(trimws(line), "\\s+")[[1]]
+        if(length(line_parts) >= 7) {
+          # Last column should be p-value
+          p_val <- line_parts[length(line_parts)]
+          if(grepl("^-?\\d+\\.?\\d*$", p_val)) {
+            p_num <- tryCatch(as.numeric(p_val), warning = function(e) NA, error = function(e) NA)
+            if(!is.na(p_num) && p_num <= 0.05 && p_num >= 0 && p_num <= 1) {
+              has_significant_p <- TRUE
+            }
+          }
+        }
       }
       
-      # Pattern 2: Coefficient table rows with significant p-values
-      # Only highlight MAIN results: key predictors (X, Y, M, W, Z), interaction terms
-      # Skip: constants, covariates, and other variables
-      line_parts <- strsplit(trimws(line), "\\s+")[[1]]
-      if(length(line_parts) >= 5) {
-        first_part <- line_parts[1]
-        # Must start with variable name (not number) and be a main variable
-        # Main variables: interaction terms (int_1, int_2, etc.) or variables in main_variables list
-        # Skip: constant, covariates, and other variables
-        is_main_variable <- grepl("^int_", first_part, ignore.case = TRUE) || 
-                           (first_part %in% main_variables) ||
-                           (!grepl("^-?\\d+\\.?\\d*$", first_part) && 
-                            !grepl("^constant$", first_part, ignore.case = TRUE) &&
-                            !(first_part %in% covariate_names))
-        
-        if(is_main_variable) {
-          # Check for p-value in columns 4-6
-          for(j in 4:min(6, length(line_parts))) {
-            p_val <- line_parts[j]
-            # Check if it looks like a number (could be p-value)
+      # Pattern 2: Model coefficients table - use identified column positions
+      if(in_model_coefficients && !is.null(model_coeff_header) && !is.null(p_col_idx)) {
+        line_parts <- strsplit(trimws(line), "\\s+")[[1]]
+        if(length(line_parts) >= p_col_idx) {
+          first_part <- line_parts[1]
+          # Only check main model variables (not covariates)
+          is_main_variable <- grepl("^int_", first_part, ignore.case = TRUE) || 
+                            (first_part %in% main_variables) ||
+                            grepl("^constant$", first_part, ignore.case = TRUE)
+          
+          if(is_main_variable && length(line_parts) >= p_col_idx) {
+            p_val <- line_parts[p_col_idx]
             if(grepl("^-?\\d+\\.?\\d*$", p_val)) {
-              p_num <- as.numeric(p_val)
-              # Check if it's a valid p-value between 0 and 0.05
-              if(!is.na(p_num) && p_num < 0.05 && p_num >= 0) {
+              p_num <- tryCatch(as.numeric(p_val), warning = function(e) NA, error = function(e) NA)
+              if(!is.na(p_num) && p_num <= 0.05 && p_num >= 0 && p_num <= 1) {
                 has_significant_p <- TRUE
-                break
               }
             }
           }
         }
       }
       
-      # Pattern 3: Model summary lines with significant F-test
-      if(grepl("^\\s+\\d+\\.\\d+\\s+\\d+\\.\\d+\\s+\\d+\\.\\d+\\s+\\d+\\.\\d+\\s+\\d+\\.\\d+\\s+\\d+\\.\\d+\\s+0\\.0000\\s*$", line)) {
+      # Pattern 3: Explicit "< 0.05" or "< .05" or "p < .001" (for other sections)
+      if(!in_model_summary && !in_model_coefficients && grepl("<\\s*0?\\.?0?5|p\\s*<\\s*0?\\.?0?0?1", line, ignore.case = TRUE)) {
         has_significant_p <- TRUE
       }
       
