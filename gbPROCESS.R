@@ -735,7 +735,8 @@ server <- function(input, output, session) {
     outliers_info = NULL,
     analysis_results = NULL,
     current_model = NULL,
-    validation_error = NULL
+    validation_error = NULL,
+    mediator_order = NULL  # Track the order of mediator selection
   )
   
   # Load PROCESS function
@@ -784,6 +785,9 @@ server <- function(input, output, session) {
     updateSelectInput(session, "moderator2_var", selected = "")
     updateSelectInput(session, "mediator_vars", selected = NULL)
     updateSelectInput(session, "covariates", selected = NULL)
+    
+    # Clear mediator order tracking
+    rv$mediator_order <- NULL
     
     print("DEBUG - Cleared all variable selections")
   })
@@ -872,24 +876,65 @@ server <- function(input, output, session) {
   })
   outputOptions(output, "mediator_count", suspendWhenHidden = FALSE)
   
+  # Observer to track mediator selection order
+  # This preserves the order in which mediators are selected, not the dataset order
+  observeEvent(input$mediator_vars, {
+    if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+      current_selected <- input$mediator_vars
+      
+      # If we have a stored order, preserve it for existing variables and add new ones at the end
+      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+        # Keep existing order for variables that are still selected
+        existing_in_order <- rv$mediator_order[rv$mediator_order %in% current_selected]
+        # Add new variables at the end (in the order they appear in current_selected, but only new ones)
+        new_vars <- current_selected[!current_selected %in% rv$mediator_order]
+        rv$mediator_order <- c(existing_in_order, new_vars)
+      } else {
+        # First time selection - preserve the order from input (even if it's dataset order, it's what user sees)
+        # But we'll update it when user makes changes
+        rv$mediator_order <- current_selected
+      }
+      
+      # Ensure all selected variables are in the order, and remove any that are deselected
+      rv$mediator_order <- rv$mediator_order[rv$mediator_order %in% current_selected]
+      
+      # If the order doesn't match current_selected exactly, update selectInput to preserve our order
+      if(!identical(rv$mediator_order, current_selected)) {
+        updateSelectInput(session, "mediator_vars", selected = rv$mediator_order)
+      }
+    } else {
+      # No mediators selected
+      rv$mediator_order <- NULL
+    }
+  }, ignoreNULL = FALSE, ignoreInit = TRUE)
+  
   # Mediator list UI with M1, M2, M3 display
   output$mediator_list_ui <- renderUI({
     req(rv$original_dataset, input$process_model)
     vars <- names(rv$original_dataset)
     
+    # Use stored order if available, otherwise use input order
+    selected_mediators <- if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+      rv$mediator_order
+    } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+      input$mediator_vars
+    } else {
+      NULL
+    }
+    
     tagList(
       selectInput("mediator_vars", "Mediator Variable(s) (M)", 
                  choices = c("Select variable" = "", vars), 
-                 selected = if(!is.null(input$mediator_vars)) input$mediator_vars else NULL,
+                 selected = selected_mediators,
                  multiple = TRUE),
-      # Display selected mediators with M1, M2, M3 labels
-      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+      # Display selected mediators with M1, M2, M3 labels using stored order
+      if(!is.null(selected_mediators) && length(selected_mediators) > 0) {
         div(style = "margin-top: 10px; padding: 10px; background-color: #f5f5f5; border-radius: 4px;",
           h6(strong("Mediator Order (order matters for serial mediation):")),
-          lapply(seq_along(input$mediator_vars), function(i) {
+          lapply(seq_along(selected_mediators), function(i) {
             div(style = "margin: 5px 0;",
               tags$span(style = "font-weight: bold; color: #0066cc;", paste0("M", i, ": ")),
-              tags$span(input$mediator_vars[i])
+              tags$span(selected_mediators[i])
             )
           }),
           p(style = "font-size: 11px; color: #666; margin-top: 5px;",
@@ -1883,7 +1928,13 @@ server <- function(input, output, session) {
         },
         predictor_var = input$predictor_var,
         outcome_var = input$outcome_var,
-        mediator_vars = if(!is.null(input$mediator_vars)) input$mediator_vars else NULL,
+        mediator_vars = if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+          rv$mediator_order
+        } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+          input$mediator_vars
+        } else {
+          NULL
+        },
         moderator_var = input$moderator_var,
         moderator2_var = if(!is.null(input$moderator2_var) && input$moderator2_var != "") input$moderator2_var else NULL,
         covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
@@ -1988,10 +2039,19 @@ server <- function(input, output, session) {
             return(NULL)
           }
           
-          mediator_arg <- if(length(input$mediator_vars) == 1) {
-            input$mediator_vars[1]
-          } else {
+          # Use stored order if available, otherwise use input order
+          mediators_ordered <- if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+            rv$mediator_order
+          } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
             input$mediator_vars
+          } else {
+            NULL
+          }
+          
+          mediator_arg <- if(length(mediators_ordered) == 1) {
+            mediators_ordered[1]
+          } else {
+            mediators_ordered
           }
           process_args$m <- mediator_arg
           
@@ -2498,7 +2558,13 @@ server <- function(input, output, session) {
         outliers_method = outliers$method,
         predictor_var = input$predictor_var,
         outcome_var = input$outcome_var,
-        mediator_vars = if(!is.null(input$mediator_vars)) input$mediator_vars else NULL,
+        mediator_vars = if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+          rv$mediator_order
+        } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+          input$mediator_vars
+        } else {
+          NULL
+        },
         moderator_var = input$moderator_var,
         moderator2_var = if(!is.null(input$moderator2_var) && input$moderator2_var != "") input$moderator2_var else NULL,
         covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
@@ -2601,10 +2667,19 @@ server <- function(input, output, session) {
             return(NULL)
           }
           
-          mediator_arg <- if(length(input$mediator_vars) == 1) {
-            input$mediator_vars[1]
-          } else {
+          # Use stored order if available, otherwise use input order
+          mediators_ordered <- if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+            rv$mediator_order
+          } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
             input$mediator_vars
+          } else {
+            NULL
+          }
+          
+          mediator_arg <- if(length(mediators_ordered) == 1) {
+            mediators_ordered[1]
+          } else {
+            mediators_ordered
           }
           process_args$m <- mediator_arg
           
