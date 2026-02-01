@@ -474,13 +474,6 @@ ui <- fluidPage(
                         "Plot Options"),
             div(style = "margin-left: 15px; margin-top: 10px;",
               h5("Simple Slopes Plot Settings"),
-              selectInput("slopes_type", "Plot Type:",
-                choices = list(
-                  "Full range of predictor" = "full",
-                  "Restricted range (matching conditioning points)" = "restricted"
-                ),
-                selected = "full"
-              ),
               textInput("slopes_title", "Plot Title", "Simple Slopes Plot"),
               checkboxInput("use_color_lines", "Use color for lines", value = TRUE),
               checkboxInput("custom_y_axis", "Customize y-axis range", value = FALSE),
@@ -493,13 +486,7 @@ ui <- fluidPage(
               textInput("y_label", "Label for Outcome", ""),
               textInput("moderator_label", "Label for Moderator", ""),
               numericInput("decimal_places", "Decimal Places for Moderator Levels", 2, min = 0, max = 5),
-              radioButtons("plot_conditioning_values", "Values for moderator levels:",
-                choices = list(
-                  "Percentiles (16th, 50th, 84th)" = "1",
-                  "Moments (Mean and ±1 SD)" = "0"
-                ),
-                selected = "1"
-              )
+              checkboxInput("show_confidence_intervals", "Show confidence intervals", value = FALSE)
             )
           )
         )
@@ -776,6 +763,21 @@ server <- function(input, output, session) {
     rv$current_dataset <- data
     print(paste("DEBUG - Dataset loaded with", nrow(data), "rows"))
     rv$analysis_results <- NULL  # Reset analysis results when new file is loaded
+  })
+  
+  # Clear analysis results when model changes
+  observeEvent(input$process_model, {
+    rv$analysis_results <- NULL
+    print("DEBUG - Model changed, clearing analysis results")
+  })
+  
+  # Clear analysis results when key variables change (to prevent stale data)
+  observeEvent(c(input$outcome_var, input$predictor_var, input$moderator_var, input$moderator2_var), {
+    # Only clear if we have existing results (to avoid clearing on initial load)
+    if(!is.null(rv$analysis_results)) {
+      rv$analysis_results <- NULL
+      print("DEBUG - Key variables changed, clearing analysis results")
+    }
   })
   
   # Model description output
@@ -1923,7 +1925,9 @@ server <- function(input, output, session) {
             stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var))
           }
           process_args$w <- input$moderator_var
-          if(isTRUE(input$jn)) process_args$jn <- 1
+          # Always generate JN data for moderation models (for plotting), regardless of checkbox
+          # The checkbox only controls whether it appears in the output text
+          process_args$jn <- 1
           if(isTRUE(input$probe_interactions) && !is.null(input$conditioning_values) && length(input$conditioning_values) > 0) {
             process_args$moments <- ifelse(input$conditioning_values == "0", 1, 0)
           }
@@ -2064,6 +2068,31 @@ server <- function(input, output, session) {
       }
       if(!is.na(input$seed) && !is.null(input$seed) && input$seed >= 1) process_args$seed <- input$seed
       if(input$decimals != 4) process_args$decimals <- input$decimals
+      
+      # Check if this is a moderation model
+      model_num <- as.numeric(input$process_model)
+      is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
+      
+      # For moderation models, set plot=2 and save=2 to get plot data in result object
+      if(is_mod_model) {
+        process_args$plot <- 2  # Generate estimates + SE + CI for visualization
+        process_args$save <- 2  # Return plot data in result object
+      } else {
+        # For non-moderation models, handle bootstrap and plot options as before
+        # Capture bootstrap results for download when bootstrapping is enabled
+        # Set save=1 to get bootstrap results in return value (but don't save to file)
+        if(isTRUE(input$use_bootstrap)) {
+          process_args$save <- 1  # This makes PROCESS return bootstrap results
+        }
+        # Only enable plot if user explicitly wants it (with warning)
+        if(isTRUE(input$plot)) {
+          process_args$plot <- 1
+          showNotification("Note: This will open R graphics device windows that cannot be easily saved or customized.", type = "warning", duration = 5)
+        } else {
+          # Explicitly set plot to 0 to prevent any default plotting
+          process_args$plot <- 0
+        }
+      }
       print("DEBUG: All PROCESS arguments prepared")
       
       # DEBUG: Print process arguments
@@ -2084,9 +2113,56 @@ server <- function(input, output, session) {
         })
         print(paste("DEBUG: PROCESS completed. Output lines:", length(process_output)))
         
-        # Store results including bootstrap data if available
+        # Store results including bootstrap data and plot data if available
         bootstrap_data <- NULL
-        if(input$use_bootstrap && !is.null(result)) {
+        plot_data <- NULL
+        
+        # Check if this is a moderation model
+        model_num <- as.numeric(input$process_model)
+        is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
+        
+        if(is_mod_model && !is.null(result)) {
+          # For moderation models with save=2, result contains plot data in resultm
+          print(paste("DEBUG: Moderation model, result type:", class(result)))
+          if(is.data.frame(result)) {
+            plot_data <- result
+            print(paste("DEBUG: Plot data captured (data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
+          } else if(is.matrix(result)) {
+            # PROCESS returns resultm as a matrix when save=2
+            plot_data <- as.data.frame(result)
+            # Remove rows with all NA or 99999 (PROCESS uses 99999 as placeholder)
+            plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
+            print(paste("DEBUG: Plot data captured (matrix->data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
+          } else if(is.list(result) && length(result) > 0) {
+            print(paste("DEBUG: Result is list with", length(result), "elements"))
+            # For save=2, result is resultm (plot data)
+            # For save=3, result is list(boots, resultm) where resultm is plot data
+            if(length(result) == 2) {
+              # Second element is plot data when save=3
+              if(is.data.frame(result[[2]])) {
+                plot_data <- result[[2]]
+              } else if(is.matrix(result[[2]])) {
+                plot_data <- as.data.frame(result[[2]])
+                plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
+              }
+              # First element is bootstrap when save=3
+              if(is.data.frame(result[[1]])) {
+                bootstrap_data <- result[[1]]
+              } else if(is.matrix(result[[1]])) {
+                bootstrap_data <- as.data.frame(result[[1]])
+              }
+              print(paste("DEBUG: Plot data captured (list[[2]]), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
+            } else if(is.data.frame(result[[1]])) {
+              plot_data <- result[[1]]  # First element is plot data when save=2
+              print(paste("DEBUG: Plot data captured (list[[1]]), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
+            } else if(is.matrix(result[[1]])) {
+              plot_data <- as.data.frame(result[[1]])
+              plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
+              print(paste("DEBUG: Plot data captured (list[[1]] matrix->data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
+            }
+          }
+        } else if(input$use_bootstrap && !is.null(result)) {
+          # For non-moderation models, handle bootstrap as before
           # PROCESS returns bootstrap results when save=1 and bootstrapping is enabled
           print(paste("DEBUG: Bootstrap enabled, result type:", class(result)))
           if(is.data.frame(result)) {
@@ -2100,7 +2176,7 @@ server <- function(input, output, session) {
             }
           }
         } else {
-          print(paste("DEBUG: Bootstrap not enabled or result is NULL. use_bootstrap:", input$use_bootstrap, "result is null:", is.null(result)))
+          print(paste("DEBUG: No special data to capture. is_mod_model:", is_mod_model, "use_bootstrap:", input$use_bootstrap, "result is null:", is.null(result)))
         }
         
         rv$analysis_results <- list(
@@ -2108,7 +2184,9 @@ server <- function(input, output, session) {
           data_used = process_data_orig,
           original_data = rv$original_dataset,
           settings = analysis_settings,
-          bootstrap_data = bootstrap_data
+          bootstrap_data = bootstrap_data,
+          plot_data = plot_data,
+          result = result  # Store the full result object
         )
         print("DEBUG: Results stored in rv$analysis_results")
         print(paste("DEBUG: rv$analysis_results is NULL?", is.null(rv$analysis_results)))
@@ -2328,7 +2406,9 @@ server <- function(input, output, session) {
             stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var))
           }
           process_args$w <- input$moderator_var
-          if(isTRUE(input$jn)) process_args$jn <- 1
+          # Always generate JN data for moderation models (for plotting), regardless of checkbox
+          # The checkbox only controls whether it appears in the output text
+          process_args$jn <- 1
           if(isTRUE(input$probe_interactions) && !is.null(input$conditioning_values) && length(input$conditioning_values) > 0) {
             process_args$moments <- ifelse(input$conditioning_values == "0", 1, 0)
           }
@@ -3232,90 +3312,190 @@ server <- function(input, output, session) {
   
   # Simple Slopes Plot
   output$slopes_plot <- renderPlot({
-    req(analysis_results())
-    req(input$moderator_var)
-    req(input$predictor_var)
-    
-    # Extract coefficients
-    coeffs <- extract_coefficients(
-      analysis_results()$output,
-      input$predictor_var,
-      input$moderator_var
-    )
-    
-    if(is.null(coeffs)) {
+    # Check if we have valid analysis results for the current model/variables
+    if(is.null(analysis_results())) {
       plot.new()
-      text(0.5, 0.5, "Unable to extract coefficients from PROCESS output.", cex = 1.2)
+      text(0.5, 0.5, "Please run the analysis first.", cex = 1.2)
       return()
     }
     
-    data_used <- analysis_results()$data_used
+    req(input$moderator_var)
+    req(input$predictor_var)
     
-    # Check if outcome is binary
+    # Verify that the analysis results match the current model
+    results <- analysis_results()
+    if(is.null(results) || is.null(results$settings)) {
+      plot.new()
+      text(0.5, 0.5, "Please run the analysis first.", cex = 1.2)
+      return()
+    }
+    
+    # Check if model matches
+    current_model <- as.numeric(input$process_model)
+    if(results$settings$model != current_model) {
+      plot.new()
+      text(0.5, 0.5, "Analysis results do not match current model. Please run the analysis.", cex = 1.2)
+      return()
+    }
+    
+    data_used <- results$data_used
     outcome_is_binary <- is_binary_variable(data_used, input$outcome_var)
     
-    # Get moderator levels
-    if(is_binary_variable(data_used, input$moderator_var)) {
-      moderator_levels <- sort(unique(data_used[[input$moderator_var]][!is.na(data_used[[input$moderator_var]])]))
-      moderator_levels <- round(moderator_levels, input$decimal_places)
-    } else {
-      # Use plot_conditioning_values if available, otherwise default to percentiles
-      cond_val <- if(!is.null(input$plot_conditioning_values)) input$plot_conditioning_values else "1"
-      moderator_levels <- if(cond_val == "0") {
-        mod_mean <- mean(data_used[[input$moderator_var]], na.rm = TRUE)
-        mod_sd <- sd(data_used[[input$moderator_var]], na.rm = TRUE)
-        values <- c(mod_mean - mod_sd, mod_mean, mod_mean + mod_sd)
-        round(values, input$decimal_places)
-      } else {
-        values <- quantile(data_used[[input$moderator_var]], 
-                          probs = c(0.16, 0.50, 0.84), 
-                          na.rm = TRUE)
-        round(values, input$decimal_places)
-      }
+    # Determine model type
+    model_num <- as.numeric(input$process_model)
+    has_second_mod <- model_num %in% models_with_second_moderator
+    
+    # Use plot data from PROCESS directly (plot=2, save=2) - always uses percentiles
+    plot_data_df <- results$plot_data
+    
+    if(is.null(plot_data_df) || !is.data.frame(plot_data_df) || nrow(plot_data_df) == 0) {
+      plot.new()
+      text(0.5, 0.5, "Plot data not available. Please run the analysis first.", cex = 1.2)
+      return()
     }
     
-    # Create predictor sequence
-    if(input$slopes_type == "full") {
-      pred_seq <- seq(
-        min(data_used[[input$predictor_var]], na.rm = TRUE),
-        max(data_used[[input$predictor_var]], na.rm = TRUE),
-        length.out = 100
+    # PROCESS returns: X, W, [Z if dual], predicted, se, LLCI, ULCI
+    # Column order: X, W, Z (if dual), Y, se, LLCI, ULCI
+    if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
+      # Dual moderation: X, W, Z, predicted, se, LLCI, ULCI (7 columns)
+      if(ncol(plot_data_df) < 7) {
+        plot.new()
+        text(0.5, 0.5, "Plot data structure unexpected for dual moderation model.", cex = 1.2)
+        return()
+      }
+      
+      plot_data <- data.frame(
+        Predictor = as.numeric(plot_data_df[, 1]),
+        Moderator_W = as.numeric(plot_data_df[, 2]),
+        Moderator_Z = as.numeric(plot_data_df[, 3]),
+        Outcome = as.numeric(plot_data_df[, 4]),
+        LLCI = as.numeric(plot_data_df[, 6]),  # Column 6 for dual moderation
+        ULCI = as.numeric(plot_data_df[, 7])   # Column 7 for dual moderation
       )
-    } else {
-      # Use plot_conditioning_values if available, otherwise default to percentiles
-      cond_val <- if(!is.null(input$plot_conditioning_values)) input$plot_conditioning_values else "1"
-      if(cond_val == "0") {
-        predictor_mean <- mean(data_used[[input$predictor_var]], na.rm = TRUE)
-        predictor_sd <- sd(data_used[[input$predictor_var]], na.rm = TRUE)
-        pred_seq <- c(predictor_mean - predictor_sd, predictor_mean, predictor_mean + predictor_sd)
+      
+      # Get the 3 percentile levels for Z (16th, 50th, 84th) - these will be panels
+      if(is_binary_variable(data_used, input$moderator2_var)) {
+        z_levels_raw <- sort(unique(data_used[[input$moderator2_var]][!is.na(data_used[[input$moderator2_var]])]))
       } else {
-        pred_seq <- quantile(data_used[[input$predictor_var]], 
-                           probs = c(0.16, 0.50, 0.84), 
-                           na.rm = TRUE)
+        z_levels_raw <- as.numeric(quantile(data_used[[input$moderator2_var]], 
+                                            probs = c(0.16, 0.50, 0.84), 
+                                            na.rm = TRUE))
       }
-    }
-    
-    # Create plotting data frame
-    plot_data <- expand.grid(
-      Predictor = pred_seq,
-      Moderator = moderator_levels
-    )
-    
-    # Calculate predicted values
-    if(outcome_is_binary) {
-      log_odds <- coeffs["constant"] +
-        coeffs["predictor"] * plot_data$Predictor +
-        coeffs["moderator"] * plot_data$Moderator +
-        coeffs["interaction"] * plot_data$Predictor * plot_data$Moderator
-      plot_data$Outcome <- plogis(log_odds)
+      z_levels <- round(z_levels_raw, input$decimal_places)
+      
+      # Get the 3 percentile levels for W (16th, 50th, 84th) - these will be lines in each panel
+      if(is_binary_variable(data_used, input$moderator_var)) {
+        w_levels_raw <- sort(unique(data_used[[input$moderator_var]][!is.na(data_used[[input$moderator_var]])]))
+      } else {
+        w_levels_raw <- as.numeric(quantile(data_used[[input$moderator_var]], 
+                                            probs = c(0.16, 0.50, 0.84), 
+                                            na.rm = TRUE))
+      }
+      w_levels <- round(w_levels_raw, input$decimal_places)
+      
+      # Filter plot_data to match percentile levels (with tolerance for floating point)
+      plot_data$Z_matched <- FALSE
+      plot_data$W_matched <- FALSE
+      
+      for(z_val in z_levels_raw) {
+        tolerance <- abs(z_val) * 0.001 + 0.01
+        plot_data$Z_matched[abs(plot_data$Moderator_Z - z_val) < tolerance] <- TRUE
+      }
+      
+      for(w_val in w_levels_raw) {
+        tolerance <- abs(w_val) * 0.001 + 0.01
+        plot_data$W_matched[abs(plot_data$Moderator_W - w_val) < tolerance] <- TRUE
+      }
+      
+      plot_data <- plot_data[plot_data$Z_matched & plot_data$W_matched, ]
+      plot_data$Z_matched <- NULL
+      plot_data$W_matched <- NULL
+      
+      if(nrow(plot_data) == 0) {
+        plot.new()
+        text(0.5, 0.5, "No valid plot data after filtering to percentile levels.", cex = 1.2)
+        return()
+      }
+      
+      # Create factor for Z levels for faceting (panels)
+      z_unique <- sort(unique(plot_data$Moderator_Z))
+      plot_data$Z_level <- factor(plot_data$Moderator_Z, 
+                                  levels = z_unique,
+                                  labels = format(round(z_unique, input$decimal_places), 
+                                                nsmall = input$decimal_places))
+      
+      # Create factor for W levels for legend (lines within each panel)
+      w_unique <- sort(unique(plot_data$Moderator_W))
+      plot_data$W_level <- factor(plot_data$Moderator_W,
+                                  levels = w_unique,
+                                  labels = format(round(w_unique, input$decimal_places), 
+                                                nsmall = input$decimal_places))
+      
+      # For dual moderation, we'll use W_level for the legend and Z_level for faceting
+      active_moderator <- input$moderator_var
+      moderator_levels <- w_levels
+      moderator_levels_raw <- w_levels_raw
     } else {
-      plot_data$Outcome <- coeffs["constant"] +
-        coeffs["predictor"] * plot_data$Predictor +
-        coeffs["moderator"] * plot_data$Moderator +
-        coeffs["interaction"] * plot_data$Predictor * plot_data$Moderator
+      # Single moderation: X, W, predicted, se, LLCI, ULCI (6 columns)
+      if(ncol(plot_data_df) < 6) {
+        plot.new()
+        text(0.5, 0.5, "Plot data structure unexpected for moderation model.", cex = 1.2)
+        return()
+      }
+      plot_data <- data.frame(
+        Predictor = as.numeric(plot_data_df[, 1]),
+        Moderator = as.numeric(plot_data_df[, 2]),
+        Outcome = as.numeric(plot_data_df[, 3]),
+        LLCI = as.numeric(plot_data_df[, 5]),
+        ULCI = as.numeric(plot_data_df[, 6])
+      )
+      active_moderator <- input$moderator_var
     }
     
-    # Create plot
+    # Remove any rows with NA values
+    plot_data <- plot_data[complete.cases(plot_data), ]
+    if(nrow(plot_data) == 0) {
+      plot.new()
+      text(0.5, 0.5, "No valid plot data after filtering.", cex = 1.2)
+      return()
+    }
+    
+    # Get the 3 percentile moderator levels that PROCESS should generate (16th, 50th, 84th)
+    # Calculate from the original data to ensure we get exactly 3 values
+    if(is_binary_variable(data_used, active_moderator)) {
+      # For binary moderators, use the actual unique values
+      moderator_levels_raw <- sort(unique(data_used[[active_moderator]][!is.na(data_used[[active_moderator]])]))
+    } else {
+      # For continuous moderators, use percentiles (what PROCESS uses)
+      moderator_levels_raw <- as.numeric(quantile(data_used[[active_moderator]], 
+                                                  probs = c(0.16, 0.50, 0.84), 
+                                                  na.rm = TRUE))
+    }
+    
+    # Filter plot_data to only include rows where Moderator is close to one of these 3 percentile values
+    # This handles floating point precision issues in PROCESS output
+    plot_data$Moderator_matched <- FALSE
+    for(mod_val in moderator_levels_raw) {
+      # Match values within 0.1% of the percentile value
+      tolerance <- abs(mod_val) * 0.001 + 0.01
+      plot_data$Moderator_matched[abs(plot_data$Moderator - mod_val) < tolerance] <- TRUE
+    }
+    plot_data <- plot_data[plot_data$Moderator_matched, ]
+    plot_data$Moderator_matched <- NULL  # Remove temporary column
+    
+    if(nrow(plot_data) == 0) {
+      plot.new()
+      text(0.5, 0.5, "No valid plot data after filtering to percentile levels.", cex = 1.2)
+      return()
+    }
+    
+    # Now we should have exactly 3 moderator levels
+    moderator_levels <- round(moderator_levels_raw, input$decimal_places)
+    
+    # Limit predictor range to actual data range in plot_data (PROCESS uses percentiles)
+    predictor_range <- range(plot_data$Predictor, na.rm = TRUE)
+    
+    # Create plot labels
     y_label_text <- if(outcome_is_binary) {
       if(input$y_label != "") paste(input$y_label, "(Probability)") else "Predicted Probability"
     } else {
@@ -3323,25 +3503,34 @@ server <- function(input, output, session) {
     }
     
     x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
-    mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(input$moderator_var, " Levels")
+    mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(active_moderator, " Levels")
+    
+    plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Simple Slopes Plot"
+    
+    # Create the plot
+    # Map moderator values to factors using the raw values, but display rounded labels
+    plot_data$Moderator_factor <- factor(plot_data$Moderator, levels = moderator_levels_raw, labels = format(moderator_levels, nsmall = input$decimal_places))
     
     p <- ggplot(plot_data, aes(
       x = Predictor, 
       y = Outcome,
-      color = if(input$use_color_lines) 
-        factor(Moderator, labels = format(moderator_levels, nsmall = input$decimal_places)) else NULL,
-      linetype = if(!input$use_color_lines) 
-        factor(Moderator, labels = format(moderator_levels, nsmall = input$decimal_places)) else NULL
+      color = if(input$use_color_lines) Moderator_factor else NULL,
+      linetype = if(!input$use_color_lines) Moderator_factor else NULL,
+      fill = if(input$show_confidence_intervals && input$use_color_lines) Moderator_factor else NULL
     )) +
+      {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI))) 
+        geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, color = NA)} +
       geom_line(linewidth = 1) +
       {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
-      {if(outcome_is_binary && !input$custom_y_axis) coord_cartesian(ylim = c(0, 1))} +
+      {if(!input$custom_y_axis && outcome_is_binary) coord_cartesian(ylim = c(0, 1))} +
+      {if(!input$custom_y_axis && !outcome_is_binary) coord_cartesian(xlim = predictor_range)} +
       labs(
-        title = input$slopes_title,
+        title = plot_title,
         x = x_label_text,
         y = y_label_text,
         color = if(input$use_color_lines) mod_label_text else NULL,
-        linetype = if(!input$use_color_lines) mod_label_text else NULL
+        linetype = if(!input$use_color_lines) mod_label_text else NULL,
+        fill = if(input$show_confidence_intervals && input$use_color_lines) mod_label_text else NULL
       ) +
       theme_minimal() +
       theme(
@@ -3349,17 +3538,29 @@ server <- function(input, output, session) {
         axis.title = element_text(size = 16),
         axis.text = element_text(size = 14),
         plot.title = element_text(size = 18, hjust = 0.5),
+        legend.title = element_text(size = 14),
         legend.text = element_text(size = 14),
         axis.line = element_line(color = "black", linewidth = 0.5),
         axis.ticks = element_line(color = "black", linewidth = 0.5)
       )
+    
+    # Suppress fill legend if not using color lines or not showing CIs
+    if(!input$show_confidence_intervals || !input$use_color_lines) {
+      p <- p + guides(fill = "none")
+    }
     
     print(p)
   })
   
   # Johnson-Neyman Plot
   output$jn_plot <- renderPlot({
-    req(analysis_results())
+    # Check if we have valid analysis results for the current model/variables
+    if(is.null(analysis_results())) {
+      plot.new()
+      text(0.5, 0.5, "Please run the analysis first.", cex = 1.2)
+      return()
+    }
+    
     req(input$moderator_var)
     
     if(!jn_available()) {
@@ -3370,8 +3571,24 @@ server <- function(input, output, session) {
       return()
     }
     
+    # Verify that the analysis results match the current model
+    results <- analysis_results()
+    if(is.null(results) || is.null(results$settings)) {
+      plot.new()
+      text(0.5, 0.5, "Please run the analysis first.", cex = 1.2)
+      return()
+    }
+    
+    # Check if model matches
+    current_model <- as.numeric(input$process_model)
+    if(results$settings$model != current_model) {
+      plot.new()
+      text(0.5, 0.5, "Analysis results do not match current model. Please run the analysis.", cex = 1.2)
+      return()
+    }
+    
     tryCatch({
-      process_output <- analysis_results()$output
+      process_output <- results$output
       start_idx <- which(grepl("Conditional effect of focal predictor", process_output))
       
       if(length(start_idx) == 0) {
@@ -3663,73 +3880,123 @@ server <- function(input, output, session) {
         req(input$moderator_var)
         req(input$predictor_var)
         
-        coeffs <- extract_coefficients(
-          analysis_results()$output,
-          input$predictor_var,
-          input$moderator_var
-        )
-        
-        if(is.null(coeffs)) {
-          stop("Unable to extract coefficients from PROCESS output.")
-        }
-        
-        data_used <- analysis_results()$data_used
+        results <- analysis_results()
+        data_used <- results$data_used
         outcome_is_binary <- is_binary_variable(data_used, input$outcome_var)
         
-        if(is_binary_variable(data_used, input$moderator_var)) {
-          moderator_levels <- sort(unique(data_used[[input$moderator_var]][!is.na(data_used[[input$moderator_var]])]))
-          moderator_levels <- round(moderator_levels, input$decimal_places)
-        } else {
-          # Use plot_conditioning_values if available, otherwise default to percentiles
-      cond_val <- if(!is.null(input$plot_conditioning_values)) input$plot_conditioning_values else "1"
-      moderator_levels <- if(cond_val == "0") {
-            mod_mean <- mean(data_used[[input$moderator_var]], na.rm = TRUE)
-            mod_sd <- sd(data_used[[input$moderator_var]], na.rm = TRUE)
-            c(mod_mean - mod_sd, mod_mean, mod_mean + mod_sd)
-          } else {
-            quantile(data_used[[input$moderator_var]], probs = c(0.16, 0.50, 0.84), na.rm = TRUE)
+        # Determine model type
+        model_num <- as.numeric(input$process_model)
+        has_second_mod <- model_num %in% models_with_second_moderator
+        
+        # Use plot data from PROCESS directly (plot=2, save=2) - always uses percentiles
+        plot_data_df <- results$plot_data
+        
+        if(is.null(plot_data_df) || !is.data.frame(plot_data_df) || nrow(plot_data_df) == 0) {
+          stop("Plot data not available. Please run the analysis first.")
+        }
+        
+        # PROCESS returns: X, W, [Z if dual], predicted, se, LLCI, ULCI
+        # Column order: X, W, Z (if dual), Y, se, LLCI, ULCI
+        if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
+          # Dual moderation: X, W, Z, predicted, se, LLCI, ULCI (7 columns)
+          if(ncol(plot_data_df) < 7) {
+            stop("Plot data structure unexpected for dual moderation model.")
           }
-          moderator_levels <- round(moderator_levels, input$decimal_places)
-        }
-        
-        if(input$slopes_type == "full") {
-          pred_seq <- seq(
-            min(data_used[[input$predictor_var]], na.rm = TRUE),
-            max(data_used[[input$predictor_var]], na.rm = TRUE),
-            length.out = 100
+          
+          plot_data <- data.frame(
+            Predictor = as.numeric(plot_data_df[, 1]),
+            Moderator_W = as.numeric(plot_data_df[, 2]),
+            Moderator_Z = as.numeric(plot_data_df[, 3]),
+            Outcome = as.numeric(plot_data_df[, 4]),
+            LLCI = as.numeric(plot_data_df[, 6]),  # Column 6 for dual moderation
+            ULCI = as.numeric(plot_data_df[, 7])   # Column 7 for dual moderation
           )
+          
+          # Get the 3 percentile levels for Z (16th, 50th, 84th) - these will be panels
+          if(is_binary_variable(data_used, input$moderator2_var)) {
+            z_levels_raw <- sort(unique(data_used[[input$moderator2_var]][!is.na(data_used[[input$moderator2_var]])]))
+          } else {
+            z_levels_raw <- as.numeric(quantile(data_used[[input$moderator2_var]], 
+                                                probs = c(0.16, 0.50, 0.84), 
+                                                na.rm = TRUE))
+          }
+          z_levels <- round(z_levels_raw, input$decimal_places)
+          
+          # Get the 3 percentile levels for W (16th, 50th, 84th) - these will be lines in each panel
+          if(is_binary_variable(data_used, input$moderator_var)) {
+            w_levels_raw <- sort(unique(data_used[[input$moderator_var]][!is.na(data_used[[input$moderator_var]])]))
+          } else {
+            w_levels_raw <- as.numeric(quantile(data_used[[input$moderator_var]], 
+                                                probs = c(0.16, 0.50, 0.84), 
+                                                na.rm = TRUE))
+          }
+          w_levels <- round(w_levels_raw, input$decimal_places)
+          
+          # Filter plot_data to match percentile levels (with tolerance for floating point)
+          plot_data$Z_matched <- FALSE
+          plot_data$W_matched <- FALSE
+          
+          for(z_val in z_levels_raw) {
+            tolerance <- abs(z_val) * 0.001 + 0.01
+            plot_data$Z_matched[abs(plot_data$Moderator_Z - z_val) < tolerance] <- TRUE
+          }
+          
+          for(w_val in w_levels_raw) {
+            tolerance <- abs(w_val) * 0.001 + 0.01
+            plot_data$W_matched[abs(plot_data$Moderator_W - w_val) < tolerance] <- TRUE
+          }
+          
+          plot_data <- plot_data[plot_data$Z_matched & plot_data$W_matched, ]
+          plot_data$Z_matched <- NULL
+          plot_data$W_matched <- NULL
+          
+          if(nrow(plot_data) == 0) {
+            stop("No valid plot data after filtering to percentile levels.")
+          }
+          
+          # Create factor for Z levels for faceting (panels)
+          z_unique <- sort(unique(plot_data$Moderator_Z))
+          plot_data$Z_level <- factor(plot_data$Moderator_Z, 
+                                      levels = z_unique,
+                                      labels = format(round(z_unique, input$decimal_places), 
+                                                    nsmall = input$decimal_places))
+          
+          # Create factor for W levels for legend (lines within each panel)
+          w_unique <- sort(unique(plot_data$Moderator_W))
+          plot_data$W_level <- factor(plot_data$Moderator_W,
+                                      levels = w_unique,
+                                      labels = format(round(w_unique, input$decimal_places), 
+                                                    nsmall = input$decimal_places))
+          
+          # For dual moderation, we'll use W_level for the legend and Z_level for faceting
+          active_moderator <- input$moderator_var
+          moderator_levels <- w_levels
+          moderator_levels_raw <- w_levels_raw
         } else {
-      # Use plot_conditioning_values if available, otherwise default to percentiles
-      cond_val <- if(!is.null(input$plot_conditioning_values)) input$plot_conditioning_values else "1"
-      if(cond_val == "0") {
-        predictor_mean <- mean(data_used[[input$predictor_var]], na.rm = TRUE)
-        predictor_sd <- sd(data_used[[input$predictor_var]], na.rm = TRUE)
-        pred_seq <- c(predictor_mean - predictor_sd, predictor_mean, predictor_mean + predictor_sd)
-      } else {
-        pred_seq <- quantile(data_used[[input$predictor_var]], 
-                           probs = c(0.16, 0.50, 0.84), 
-                           na.rm = TRUE)
-      }
+          # Single moderation: X, W, predicted, se, LLCI, ULCI (6 columns)
+          if(ncol(plot_data_df) < 6) {
+            stop("Plot data structure unexpected for moderation model.")
+          }
+          plot_data <- data.frame(
+            Predictor = as.numeric(plot_data_df[, 1]),
+            Moderator = as.numeric(plot_data_df[, 2]),
+            Outcome = as.numeric(plot_data_df[, 3]),
+            LLCI = as.numeric(plot_data_df[, 5]),
+            ULCI = as.numeric(plot_data_df[, 6])
+          )
+          active_moderator <- input$moderator_var
         }
         
-        plot_data <- expand.grid(
-          Predictor = pred_seq,
-          Moderator = moderator_levels
-        )
-        
-        if(outcome_is_binary) {
-          log_odds <- coeffs["constant"] +
-            coeffs["predictor"] * plot_data$Predictor +
-            coeffs["moderator"] * plot_data$Moderator +
-            coeffs["interaction"] * plot_data$Predictor * plot_data$Moderator
-          plot_data$Outcome <- plogis(log_odds)
-        } else {
-          plot_data$Outcome <- coeffs["constant"] +
-            coeffs["predictor"] * plot_data$Predictor +
-            coeffs["moderator"] * plot_data$Moderator +
-            coeffs["interaction"] * plot_data$Predictor * plot_data$Moderator
+        # Remove any rows with NA values
+        plot_data <- plot_data[complete.cases(plot_data), ]
+        if(nrow(plot_data) == 0) {
+          stop("No valid plot data after filtering.")
         }
         
+        # Limit predictor range to actual data range in plot_data (PROCESS uses percentiles)
+        predictor_range <- range(plot_data$Predictor, na.rm = TRUE)
+        
+        # Create plot labels
         y_label_text <- if(outcome_is_binary) {
           if(input$y_label != "") paste(input$y_label, "(Probability)") else "Predicted Probability"
         } else {
@@ -3737,37 +4004,125 @@ server <- function(input, output, session) {
         }
         
         x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
-        mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(input$moderator_var, " Levels")
+        mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(active_moderator, " Levels")
         
-        p <- ggplot(plot_data, aes(
-          x = Predictor, 
-          y = Outcome,
-          color = if(input$use_color_lines) factor(Moderator) else NULL,
-          linetype = if(!input$use_color_lines) factor(Moderator) else NULL
-        )) +
-          geom_line(linewidth = 1) +
-          {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
-          {if(outcome_is_binary && !input$custom_y_axis) coord_cartesian(ylim = c(0, 1))} +
-          labs(
-            title = input$slopes_title,
-            x = x_label_text,
-            y = y_label_text,
-            color = if(input$use_color_lines) mod_label_text else NULL,
-            linetype = if(!input$use_color_lines) mod_label_text else NULL
-          ) +
-          theme_minimal() +
-          theme(
-            text = element_text(size = 14),
-            axis.title = element_text(size = 16),
-            axis.text = element_text(size = 14),
-            plot.title = element_text(size = 18, hjust = 0.5),
-            legend.title = element_text(size = 14),
-            legend.text = element_text(size = 14),
-            axis.line = element_line(color = "black", linewidth = 0.5),
-            axis.ticks = element_line(color = "black", linewidth = 0.5)
-          )
+        plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Simple Slopes Plot"
         
-        ggsave(file, plot = p, device = "jpg", width = 10, height = 8, dpi = 600)
+        # Create the plot
+        if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
+          # Dual moderation: 3-panel plot (one panel per Z level, showing W at 3 levels)
+          p <- ggplot(plot_data, aes(
+            x = Predictor, 
+            y = Outcome,
+            color = if(input$use_color_lines) W_level else NULL,
+            linetype = if(!input$use_color_lines) W_level else NULL,
+            fill = if(input$show_confidence_intervals && input$use_color_lines) W_level else NULL
+          )) +
+            {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI))) 
+              geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, color = NA)} +
+            geom_line(linewidth = 1) +
+            facet_wrap(~ Z_level, ncol = 1, 
+                       labeller = labeller(Z_level = function(x) paste0(input$moderator2_var, " = ", x))) +
+            {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
+            {if(!input$custom_y_axis && outcome_is_binary) coord_cartesian(ylim = c(0, 1))} +
+            {if(!input$custom_y_axis && !outcome_is_binary) coord_cartesian(xlim = predictor_range)} +
+            labs(
+              title = plot_title,
+              x = x_label_text,
+              y = y_label_text,
+              color = if(input$use_color_lines) mod_label_text else NULL,
+              linetype = if(!input$use_color_lines) mod_label_text else NULL,
+              fill = if(input$show_confidence_intervals && input$use_color_lines) mod_label_text else NULL
+            ) +
+            theme_minimal() +
+            theme(
+              text = element_text(size = 14),
+              axis.title = element_text(size = 16),
+              axis.text = element_text(size = 14),
+              plot.title = element_text(size = 18, hjust = 0.5),
+              legend.title = element_text(size = 14),
+              legend.text = element_text(size = 14),
+              axis.line = element_line(color = "black", linewidth = 0.5),
+              axis.ticks = element_line(color = "black", linewidth = 0.5),
+              strip.text = element_text(size = 14, face = "bold"),
+              strip.background = element_rect(fill = "lightgrey", color = "black")
+            )
+          
+          # Suppress fill legend if not using color lines or not showing CIs
+          if(!input$show_confidence_intervals || !input$use_color_lines) {
+            p <- p + guides(fill = "none")
+          }
+          
+          # For 3-panel plots, increase height
+          ggsave(file, plot = p, device = "jpg", width = 10, height = 12, dpi = 600)
+        } else {
+          # Single moderation: Get the 3 percentile moderator levels
+          if(is_binary_variable(data_used, active_moderator)) {
+            moderator_levels_raw <- sort(unique(data_used[[active_moderator]][!is.na(data_used[[active_moderator]])]))
+          } else {
+            moderator_levels_raw <- as.numeric(quantile(data_used[[active_moderator]], 
+                                                        probs = c(0.16, 0.50, 0.84), 
+                                                        na.rm = TRUE))
+          }
+          
+          # Filter plot_data to only include rows where Moderator is close to one of these 3 percentile values
+          plot_data$Moderator_matched <- FALSE
+          for(mod_val in moderator_levels_raw) {
+            tolerance <- abs(mod_val) * 0.001 + 0.01
+            plot_data$Moderator_matched[abs(plot_data$Moderator - mod_val) < tolerance] <- TRUE
+          }
+          plot_data <- plot_data[plot_data$Moderator_matched, ]
+          plot_data$Moderator_matched <- NULL
+          
+          if(nrow(plot_data) == 0) {
+            stop("No valid plot data after filtering to percentile levels.")
+          }
+          
+          moderator_levels <- round(moderator_levels_raw, input$decimal_places)
+          
+          # Single moderation: single plot with 3 lines
+          plot_data$Moderator_factor <- factor(plot_data$Moderator, levels = moderator_levels_raw, labels = format(moderator_levels, nsmall = input$decimal_places))
+          
+          p <- ggplot(plot_data, aes(
+            x = Predictor, 
+            y = Outcome,
+            color = if(input$use_color_lines) Moderator_factor else NULL,
+            linetype = if(!input$use_color_lines) Moderator_factor else NULL,
+            fill = if(input$show_confidence_intervals && input$use_color_lines) Moderator_factor else NULL
+          )) +
+            {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI))) 
+              geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, color = NA)} +
+            geom_line(linewidth = 1) +
+            {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
+            {if(!input$custom_y_axis && outcome_is_binary) coord_cartesian(ylim = c(0, 1))} +
+            {if(!input$custom_y_axis && !outcome_is_binary) coord_cartesian(xlim = predictor_range)} +
+            labs(
+              title = plot_title,
+              x = x_label_text,
+              y = y_label_text,
+              color = if(input$use_color_lines) mod_label_text else NULL,
+              linetype = if(!input$use_color_lines) mod_label_text else NULL,
+              fill = if(input$show_confidence_intervals && input$use_color_lines) mod_label_text else NULL
+            ) +
+            theme_minimal() +
+            theme(
+              text = element_text(size = 14),
+              axis.title = element_text(size = 16),
+              axis.text = element_text(size = 14),
+              plot.title = element_text(size = 18, hjust = 0.5),
+              legend.title = element_text(size = 14),
+              legend.text = element_text(size = 14),
+              axis.line = element_line(color = "black", linewidth = 0.5),
+              axis.ticks = element_line(color = "black", linewidth = 0.5)
+            )
+          
+          # Suppress fill legend if not using color lines or not showing CIs
+          if(!input$show_confidence_intervals || !input$use_color_lines) {
+            p <- p + guides(fill = "none")
+          }
+          
+          ggsave(file, plot = p, device = "jpg", width = 10, height = 8, dpi = 600)
+        }
       }, error = function(e) {
         print(paste("Error saving slopes plot:", e$message))
       })
