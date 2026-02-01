@@ -468,7 +468,7 @@ ui <- fluidPage(
         
         # Visualizing Moderation Options (collapsible) - Only for moderation models
         conditionalPanel(
-          condition = "output.is_moderation_model === true",
+          condition = "output.is_plot_model === true",
           tags$details(
             tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                         "Plot Options"),
@@ -687,7 +687,7 @@ ui <- fluidPage(
         ),
         tabPanel("Plots",
           conditionalPanel(
-            condition = "output.is_moderation_model === true && output.analysis_ready === true",
+            condition = "output.is_plot_model === true && output.analysis_ready === true",
             # Only show JN plot for Model 1
             conditionalPanel(
               condition = "input.process_model == '1'",
@@ -709,11 +709,11 @@ ui <- fluidPage(
             )
           ),
           conditionalPanel(
-            condition = "output.is_moderation_model === false",
-            p("Plots are only available for moderation models (Models 1, 2, 3, 5, 14, 15, 58, 59, 74).")
+            condition = "output.is_plot_model === false",
+            p("Plots are only available for Models 1 and 3.")
           ),
           conditionalPanel(
-            condition = "output.is_moderation_model === true && output.analysis_ready === false",
+            condition = "output.is_plot_model === true && output.analysis_ready === false",
             p("Run an analysis to see plots here.")
           )
         )
@@ -842,6 +842,14 @@ server <- function(input, output, session) {
     model_num %in% models_with_second_moderator
   })
   outputOptions(output, "has_second_moderator", suspendWhenHidden = FALSE)
+  
+  # Output to track if model supports plots (only Models 1 and 3)
+  output$is_plot_model <- reactive({
+    req(input$process_model)
+    model_num <- as.numeric(input$process_model)
+    model_num %in% c(1, 3)
+  })
+  outputOptions(output, "is_plot_model", suspendWhenHidden = FALSE)
   
   output$is_mediation_model <- reactive({
     req(input$process_model)
@@ -3428,10 +3436,17 @@ server <- function(input, output, session) {
   
   # Simple Slopes Plot
   output$slopes_plot <- renderPlot({
+    # Only allow plots for Models 1 and 3
+    req(input$process_model)
+    model_num <- as.numeric(input$process_model)
+    if(!model_num %in% c(1, 3)) {
+      plot.new()
+      text(0.5, 0.5, "Plots are only available for Models 1 and 3.", cex = 1.2)
+      return()
+    }
+    
     # Check if we have valid analysis results for the current model/variables
     if(is.null(analysis_results())) {
-      plot.new()
-      text(0.5, 0.5, "Please run the analysis first.", cex = 1.2)
       return()
     }
     
@@ -3440,24 +3455,18 @@ server <- function(input, output, session) {
     
     # Check for validation errors
     if(!is.null(rv$validation_error)) {
-      plot.new()
-      text(0.5, 0.5, rv$validation_error, cex = 1.2)
       return()
     }
     
     # Verify that the analysis results match the current model
     results <- analysis_results()
     if(is.null(results) || is.null(results$settings)) {
-      plot.new()
-      text(0.5, 0.5, "Please run the analysis first.", cex = 1.2)
       return()
     }
     
     # Check if model matches
     current_model <- as.numeric(input$process_model)
     if(results$settings$model != current_model) {
-      plot.new()
-      text(0.5, 0.5, "Analysis results do not match current model. Please run the analysis.", cex = 1.2)
       return()
     }
     
@@ -3472,8 +3481,6 @@ server <- function(input, output, session) {
     plot_data_df <- results$plot_data
     
     if(is.null(plot_data_df) || !is.data.frame(plot_data_df) || nrow(plot_data_df) == 0) {
-      plot.new()
-      text(0.5, 0.5, "Plot data not available. Please run the analysis first.", cex = 1.2)
       return()
     }
     
@@ -4086,8 +4093,6 @@ server <- function(input, output, session) {
       
       # After tryCatch, check if we have conditional effect data
       if(is.null(cond_effect_data)) {
-        plot.new()
-        text(0.5, 0.5, "Conditional effect data not found.\nCheck console for debug output.\nThis may require probing interactions to be enabled.", cex = 1.2)
         return()
       }
       
@@ -4100,8 +4105,6 @@ server <- function(input, output, session) {
     } else {
       # Single moderation: X, W, predicted, se, LLCI, ULCI (6 columns)
       if(ncol(plot_data_df) < 6) {
-        plot.new()
-        text(0.5, 0.5, "Plot data structure unexpected for moderation model.", cex = 1.2)
         return()
       }
       plot_data <- data.frame(
@@ -4145,8 +4148,6 @@ server <- function(input, output, session) {
       plot_data$Moderator_matched <- NULL  # Remove temporary column
       
       if(nrow(plot_data) == 0) {
-        plot.new()
-        text(0.5, 0.5, "No valid plot data after filtering to percentile levels.", cex = 1.2)
         return()
       }
       
@@ -4156,8 +4157,6 @@ server <- function(input, output, session) {
     
     # Verify plot_data exists before using it
     if(is.null(plot_data) || !is.data.frame(plot_data) || nrow(plot_data) == 0) {
-      plot.new()
-      text(0.5, 0.5, "Plot data not available. Please run the analysis first.", cex = 1.2)
       return()
     }
     
@@ -4166,8 +4165,6 @@ server <- function(input, output, session) {
       # For Model 3: Conditional effect plot (X*W effect across Z)
       # Verify we have the required columns
       if(!"Z" %in% names(plot_data) || !"Effect" %in% names(plot_data)) {
-        plot.new()
-        text(0.5, 0.5, "Conditional effect data structure unexpected.\nCheck console for debug output.", cex = 1.2)
         return()
       }
       
@@ -4269,6 +4266,15 @@ server <- function(input, output, session) {
   
   # Johnson-Neyman Plot
   output$jn_plot <- renderPlot({
+    # Only allow plots for Models 1 and 3
+    req(input$process_model)
+    model_num <- as.numeric(input$process_model)
+    if(!model_num %in% c(1, 3)) {
+      plot.new()
+      text(0.5, 0.5, "Plots are only available for Models 1 and 3.", cex = 1.2)
+      return()
+    }
+    
     # Check if we have valid analysis results for the current model/variables
     if(is.null(analysis_results())) {
       plot.new()
@@ -4279,36 +4285,23 @@ server <- function(input, output, session) {
     req(input$moderator_var)
     
     # JN plots are only appropriate for Model 1 (simple moderation with one moderator)
-    model_num <- as.numeric(input$process_model)
     if(model_num != 1) {
-      plot.new()
-      text(0.5, 0.5, 
-           "Johnson-Neyman plot is only available for Model 1 (simple moderation).\nUse the simple slopes plots for other models.", 
-           cex = 1.2)
       return()
     }
     
     if(!jn_available()) {
-      plot.new()
-      text(0.5, 0.5, 
-           "Johnson-Neyman plot not available for categorical moderators.\nUse the simple slopes plots instead.", 
-           cex = 1.2)
       return()
     }
     
     # Verify that the analysis results match the current model
     results <- analysis_results()
     if(is.null(results) || is.null(results$settings)) {
-      plot.new()
-      text(0.5, 0.5, "Please run the analysis first.", cex = 1.2)
       return()
     }
     
     # Check if model matches
     current_model <- as.numeric(input$process_model)
     if(results$settings$model != current_model) {
-      plot.new()
-      text(0.5, 0.5, "Analysis results do not match current model. Please run the analysis.", cex = 1.2)
       return()
     }
     
@@ -4317,8 +4310,6 @@ server <- function(input, output, session) {
       start_idx <- which(grepl("Conditional effect of focal predictor", process_output))
       
       if(length(start_idx) == 0) {
-        plot.new()
-        text(0.5, 0.5, "Johnson-Neyman data not found in PROCESS output.", cex = 1.2)
         return()
       }
       
@@ -4340,8 +4331,6 @@ server <- function(input, output, session) {
       }
       
       if(is.na(end_idx) || end_idx <= data_start) {
-        plot.new()
-        text(0.5, 0.5, "Unable to parse Johnson-Neyman data from PROCESS output.", cex = 1.2)
         return()
       }
       
@@ -4352,8 +4341,6 @@ server <- function(input, output, session) {
       data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
       
       if(length(data_lines) == 0) {
-        plot.new()
-        text(0.5, 0.5, "No valid Johnson-Neyman data rows found in PROCESS output.", cex = 1.2)
         return()
       }
       
@@ -4444,8 +4431,8 @@ server <- function(input, output, session) {
       
       print(p)
     }, error = function(e) {
-      plot.new()
-      text(0.5, 0.5, paste("Error generating JN plot:", e$message), cex = 1.2)
+      # Return without showing error - UI will handle messaging
+      return()
       print(paste("Error in JN plot:", e$message))
     })
   })
@@ -4478,6 +4465,13 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       tryCatch({
+        # Only allow downloads for Models 1 and 3
+        req(input$process_model)
+        model_num <- as.numeric(input$process_model)
+        if(!model_num %in% c(1, 3)) {
+          stop("Plots are only available for Models 1 and 3.")
+        }
+        
         req(analysis_results())
         process_output <- analysis_results()$output
         
@@ -4608,6 +4602,13 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       tryCatch({
+        # Only allow downloads for Models 1 and 3
+        req(input$process_model)
+        model_num <- as.numeric(input$process_model)
+        if(!model_num %in% c(1, 3)) {
+          stop("Plots are only available for Models 1 and 3.")
+        }
+        
         req(analysis_results())
         req(input$moderator_var)
         req(input$predictor_var)
@@ -4617,7 +4618,6 @@ server <- function(input, output, session) {
         outcome_is_binary <- is_binary_variable(data_used, input$outcome_var)
         
         # Determine model type
-        model_num <- as.numeric(input$process_model)
         has_second_mod <- model_num %in% models_with_second_moderator
         
         # Use plot data from PROCESS directly (plot=2, save=2) - always uses percentiles
