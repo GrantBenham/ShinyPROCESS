@@ -366,6 +366,11 @@ ui <- fluidPage(
           tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                       "Advanced Options"),
           div(style = "margin-left: 15px; margin-top: 10px;",
+            # NOTE: Cluster-robust standard errors removed from UI because they require a clustering variable
+            # (PROCESS requires cluster parameter when robustse=1). To implement in future:
+            # 1. Add clustering variable selector in UI
+            # 2. Pass cluster variable to PROCESS: cluster = input$cluster_var
+            # 3. Set robustse=1 and hc=5 when cluster-robust is selected
             selectInput("hc_method", "Standard Errors:",
               choices = list(
                 "OLS" = "none",
@@ -373,8 +378,7 @@ ui <- fluidPage(
                 "HC1 (Hinkley)" = "1",
                 "HC2" = "2",
                 "HC3 (Davidson-MacKinnon)" = "3",
-                "HC4 (Cribari-Neto)" = "4",
-                "Cluster-robust" = "cluster"
+                "HC4 (Cribari-Neto)" = "4"
               ),
               selected = "none"
             ),
@@ -1998,8 +2002,8 @@ server <- function(input, output, session) {
         modelbt = if(input$use_bootstrap) 1 else 0,
         boot = if(input$use_bootstrap) input$boot_samples else 0,
         bc = if(input$use_bootstrap) as.numeric(input$bootstrap_ci_method) else 0,
-        hc = if(input$hc_method == "none") 5 else if(input$hc_method == "cluster") 5 else as.numeric(input$hc_method),
-        robustse = if(input$hc_method == "cluster") 1 else 0,
+        hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
+        # NOTE: robustse removed - cluster-robust option requires clustering variable (see comment above)
         covcoeff = if(input$covcoeff) 1 else 0,
         cov = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else "xxxxx"
       )
@@ -2641,8 +2645,8 @@ server <- function(input, output, session) {
         modelbt = if(input$use_bootstrap) 1 else 0,
         boot = if(input$use_bootstrap) input$boot_samples else 0,
         bc = if(input$use_bootstrap) as.numeric(input$bootstrap_ci_method) else 0,
-        hc = if(input$hc_method == "none") 5 else if(input$hc_method == "cluster") 5 else as.numeric(input$hc_method),
-        robustse = if(input$hc_method == "cluster") 1 else 0,
+        hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
+        # NOTE: robustse removed - cluster-robust option requires clustering variable (see comment above)
         covcoeff = if(input$covcoeff) 1 else 0,
         cov = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else "xxxxx"
       )
@@ -3212,8 +3216,7 @@ server <- function(input, output, session) {
           "1" = "HC1 (Hinkley)",
           "2" = "HC2",
           "3" = "HC3 (Davidson-MacKinnon)",
-          "4" = "HC4 (Cribari-Neto)",
-          "cluster" = "Cluster-robust"
+          "4" = "HC4 (Cribari-Neto)"
         )
         if(is.null(hc_display)) hc_display <- "OLS"  # fallback
         paste("Standard Errors:", hc_display)
