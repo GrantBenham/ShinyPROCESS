@@ -366,14 +366,15 @@ ui <- fluidPage(
           tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                       "Advanced Options"),
           div(style = "margin-left: 15px; margin-top: 10px;",
-            selectInput("hc_method", "Heteroscedasticity-consistent inference:",
+            selectInput("hc_method", "Standard Errors:",
               choices = list(
-                "None" = "none",
+                "OLS" = "none",
                 "HC0 (Huber-White)" = "0",
                 "HC1 (Hinkley)" = "1",
                 "HC2" = "2",
                 "HC3 (Davidson-MacKinnon)" = "3",
-                "HC4 (Cribari-Neto)" = "4"
+                "HC4 (Cribari-Neto)" = "4",
+                "Cluster-robust" = "cluster"
               ),
               selected = "none"
             ),
@@ -391,7 +392,6 @@ ui <- fluidPage(
             ),
             # Note: Johnson-Neyman and conditioning values moved to "Probing Moderation" section
             # Note: Seed moved to "Bootstrap Settings" section
-            numericInput("decimals", "Decimal Places", 4, min = 0, max = 10, step = 1)
           )
         ),
         
@@ -400,6 +400,7 @@ ui <- fluidPage(
           tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                       "Output Options"),
           div(style = "margin-left: 15px; margin-top: 10px;",
+            numericInput("decimals", "Decimal Places", 4, min = 0, max = 10, step = 1),
             tags$div(title = "Displays descriptive statistics (means, SDs, min, max) and correlation matrices for all variables in the analysis.",
               checkboxInput("describe", "Descriptives and variable correlations", TRUE)
             ),
@@ -1997,7 +1998,8 @@ server <- function(input, output, session) {
         modelbt = if(input$use_bootstrap) 1 else 0,
         boot = if(input$use_bootstrap) input$boot_samples else 0,
         bc = if(input$use_bootstrap) as.numeric(input$bootstrap_ci_method) else 0,
-        hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
+        hc = if(input$hc_method == "none") 5 else if(input$hc_method == "cluster") 5 else as.numeric(input$hc_method),
+        robustse = if(input$hc_method == "cluster") 1 else 0,
         covcoeff = if(input$covcoeff) 1 else 0,
         cov = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else "xxxxx"
       )
@@ -2566,8 +2568,19 @@ server <- function(input, output, session) {
         use_bootstrap = input$use_bootstrap,
         boot_samples = if(input$use_bootstrap) input$boot_samples else NULL,
         bootstrap_ci_method = if(input$use_bootstrap) input$bootstrap_ci_method else NULL,
+        seed = if(!is.na(input$seed) && !is.null(input$seed) && input$seed >= 1) input$seed else NULL,
         hc_method = input$hc_method,
         conf_level = input$conf_level,
+        stand = input$stand,
+        normal = input$normal,
+        pairwise_contrasts = input$pairwise_contrasts,
+        xmint = input$xmint,
+        xmtest = input$xmtest,
+        total = input$total,
+        probe_interactions = input$probe_interactions,
+        probe_threshold = if(input$probe_interactions) input$probe_threshold else NULL,
+        conditioning_values = if(input$probe_interactions) input$conditioning_values else NULL,
+        jn = input$jn,
         dataset_name = tools::file_path_sans_ext(basename(input$data_file$name)),
         original_n = nrow(rv$original_dataset),
         outliers_removed = TRUE,
@@ -2628,7 +2641,8 @@ server <- function(input, output, session) {
         modelbt = if(input$use_bootstrap) 1 else 0,
         boot = if(input$use_bootstrap) input$boot_samples else 0,
         bc = if(input$use_bootstrap) as.numeric(input$bootstrap_ci_method) else 0,
-        hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
+        hc = if(input$hc_method == "none") 5 else if(input$hc_method == "cluster") 5 else as.numeric(input$hc_method),
+        robustse = if(input$hc_method == "cluster") 1 else 0,
         covcoeff = if(input$covcoeff) 1 else 0,
         cov = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else "xxxxx"
       )
@@ -3169,23 +3183,68 @@ server <- function(input, output, session) {
         "1" = "All variables that define products",
         "2" = "Only continuous variables that define products"
       )),
-      if(settings$use_bootstrap) {
-        bootstrap_info <- paste("Bootstrap samples:", settings$boot_samples)
+      "",
+      "<strong>Bootstrap Settings:</strong>",
+      if(!is.null(settings$use_bootstrap) && isTRUE(settings$use_bootstrap)) {
+        bootstrap_info <- paste("Bootstrap samples:", if(!is.null(settings$boot_samples)) settings$boot_samples else "N/A")
         if(!is.null(settings$bootstrap_ci_method)) {
           ci_method_text <- if(settings$bootstrap_ci_method == "1") "Bias-corrected bootstrap" else "Percentile bootstrap"
           bootstrap_info <- paste(bootstrap_info, paste0("(", ci_method_text, ")"))
         }
         bootstrap_info
+      } else {
+        "Bootstrap: Not used"
       },
-      paste("Confidence level:", settings$conf_level, "%"),
-      paste("Heteroscedasticity-consistent SE:", switch(settings$hc_method,
-        "none" = "None",
-        "0" = "HC0 (Huber-White)",
-        "1" = "HC1 (Hinkley)",
-        "2" = "HC2",
-        "3" = "HC3 (Davidson-MacKinnon)",
-        "4" = "HC4 (Cribari-Neto)"
-      )),
+      if(!is.null(settings$seed)) {
+        paste("Random seed:", settings$seed)
+      },
+      if(!is.null(settings$conf_level)) {
+        paste("Confidence level:", settings$conf_level, "%")
+      } else {
+        "Confidence level: 95 %"
+      },
+      "",
+      "<strong>Advanced Options:</strong>",
+      if(!is.null(settings$hc_method)) {
+        hc_display <- switch(settings$hc_method,
+          "none" = "OLS",
+          "0" = "HC0 (Huber-White)",
+          "1" = "HC1 (Hinkley)",
+          "2" = "HC2",
+          "3" = "HC3 (Davidson-MacKinnon)",
+          "4" = "HC4 (Cribari-Neto)",
+          "cluster" = "Cluster-robust"
+        )
+        if(is.null(hc_display)) hc_display <- "OLS"  # fallback
+        paste("Standard Errors:", hc_display)
+      } else {
+        "Standard Errors: OLS"
+      },
+      if(!is.null(settings$stand) && isTRUE(settings$stand)) "Standardized coefficients: Yes",
+      if(!is.null(settings$normal) && isTRUE(settings$normal)) "Normal theory tests: Yes",
+      if(!is.null(settings$pairwise_contrasts) && isTRUE(settings$pairwise_contrasts)) "Pairwise contrasts of indirect effects: Yes",
+      if(!is.null(settings$xmint) && isTRUE(settings$xmint)) "Allow X by M interaction: Yes",
+      if(!is.null(settings$xmtest) && isTRUE(settings$xmtest)) "Test for X by M interaction: Yes",
+      if(!is.null(settings$total) && isTRUE(settings$total)) "Total effect of X: Yes",
+      "",
+      if((!is.null(settings$probe_interactions) && isTRUE(settings$probe_interactions)) || 
+         (!is.null(settings$jn) && isTRUE(settings$jn))) {
+        c("<strong>Probing Moderation:</strong>",
+          if(!is.null(settings$probe_interactions) && isTRUE(settings$probe_interactions)) {
+            c(paste("Probe interactions: Yes"),
+              if(!is.null(settings$probe_threshold)) paste("Probe threshold:", settings$probe_threshold),
+              if(!is.null(settings$conditioning_values)) {
+                paste("Conditioning values:", switch(settings$conditioning_values,
+                  "0" = "Mean ± 1 SD",
+                  "1" = "Mean ± 2 SD",
+                  "2" = "16th, 50th, 84th percentiles"
+                ))
+              }
+            )
+          },
+          if(!is.null(settings$jn) && isTRUE(settings$jn)) "Johnson-Neyman technique: Yes"
+        )
+      },
       ""
     )
     
