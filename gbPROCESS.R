@@ -322,10 +322,10 @@ ui <- fluidPage(
         condition = "input.process_model != ''",
         h4("PROCESS Options"),
         
-        # Basic Options (collapsible)
+        # Centering Options (collapsible)
         tags$details(id = "details_basic_options",
           tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9;", 
-                      "Basic Options"),
+                      "Centering Options"),
           div(style = "margin-left: 15px; margin-top: 10px;",
             radioButtons("centering", "Mean Centering:",
               choices = list(
@@ -334,13 +334,30 @@ ui <- fluidPage(
                 "Only continuous variables that define products" = "2"
               ),
               selected = "0"
-            ),
+            )
+          )
+        ),
+        
+        # Bootstrap Settings (collapsible)
+        tags$details(id = "details_bootstrap_options",
+          tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
+                      "Bootstrap Settings"),
+          div(style = "margin-left: 15px; margin-top: 10px;",
             checkboxInput("use_bootstrap", "Use bootstrapping", TRUE),
             conditionalPanel(
               condition = "input.use_bootstrap == true",
-              numericInput("boot_samples", "Number of bootstrap samples:", 5000, min = 1000, max = 10000)
+              numericInput("boot_samples", "Number of bootstrap samples:", 5000, min = 1000, max = 10000),
+              radioButtons("bootstrap_ci_method", "Bootstrap Confidence Interval Method:",
+                choices = list(
+                  "Percentile bootstrap" = "0",
+                  "Bias-corrected bootstrap" = "1"
+                ),
+                selected = "0"
+              )
             ),
-            numericInput("conf_level", "Confidence Level (%)", 95, min = 80, max = 99, step = 1)
+            numericInput("conf_level", "Confidence Level (%)", 95, min = 80, max = 99, step = 1),
+            numericInput("seed", "Random Seed (optional)", value = NA, min = 1, max = 999999),
+            p(em("Leave blank to use a random seed. Enter a number (1-999999) to set a specific seed for reproducibility."))
           )
         ),
         
@@ -373,9 +390,8 @@ ui <- fluidPage(
               )
             ),
             # Note: Johnson-Neyman and conditioning values moved to "Probing Moderation" section
-            numericInput("decimals", "Decimal Places", 4, min = 0, max = 10, step = 1),
-            numericInput("seed", "Random Seed (optional)", value = NA, min = 1, max = 999999),
-            p(em("Leave blank to use a random seed. Enter a number (1-999999) to set a specific seed for reproducibility."))
+            # Note: Seed moved to "Bootstrap Settings" section
+            numericInput("decimals", "Decimal Places", 4, min = 0, max = 10, step = 1)
           )
         ),
         
@@ -1980,6 +1996,7 @@ server <- function(input, output, session) {
         conf = input$conf_level,
         modelbt = if(input$use_bootstrap) 1 else 0,
         boot = if(input$use_bootstrap) input$boot_samples else 0,
+        bc = if(input$use_bootstrap) as.numeric(input$bootstrap_ci_method) else 0,
         hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
         covcoeff = if(input$covcoeff) 1 else 0,
         cov = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else "xxxxx"
@@ -2548,6 +2565,7 @@ server <- function(input, output, session) {
         centering = input$centering,
         use_bootstrap = input$use_bootstrap,
         boot_samples = if(input$use_bootstrap) input$boot_samples else NULL,
+        bootstrap_ci_method = if(input$use_bootstrap) input$bootstrap_ci_method else NULL,
         hc_method = input$hc_method,
         conf_level = input$conf_level,
         dataset_name = tools::file_path_sans_ext(basename(input$data_file$name)),
@@ -2609,6 +2627,7 @@ server <- function(input, output, session) {
         conf = input$conf_level,
         modelbt = if(input$use_bootstrap) 1 else 0,
         boot = if(input$use_bootstrap) input$boot_samples else 0,
+        bc = if(input$use_bootstrap) as.numeric(input$bootstrap_ci_method) else 0,
         hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
         covcoeff = if(input$covcoeff) 1 else 0,
         cov = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else "xxxxx"
@@ -3150,7 +3169,14 @@ server <- function(input, output, session) {
         "1" = "All variables that define products",
         "2" = "Only continuous variables that define products"
       )),
-      if(settings$use_bootstrap) paste("Bootstrap samples:", settings$boot_samples),
+      if(settings$use_bootstrap) {
+        bootstrap_info <- paste("Bootstrap samples:", settings$boot_samples)
+        if(!is.null(settings$bootstrap_ci_method)) {
+          ci_method_text <- if(settings$bootstrap_ci_method == "1") "Bias-corrected bootstrap" else "Percentile bootstrap"
+          bootstrap_info <- paste(bootstrap_info, paste0("(", ci_method_text, ")"))
+        }
+        bootstrap_info
+      },
       paste("Confidence level:", settings$conf_level, "%"),
       paste("Heteroscedasticity-consistent SE:", switch(settings$hc_method,
         "none" = "None",
@@ -4670,8 +4696,9 @@ server <- function(input, output, session) {
       # Collapse all sections above Plot Options
       shinyjs::runjs("
         var sections = ['details_select_vars', 'details_assumption_checks', 
-                        'details_basic_options', 'details_advanced_options', 
-                        'details_output_options', 'details_probing_moderation'];
+                        'details_basic_options', 'details_bootstrap_options',
+                        'details_advanced_options', 'details_output_options', 
+                        'details_probing_moderation'];
         sections.forEach(function(id) {
           var elem = document.getElementById(id);
           if(elem) elem.removeAttribute('open');
