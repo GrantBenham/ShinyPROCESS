@@ -485,8 +485,12 @@ ui <- fluidPage(
               textInput("x_label", "Label for Predictor", ""),
               textInput("y_label", "Label for Outcome", ""),
               textInput("moderator_label", "Label for Moderator", ""),
+              conditionalPanel(
+                condition = "output.has_second_moderator === true",
+                textInput("moderator2_label", "Label for Second Moderator (Z)", "")
+              ),
               numericInput("decimal_places", "Decimal Places for Moderator Levels", 2, min = 0, max = 5),
-              checkboxInput("show_confidence_intervals", "Show confidence intervals", value = FALSE)
+              checkboxInput("show_confidence_intervals", "Show confidence intervals", value = TRUE)
             )
           )
         )
@@ -684,15 +688,19 @@ ui <- fluidPage(
         tabPanel("Plots",
           conditionalPanel(
             condition = "output.is_moderation_model === true && output.analysis_ready === true",
-            h4("Johnson-Neyman Plot"),
-            plotOutput("jn_plot", height = "500px", width = "800px"),
-            br(),
-            div(style = "margin-top: 20px;",
-              downloadButton("download_jn", "Download JN Plot (JPG)", 
-                class = "btn-success", 
-                style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
+            # Only show JN plot for Model 1
+            conditionalPanel(
+              condition = "input.process_model == '1'",
+              h4("Johnson-Neyman Plot"),
+              plotOutput("jn_plot", height = "500px", width = "800px"),
+              br(),
+              div(style = "margin-top: 20px;",
+                downloadButton("download_jn", "Download JN Plot (JPG)", 
+                  class = "btn-success", 
+                  style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
+              ),
+              br(), br()
             ),
-            br(), br(),
             h4("Simple Slopes Plot"),
             plotOutput("slopes_plot", height = "500px", width = "800px"),
             br(),
@@ -820,6 +828,14 @@ server <- function(input, output, session) {
     model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
   })
   outputOptions(output, "is_moderation_model", suspendWhenHidden = FALSE)
+  
+  # Output to track if model has second moderator (Z)
+  output$has_second_moderator <- reactive({
+    req(input$process_model)
+    model_num <- as.numeric(input$process_model)
+    model_num %in% models_with_second_moderator
+  })
+  outputOptions(output, "has_second_moderator", suspendWhenHidden = FALSE)
   
   output$is_mediation_model <- reactive({
     req(input$process_model)
@@ -1690,6 +1706,9 @@ server <- function(input, output, session) {
   
   # Analysis execution - generic function for all PROCESS models
   original_analysis <- eventReactive(input$run_analysis, {
+    # Clear any previous validation errors at the start
+    rv$validation_error <- NULL
+    
     print("DEBUG: ===== original_analysis eventReactive STARTED =====")
     
     # Basic validation with detailed debug
@@ -1853,9 +1872,30 @@ server <- function(input, output, session) {
         covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
       )
       
+      # Early validation check for W and Z same variable
+      model_num <- as.numeric(input$process_model)
+      if(model_num %in% models_with_second_moderator) {
+        if(!is.null(input$moderator_var) && !is.null(input$moderator2_var) && 
+           input$moderator_var != "" && input$moderator2_var != "" &&
+           input$moderator_var == input$moderator2_var) {
+          showNotification(
+            "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
+            type = "error",
+            duration = 10
+          )
+          rv$validation_error <- "W and Z moderators must be different variables."
+          return(NULL)
+        } else {
+          # Clear validation error if variables are different
+          rv$validation_error <- NULL
+        }
+      } else {
+        # Clear validation error for models without second moderator
+        rv$validation_error <- NULL
+      }
+      
       # Build PROCESS arguments
       print("DEBUG: Building PROCESS arguments...")
-      model_num <- as.numeric(input$process_model)
       
       # Handle xmint option for Model 4 - center must be 0 when xmint is used
       center_value <- as.numeric(input$centering)
@@ -1939,7 +1979,13 @@ server <- function(input, output, session) {
             stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var))
           }
           if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
-            stop("Error: W and Z moderators must be different variables.")
+            showNotification(
+              "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- "W and Z moderators must be different variables."
+            return(NULL)
           }
           process_args$z <- input$moderator2_var
         }
@@ -2074,6 +2120,8 @@ server <- function(input, output, session) {
       is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
       
       # For moderation models, set plot=2 and save=2 to get plot data in result object
+      # NOTE: plot=2 generates data with SE and CI. R pop-up plots are suppressed via graphics device
+      # To enable R pop-up plots, remove the pdf(NULL) call in the PROCESS execution
       if(is_mod_model) {
         process_args$plot <- 2  # Generate estimates + SE + CI for visualization
         process_args$save <- 2  # Return plot data in result object
@@ -2108,9 +2156,13 @@ server <- function(input, output, session) {
       # Run PROCESS with error handling
       tryCatch({
         print("DEBUG: About to call PROCESS function...")
+        # Suppress R graphics pop-ups (plots are generated in Shiny UI instead)
+        # NOTE: To enable R pop-up plots, comment out the pdf(NULL) and dev.off() lines
+        pdf(NULL)
         process_output <- capture.output({
           result <- do.call(process, process_args)
         })
+        dev.off()  # Close the null device
         print(paste("DEBUG: PROCESS completed. Output lines:", length(process_output)))
         
         # Store results including bootstrap data and plot data if available
@@ -2123,7 +2175,26 @@ server <- function(input, output, session) {
         
         if(is_mod_model && !is.null(result)) {
           # For moderation models with save=2, result contains plot data in resultm
-          print(paste("DEBUG: Moderation model, result type:", class(result)))
+          print("========================================")
+          print("DEBUG: CAPTURING RESULT OBJECT FOR MODERATION MODEL")
+          print("========================================")
+          print(paste("Result type:", class(result)))
+          print(paste("Result typeof:", typeof(result)))
+          
+          # Store the FULL result object for later inspection
+          # This is critical - we need to see everything PROCESS returns
+          if(is.list(result)) {
+            print(paste("Result is list with", length(result), "elements"))
+            if(!is.null(names(result))) {
+              print("Named elements in result:")
+              print(names(result))
+            }
+            # Store the full result for Model 3 conditional effect extraction
+            rv$full_result <- result
+          } else {
+            rv$full_result <- list(result)
+          }
+          
           if(is.data.frame(result)) {
             plot_data <- result
             print(paste("DEBUG: Plot data captured (data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
@@ -2179,6 +2250,9 @@ server <- function(input, output, session) {
           print(paste("DEBUG: No special data to capture. is_mod_model:", is_mod_model, "use_bootstrap:", input$use_bootstrap, "result is null:", is.null(result)))
         }
         
+        # Clear validation error on successful run
+        rv$validation_error <- NULL
+        
         rv$analysis_results <- list(
           output = process_output,
           data_used = process_data_orig,
@@ -2194,9 +2268,10 @@ server <- function(input, output, session) {
       }, error = function(e) {
         print(paste("DEBUG: ERROR in PROCESS execution:", e$message))
         print(paste("DEBUG: Error class:", class(e)))
-        showNotification(paste("Error running PROCESS analysis:", e$message), type = "error")
+        showNotification(paste("Error running PROCESS analysis:", e$message), type = "error", duration = 10)
         rv$analysis_results <- NULL
-        stop(e)
+        rv$validation_error <- conditionMessage(e)
+        return(NULL)
       })
       
       print("DEBUG: ===== original_analysis eventReactive COMPLETED =====")
@@ -2336,8 +2411,29 @@ server <- function(input, output, session) {
         covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
       )
       
-      # Build PROCESS arguments (same as original_analysis)
+      # Early validation check for W and Z same variable
       model_num <- as.numeric(input$process_model)
+      if(model_num %in% models_with_second_moderator) {
+        if(!is.null(input$moderator_var) && !is.null(input$moderator2_var) && 
+           input$moderator_var != "" && input$moderator2_var != "" &&
+           input$moderator_var == input$moderator2_var) {
+          showNotification(
+            "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
+            type = "error",
+            duration = 10
+          )
+          rv$validation_error <- "W and Z moderators must be different variables."
+          return(NULL)
+        } else {
+          # Clear validation error if variables are different
+          rv$validation_error <- NULL
+        }
+      } else {
+        # Clear validation error for models without second moderator
+        rv$validation_error <- NULL
+      }
+      
+      # Build PROCESS arguments (same as original_analysis)
       
       # Handle xmint option for Model 4 - center must be 0 when xmint is used
       center_value <- as.numeric(input$centering)
@@ -2420,7 +2516,13 @@ server <- function(input, output, session) {
             stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var))
           }
           if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
-            stop("Error: W and Z moderators must be different variables.")
+            showNotification(
+              "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
+              type = "error",
+              duration = 10
+            )
+            rv$validation_error <- "W and Z moderators must be different variables."
+            return(NULL)
           }
           process_args$z <- input$moderator2_var
         }
@@ -3322,6 +3424,13 @@ server <- function(input, output, session) {
     req(input$moderator_var)
     req(input$predictor_var)
     
+    # Check for validation errors
+    if(!is.null(rv$validation_error)) {
+      plot.new()
+      text(0.5, 0.5, rv$validation_error, cex = 1.2)
+      return()
+    }
+    
     # Verify that the analysis results match the current model
     results <- analysis_results()
     if(is.null(results) || is.null(results$settings)) {
@@ -3357,84 +3466,507 @@ server <- function(input, output, session) {
     # PROCESS returns: X, W, [Z if dual], predicted, se, LLCI, ULCI
     # Column order: X, W, Z (if dual), Y, se, LLCI, ULCI
     if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
-      # Dual moderation: X, W, Z, predicted, se, LLCI, ULCI (7 columns)
-      if(ncol(plot_data_df) < 7) {
+      # For Model 3, check if conditional effect data is in the result object
+      # PROCESS generates this data when plot=2 is set, and it's stored in the result object
+      
+      # Initialize plot_data to NULL so it's always defined
+      plot_data <- NULL
+      active_moderator <- NULL
+      cond_effect_data <- NULL  # Initialize outside tryCatch
+      
+      tryCatch({
+        result_obj <- results$result
+        
+        # Debug: COMPREHENSIVE inspection of result object structure
+        print("========================================")
+        print("DEBUG: COMPREHENSIVE RESULT OBJECT INSPECTION FOR MODEL 3")
+        print("========================================")
+        print(paste("Result class:", paste(class(result_obj), collapse=", ")))
+        print(paste("Result type:", typeof(result_obj)))
+        
+        # Deep dive into result object structure
+        if(is.list(result_obj)) {
+          print(paste("Result is list with", length(result_obj), "elements"))
+          if(!is.null(names(result_obj))) {
+            print("Named elements:")
+            print(names(result_obj))
+            # Check each named element
+            for(name in names(result_obj)) {
+              elem <- result_obj[[name]]
+              print(paste("  Element '", name, "': class =", paste(class(elem), collapse=", "), 
+                         ", type =", typeof(elem)))
+              if(is.data.frame(elem)) {
+                print(paste("    Data frame: ", nrow(elem), "rows,", ncol(elem), "cols"))
+                print(paste("    Column names:", paste(names(elem), collapse=", ")))
+                if(nrow(elem) > 0 && ncol(elem) > 0) {
+                  print("    First few rows:")
+                  print(head(elem, 3))
+                }
+              } else if(is.matrix(elem)) {
+                print(paste("    Matrix: ", nrow(elem), "rows,", ncol(elem), "cols"))
+                if(nrow(elem) > 0 && ncol(elem) > 0) {
+                  print("    First few rows:")
+                  print(head(elem, 3))
+                }
+              } else if(is.list(elem)) {
+                print(paste("    Nested list with", length(elem), "elements"))
+                if(!is.null(names(elem))) {
+                  print(paste("    Nested names:", paste(names(elem), collapse=", ")))
+                }
+              }
+            }
+          } else {
+            print("Unnamed list - checking elements by index:")
+            for(i in 1:min(10, length(result_obj))) {
+              elem <- result_obj[[i]]
+              print(paste("  Element [[", i, "]]: class =", paste(class(elem), collapse=", ")))
+              if(is.data.frame(elem)) {
+                print(paste("    Data frame: ", nrow(elem), "rows,", ncol(elem), "cols"))
+                if(nrow(elem) > 0 && ncol(elem) > 0) {
+                  print("    Column names:", paste(names(elem), collapse=", "))
+                  print("    First few rows:")
+                  print(head(elem, 3))
+                }
+              } else if(is.matrix(elem)) {
+                print(paste("    Matrix: ", nrow(elem), "rows,", ncol(elem), "cols"))
+                if(nrow(elem) > 0 && ncol(elem) > 0) {
+                  print("    First few rows:")
+                  print(head(elem, 3))
+                }
+              }
+            }
+          }
+        } else if(is.matrix(result_obj) || is.array(result_obj)) {
+          print(paste("Result is matrix/array with", nrow(result_obj), "rows and", ncol(result_obj), "cols"))
+          print("First few rows:")
+          print(head(result_obj, 5))
+          if(!is.null(colnames(result_obj))) {
+            print("Column names:")
+            print(colnames(result_obj))
+          }
+        } else if(is.data.frame(result_obj)) {
+          print(paste("Result is data.frame with", nrow(result_obj), "rows and", ncol(result_obj), "cols"))
+          print("Column names:")
+          print(names(result_obj))
+          print("First few rows:")
+          print(head(result_obj, 5))
+        }
+        
+        print("========================================")
+        print("DEBUG: Checking results$plot_data structure")
+        print("========================================")
+        plot_data_df <- results$plot_data
+        if(!is.null(plot_data_df)) {
+          print(paste("plot_data class:", paste(class(plot_data_df), collapse=", ")))
+          print(paste("plot_data dimensions:", nrow(plot_data_df), "x", ncol(plot_data_df)))
+          print("plot_data column names/structure:")
+          if(is.data.frame(plot_data_df)) {
+            print(names(plot_data_df))
+          } else if(is.matrix(plot_data_df)) {
+            print(paste("Matrix with", ncol(plot_data_df), "columns"))
+          }
+          print("First 10 rows of plot_data:")
+          print(head(plot_data_df, 10))
+          print("Last 10 rows of plot_data:")
+          print(tail(plot_data_df, 10))
+        } else {
+          print("plot_data is NULL")
+        }
+        
+        # KEY INSIGHT: For Model 3, PROCESS appends jnvals (conditional effect data) to resultm
+        # The resultm matrix contains multiple sections:
+        # 1. Simple slopes plot data (X, W, Z, predicted Y, SE, LLCI, ULCI) - 8 columns
+        # 2. Conditional effect data (Z, Effect, SE, t, p, LLCI, ULCI) - 7 columns, appended later
+        # The conditional effect data should be at the END of the matrix, with Z values in column 1
+        
+        # Try to extract conditional effect data from result object
+        cond_effect_data <- NULL
+        
+        # Check if plot_data_df contains the conditional effect data at the end
+        if(!is.null(plot_data_df) && (is.data.frame(plot_data_df) || is.matrix(plot_data_df))) {
+          # Convert to matrix for easier manipulation
+          plot_matrix <- as.matrix(plot_data_df)
+          
+          # Look for rows that have 7 columns (conditional effect data) vs 8 columns (simple slopes)
+          # The conditional effect data should be at the end, with Z values in column 1
+          # and should have fewer unique values in column 1 (Z) than the simple slopes data
+          
+          print("DEBUG: Searching for conditional effect data in plot_data matrix...")
+          print(paste("Matrix has", nrow(plot_matrix), "rows and", ncol(plot_matrix), "columns"))
+          
+          # Try to identify the conditional effect section
+          # It should have Z values in first column, and Effect in second column
+          # The Z values should be a continuous range (not the full X*W*Z grid)
+          
+          # Check if there's a section with 7 columns (conditional effect) vs 8 (simple slopes)
+          # Look for rows where column 1 has values that look like Z (moderator) values
+          # and column 2 has effect values (could be negative)
+          
+          # Strategy: Look for a section at the end of the matrix where:
+          # - Column 1 contains Z values (should match moderator2_var range)
+          # - Column 2 contains effect values
+          # - There are 7 columns total
+          
+          # Get the range of Z values from the data
+          if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+            z_var_data <- results$data_used[[input$moderator2_var]]
+            z_range <- range(z_var_data, na.rm = TRUE)
+            print(paste("DEBUG: Z variable range:", z_range[1], "to", z_range[2]))
+            
+            # Look for rows where column 1 values are within Z range and look like Z values
+            # These should be the conditional effect rows
+            potential_z_col <- plot_matrix[, 1]
+            z_matches <- which(potential_z_col >= z_range[1] & potential_z_col <= z_range[2])
+            
+            if(length(z_matches) > 0) {
+              print(paste("DEBUG: Found", length(z_matches), "rows with Z values in column 1"))
+              
+              # Check if these rows form a continuous sequence (conditional effect data)
+              # vs scattered (simple slopes data)
+              z_values <- unique(sort(potential_z_col[z_matches]))
+              print(paste("DEBUG: Unique Z values found:", length(z_values)))
+              print("First few Z values:")
+              print(head(z_values, 10))
+              
+              # If we have a reasonable number of unique Z values (20-25 is typical for JN/conditional effect)
+              # and they form a sequence, this is likely the conditional effect data
+              if(length(z_values) >= 15 && length(z_values) <= 30) {
+                # Extract rows where column 1 is in this Z range
+                # But we need to be careful - simple slopes also has Z values
+                # The key difference: conditional effect has Z in column 1, simple slopes has X in column 1
+                
+                # Better approach: Look for a section where column 1 values are sequential
+                # and form a smooth progression (conditional effect) vs grid (simple slopes)
+                z_sorted <- sort(potential_z_col[z_matches])
+                z_diff <- diff(z_sorted)
+                
+                # If differences are relatively uniform, it's likely conditional effect data
+                if(length(z_diff) > 10 && sd(z_diff) / mean(z_diff) < 0.5) {
+                  print("DEBUG: Column 1 values appear to form a sequence (conditional effect data)")
+                  
+                  # Find the rows that correspond to this Z sequence
+                  # They should be consecutive or near-consecutive in the matrix
+                  cond_rows <- which(potential_z_col %in% z_values)
+                  
+                  if(length(cond_rows) >= 15) {
+                    # Extract these rows - they should have 7 columns
+                    cond_section <- plot_matrix[cond_rows, , drop = FALSE]
+                    
+                    # Verify it has the right structure: Z, Effect, SE, t, p, LLCI, ULCI
+                    if(ncol(cond_section) >= 7) {
+                      # Check if column 2 looks like effects (can be negative)
+                      effects <- as.numeric(cond_section[, 2])
+                      if(!all(is.na(effects)) && length(unique(effects)) > 1) {
+                        print("DEBUG: Found conditional effect data section!")
+                        cond_effect_data <- as.data.frame(cond_section[, 1:7])
+                        colnames(cond_effect_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")
+                        print("DEBUG: Conditional effect data extracted:")
+                        print(head(cond_effect_data, 10))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        
+        if(is.list(result_obj)) {
+          print(paste("Result is list with", length(result_obj), "elements"))
+          print("Result names/indices:")
+          if(!is.null(names(result_obj))) {
+            print(names(result_obj))
+          } else {
+            print(paste("Unnamed list, checking elements 1-", min(5, length(result_obj))))
+          }
+          
+          # Check each element
+          for(i in 1:min(5, length(result_obj))) {
+            print(paste("Element", i, "class:", paste(class(result_obj[[i]]), collapse=", ")))
+            if(is.data.frame(result_obj[[i]])) {
+              print(paste("  Rows:", nrow(result_obj[[i]]), "Cols:", ncol(result_obj[[i]])))
+              print(paste("  Column names:", paste(names(result_obj[[i]]), collapse=", ")))
+            } else if(is.matrix(result_obj[[i]])) {
+              print(paste("  Rows:", nrow(result_obj[[i]]), "Cols:", ncol(result_obj[[i]])))
+            } else if(is.list(result_obj[[i]])) {
+              print(paste("  Nested list with", length(result_obj[[i]]), "elements"))
+            }
+          }
+        } else if(is.matrix(result_obj) || is.array(result_obj)) {
+          print(paste("Result is matrix/array with", nrow(result_obj), "rows and", ncol(result_obj), "cols"))
+          print("DEBUG: This matrix is the plot_data (X, W, Z, predicted Y, SE, LLCI, ULCI), not conditional effect data")
+          print("DEBUG: For Model 3, conditional effect data must be found elsewhere (text output or calculated from coefficients)")
+          # The result matrix contains simple slopes plot data, NOT conditional effect data
+          # Conditional effect data shows how X*W changes across Z, which is different
+          # We need to find it in text output or calculate from coefficients
+        }
+        
+        if(!is.null(plot_data_df) && is.data.frame(plot_data_df) && ncol(plot_data_df) >= 7) {
+          # For Model 3, plot_data contains: X, W, Z, predicted Y, SE, LLCI, ULCI
+          # But we need the conditional effect of X*W across Z
+          # This might require calculating from the coefficients or finding it in result object
+          
+          # Check if result object has conditional effect data (if not already found from matrix check above)
+          if(is.null(cond_effect_data) && is.list(result_obj)) {
+            # First check for named elements that might contain conditional effect data
+            if(!is.null(names(result_obj))) {
+              print("DEBUG: Result object has named elements:")
+              print(names(result_obj))
+              
+              # Check for common names that might contain conditional effect data
+              possible_names <- c("cond_effect", "conditional_effect", "probeplt", "probe", "effect", "modvals", "modvals3")
+              for(name in possible_names) {
+                if(name %in% names(result_obj)) {
+                  elem <- result_obj[[name]]
+                  print(paste("DEBUG: Found element named '", name, "'"))
+                  if(is.data.frame(elem) || is.matrix(elem)) {
+                    elem_df <- as.data.frame(elem)
+                    print(paste("  Rows:", nrow(elem_df), "Cols:", ncol(elem_df)))
+                    if(ncol(elem_df) >= 7) {
+                      # Check if this looks like conditional effect data
+                      col_check <- tryCatch({
+                        z_vals <- as.numeric(elem_df[, 1])
+                        effects <- as.numeric(elem_df[, 2])
+                        if(!all(is.na(z_vals)) && !all(is.na(effects)) && 
+                           length(unique(z_vals)) > 1 && length(unique(effects)) > 1) {
+                          TRUE
+                        } else {
+                          FALSE
+                        }
+                      }, error = function(e) FALSE)
+                      
+                      if(col_check) {
+                        print(paste("DEBUG: Found conditional effect data in result$", name))
+                        cond_effect_data <- elem_df
+                        colnames(cond_effect_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")[1:ncol(cond_effect_data)]
+                        break
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            
+            # If not found by name, check all elements
+            if(is.null(cond_effect_data) && length(result_obj) > 1) {
+              print("DEBUG: Checking all result object elements for conditional effect data...")
+              for(i in 1:length(result_obj)) {
+                elem <- result_obj[[i]]
+                if(is.data.frame(elem) && ncol(elem) >= 7) {
+                  # Check if this looks like conditional effect data (Z, Effect, SE, t, p, LLCI, ULCI)
+                  col_check <- tryCatch({
+                    # Check if first column looks like Z values (moderator values)
+                    # and second column looks like effects (could be negative)
+                    z_vals <- as.numeric(elem[, 1])
+                    effects <- as.numeric(elem[, 2])
+                    if(!all(is.na(z_vals)) && !all(is.na(effects)) && 
+                       length(unique(z_vals)) > 1 && length(unique(effects)) > 1) {
+                      TRUE
+                    } else {
+                      FALSE
+                    }
+                  }, error = function(e) FALSE)
+                  
+                  if(col_check) {
+                    print(paste("DEBUG: Found potential conditional effect data in result[[", i, "]]"))
+                    cond_effect_data <- elem
+                    colnames(cond_effect_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")[1:ncol(cond_effect_data)]
+                    break
+                  }
+                } else if(is.matrix(elem) && ncol(elem) >= 7) {
+                  # Same check for matrices
+                  col_check <- tryCatch({
+                    z_vals <- as.numeric(elem[, 1])
+                    effects <- as.numeric(elem[, 2])
+                    if(!all(is.na(z_vals)) && !all(is.na(effects)) && 
+                       length(unique(z_vals)) > 1 && length(unique(effects)) > 1) {
+                      TRUE
+                    } else {
+                      FALSE
+                    }
+                  }, error = function(e) FALSE)
+                  
+                  if(col_check) {
+                    print(paste("DEBUG: Found potential conditional effect data in result[[", i, "]] (matrix)"))
+                    cond_effect_data <- as.data.frame(elem)
+                    colnames(cond_effect_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")[1:ncol(cond_effect_data)]
+                    break
+                  }
+                }
+              }
+            }
+          }
+          
+          # If not found in result object, try parsing text output as fallback
+          if(is.null(cond_effect_data)) {
+            process_output <- results$output
+            
+            # Debug: search for all possible section names
+            print("DEBUG: Searching PROCESS output for conditional effect section...")
+            all_effect_lines <- grep("effect|Effect|conditional|Conditional", process_output, ignore.case = TRUE, value = FALSE)
+            if(length(all_effect_lines) > 0) {
+              print(paste("Found", length(all_effect_lines), "lines containing 'effect' or 'conditional':"))
+              print("Sample lines:")
+              for(i in 1:min(10, length(all_effect_lines))) {
+                print(paste("  Line", all_effect_lines[i], ":", process_output[all_effect_lines[i]]))
+              }
+            }
+            
+            # For Model 3, look specifically for "Conditional X*W interaction at values of the moderator Z:"
+            # This is the section that contains the data we need
+            start_idx <- which(grepl("Conditional X\\*W interaction at values of the moderator Z:", process_output, ignore.case = TRUE))
+            
+            # Fallback to other patterns if not found
+            if(length(start_idx) == 0) {
+              start_idx <- which(grepl("Conditional effect.*X.*W.*interaction.*values.*moderator.*Z", process_output, ignore.case = TRUE))
+            }
+            
+            if(length(start_idx) == 0) {
+              start_idx <- which(grepl("Conditional effect.*focal predictor|Conditional effects.*focal predictor", process_output, ignore.case = TRUE))
+            }
+            
+            if(length(start_idx) > 0) {
+              # Use the first match
+              start_line <- start_idx[1]
+              print(paste("DEBUG: Found conditional effect section at line", start_line))
+              print(paste("Section header:", process_output[start_line]))
+              
+              # Find the data section - it should start 2 lines after the header
+              data_start <- start_line + 2
+              
+              # Find where the data section ends
+              # Look for blank line, "Data for visualizing", or separator line
+              search_start <- data_start
+              search_end <- min(data_start + 50, length(process_output))  # Limit search to next 50 lines
+              
+              # Search in the subset of process_output
+              search_subset <- process_output[search_start:search_end]
+              end_candidates <- which(grepl("^\\s*$|^Data for visualizing|^----------|^\\*+", search_subset))
+              
+              if(length(end_candidates) > 0) {
+                # end_candidates are relative to search_subset, so add search_start - 1 to get absolute position
+                end_idx <- search_start + end_candidates[1] - 1
+              } else {
+                # Try alternative search
+                alt_search <- process_output[data_start:min(data_start + 100, length(process_output))]
+                alt_end <- which(grepl("^-----------|^\\*+", alt_search))[1]
+                if(!is.na(alt_end)) {
+                  end_idx <- data_start + alt_end - 1
+                } else {
+                  end_idx <- min(data_start + 100, length(process_output))
+                }
+              }
+              
+              print(paste("DEBUG: Data section from line", data_start, "to", end_idx))
+              
+              if(end_idx > data_start) {
+                data_lines <- process_output[data_start:end_idx]
+                data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
+                
+                if(length(data_lines) > 0) {
+                  print(paste("DEBUG: Found", length(data_lines), "potential data lines"))
+                  print("First few data lines:")
+                  print(head(data_lines, 5))
+                  
+                  # Parse the data - for Model 3, format is: Z, Effect, se, t, p, LLCI, ULCI
+                  parsed <- tryCatch({
+                    # Use read.table with proper column names
+                    data_text <- paste(data_lines, collapse = "\n")
+                    parsed <- read.table(text = data_text,
+                                        col.names = c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI"),
+                                        stringsAsFactors = FALSE, 
+                                        fill = TRUE, 
+                                        blank.lines.skip = TRUE,
+                                        na.strings = c("NA", ""))
+                    
+                    # Convert to numeric
+                    for(col in names(parsed)) {
+                      parsed[[col]] <- as.numeric(parsed[[col]])
+                    }
+                    
+                    parsed
+                  }, error = function(e) {
+                    print(paste("DEBUG: Error parsing table:", e$message))
+                    # Try alternative parsing
+                    tryCatch({
+                      # Split by whitespace and parse manually
+                      lines_split <- strsplit(data_lines, "\\s+")
+                      # Filter to lines with at least 7 elements
+                      valid_lines <- sapply(lines_split, function(x) length(x) >= 7)
+                      if(sum(valid_lines) > 0) {
+                        lines_split <- lines_split[valid_lines]
+                        # Convert to matrix
+                        data_matrix <- do.call(rbind, lapply(lines_split, function(x) {
+                          as.numeric(x[1:7])
+                        }))
+                        as.data.frame(data_matrix, col.names = c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI"))
+                      } else {
+                        NULL
+                      }
+                    }, error = function(e2) {
+                      print(paste("DEBUG: Alternative parsing also failed:", e2$message))
+                      NULL
+                    })
+                  })
+                  
+                  if(!is.null(parsed) && nrow(parsed) > 0) {
+                    print(paste("DEBUG: Parsed", nrow(parsed), "rows"))
+                    print("First few rows of parsed data:")
+                    print(head(parsed, 10))
+                    
+                    # Validate rows - all 7 columns should be numeric
+                    valid_rows <- apply(parsed, 1, function(row) {
+                      !any(is.na(row[1:7])) && is.numeric(row[1]) && is.numeric(row[2])
+                    })
+                    
+                    if(sum(valid_rows) > 0) {
+                      print(paste("DEBUG: Found", sum(valid_rows), "valid rows"))
+                      # Assign to cond_effect_data - this is in the outer tryCatch scope
+                      cond_effect_data <- parsed[valid_rows, 1:7]
+                      colnames(cond_effect_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")
+                      print("DEBUG: Conditional effect data extracted:")
+                      print(head(cond_effect_data, 10))
+                      # Try to get ranges, but don't fail if it errors
+                      tryCatch({
+                        z_range_debug <- range(cond_effect_data$Z, na.rm = TRUE)
+                        effect_range_debug <- range(cond_effect_data$Effect, na.rm = TRUE)
+                        print("DEBUG: Z range:", z_range_debug)
+                        print("DEBUG: Effect range:", effect_range_debug)
+                      }, error = function(e) {
+                        print("DEBUG: Could not calculate ranges (non-fatal)")
+                      })
+                    } else {
+                      print("DEBUG: No valid rows found after parsing")
+                    }
+                  } else {
+                    print("DEBUG: Parsing returned NULL or empty")
+                  }
+                } else {
+                  print("DEBUG: No data lines found matching pattern")
+                }
+              }
+            }
+          }
+        }  # Close if(is.null(cond_effect_data)) block
+          
+      }, error = function(e) {
+        print(paste("DEBUG: Error in conditional effect extraction:", e$message))
+        # Don't return here - let the code continue to check if cond_effect_data was set
+      })
+      
+      # After tryCatch, check if we have conditional effect data
+      if(is.null(cond_effect_data)) {
         plot.new()
-        text(0.5, 0.5, "Plot data structure unexpected for dual moderation model.", cex = 1.2)
+        text(0.5, 0.5, "Conditional effect data not found.\nCheck console for debug output.\nThis may require probing interactions to be enabled.", cex = 1.2)
         return()
       }
       
-      plot_data <- data.frame(
-        Predictor = as.numeric(plot_data_df[, 1]),
-        Moderator_W = as.numeric(plot_data_df[, 2]),
-        Moderator_Z = as.numeric(plot_data_df[, 3]),
-        Outcome = as.numeric(plot_data_df[, 4]),
-        LLCI = as.numeric(plot_data_df[, 6]),  # Column 6 for dual moderation
-        ULCI = as.numeric(plot_data_df[, 7])   # Column 7 for dual moderation
-      )
-      
-      # Get the 3 percentile levels for Z (16th, 50th, 84th) - these will be panels
-      if(is_binary_variable(data_used, input$moderator2_var)) {
-        z_levels_raw <- sort(unique(data_used[[input$moderator2_var]][!is.na(data_used[[input$moderator2_var]])]))
-      } else {
-        z_levels_raw <- as.numeric(quantile(data_used[[input$moderator2_var]], 
-                                            probs = c(0.16, 0.50, 0.84), 
-                                            na.rm = TRUE))
-      }
-      z_levels <- round(z_levels_raw, input$decimal_places)
-      
-      # Get the 3 percentile levels for W (16th, 50th, 84th) - these will be lines in each panel
-      if(is_binary_variable(data_used, input$moderator_var)) {
-        w_levels_raw <- sort(unique(data_used[[input$moderator_var]][!is.na(data_used[[input$moderator_var]])]))
-      } else {
-        w_levels_raw <- as.numeric(quantile(data_used[[input$moderator_var]], 
-                                            probs = c(0.16, 0.50, 0.84), 
-                                            na.rm = TRUE))
-      }
-      w_levels <- round(w_levels_raw, input$decimal_places)
-      
-      # Filter plot_data to match percentile levels (with tolerance for floating point)
-      plot_data$Z_matched <- FALSE
-      plot_data$W_matched <- FALSE
-      
-      for(z_val in z_levels_raw) {
-        tolerance <- abs(z_val) * 0.001 + 0.01
-        plot_data$Z_matched[abs(plot_data$Moderator_Z - z_val) < tolerance] <- TRUE
-      }
-      
-      for(w_val in w_levels_raw) {
-        tolerance <- abs(w_val) * 0.001 + 0.01
-        plot_data$W_matched[abs(plot_data$Moderator_W - w_val) < tolerance] <- TRUE
-      }
-      
-      plot_data <- plot_data[plot_data$Z_matched & plot_data$W_matched, ]
-      plot_data$Z_matched <- NULL
-      plot_data$W_matched <- NULL
-      
-      if(nrow(plot_data) == 0) {
-        plot.new()
-        text(0.5, 0.5, "No valid plot data after filtering to percentile levels.", cex = 1.2)
-        return()
-      }
-      
-      # Create factor for Z levels for faceting (panels)
-      z_unique <- sort(unique(plot_data$Moderator_Z))
-      plot_data$Z_level <- factor(plot_data$Moderator_Z, 
-                                  levels = z_unique,
-                                  labels = format(round(z_unique, input$decimal_places), 
-                                                nsmall = input$decimal_places))
-      
-      # Create factor for W levels for legend (lines within each panel)
-      w_unique <- sort(unique(plot_data$Moderator_W))
-      plot_data$W_level <- factor(plot_data$Moderator_W,
-                                  levels = w_unique,
-                                  labels = format(round(w_unique, input$decimal_places), 
-                                                nsmall = input$decimal_places))
-      
-      # For dual moderation, we'll use W_level for the legend and Z_level for faceting
-      active_moderator <- input$moderator_var
-      moderator_levels <- w_levels
-      moderator_levels_raw <- w_levels_raw
+      # Use the conditional effect data
+      plot_data <- cond_effect_data
+      active_moderator <- input$moderator2_var
+      print("DEBUG: Successfully assigned cond_effect_data to plot_data")
+      print(paste("DEBUG: plot_data has", nrow(plot_data), "rows and", ncol(plot_data), "columns"))
+      print(paste("DEBUG: plot_data column names:", paste(names(plot_data), collapse=", ")))
     } else {
       # Single moderation: X, W, predicted, se, LLCI, ULCI (6 columns)
       if(ncol(plot_data_df) < 6) {
@@ -3450,103 +3982,156 @@ server <- function(input, output, session) {
         ULCI = as.numeric(plot_data_df[, 6])
       )
       active_moderator <- input$moderator_var
+      
+      # Remove any rows with NA values
+      plot_data <- plot_data[complete.cases(plot_data), ]
+      if(nrow(plot_data) == 0) {
+        plot.new()
+        text(0.5, 0.5, "No valid plot data after filtering.", cex = 1.2)
+        return()
+      }
+      
+      # Get the 3 percentile moderator levels that PROCESS should generate (16th, 50th, 84th)
+      # Calculate from the original data to ensure we get exactly 3 values
+      if(is_binary_variable(data_used, active_moderator)) {
+        # For binary moderators, use the actual unique values
+        moderator_levels_raw <- sort(unique(data_used[[active_moderator]][!is.na(data_used[[active_moderator]])]))
+      } else {
+        # For continuous moderators, use percentiles (what PROCESS uses)
+        moderator_levels_raw <- as.numeric(quantile(data_used[[active_moderator]], 
+                                                    probs = c(0.16, 0.50, 0.84), 
+                                                    na.rm = TRUE))
+      }
+      
+      # Filter plot_data to only include rows where Moderator is close to one of these 3 percentile values
+      # This handles floating point precision issues in PROCESS output
+      plot_data$Moderator_matched <- FALSE
+      for(mod_val in moderator_levels_raw) {
+        # Match values within 0.1% of the percentile value
+        tolerance <- abs(mod_val) * 0.001 + 0.01
+        plot_data$Moderator_matched[abs(plot_data$Moderator - mod_val) < tolerance] <- TRUE
+      }
+      plot_data <- plot_data[plot_data$Moderator_matched, ]
+      plot_data$Moderator_matched <- NULL  # Remove temporary column
+      
+      if(nrow(plot_data) == 0) {
+        plot.new()
+        text(0.5, 0.5, "No valid plot data after filtering to percentile levels.", cex = 1.2)
+        return()
+      }
+      
+      # Now we should have exactly 3 moderator levels
+      moderator_levels <- round(moderator_levels_raw, input$decimal_places)
     }
     
-    # Remove any rows with NA values
-    plot_data <- plot_data[complete.cases(plot_data), ]
-    if(nrow(plot_data) == 0) {
+    # Verify plot_data exists before using it
+    if(is.null(plot_data) || !is.data.frame(plot_data) || nrow(plot_data) == 0) {
       plot.new()
-      text(0.5, 0.5, "No valid plot data after filtering.", cex = 1.2)
+      text(0.5, 0.5, "Plot data not available. Please run the analysis first.", cex = 1.2)
       return()
     }
     
-    # Get the 3 percentile moderator levels that PROCESS should generate (16th, 50th, 84th)
-    # Calculate from the original data to ensure we get exactly 3 values
-    if(is_binary_variable(data_used, active_moderator)) {
-      # For binary moderators, use the actual unique values
-      moderator_levels_raw <- sort(unique(data_used[[active_moderator]][!is.na(data_used[[active_moderator]])]))
+    # Create plot labels and determine plot type
+    if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
+      # For Model 3: Conditional effect plot (X*W effect across Z)
+      # Verify we have the required columns
+      if(!"Z" %in% names(plot_data) || !"Effect" %in% names(plot_data)) {
+        plot.new()
+        text(0.5, 0.5, "Conditional effect data structure unexpected.\nCheck console for debug output.", cex = 1.2)
+        return()
+      }
+      
+      # For Model 3, X-axis should be Z (second moderator), not W (first moderator)
+      # Use moderator2_label if provided, otherwise use moderator2_var
+      x_label_text <- if(!is.null(input$moderator2_label) && input$moderator2_label != "") input$moderator2_label else input$moderator2_var
+      y_label_text <- paste("Conditional effect of", if(input$x_label != "") input$x_label else input$predictor_var, 
+                           "*", if(input$moderator_label != "") input$moderator_label else input$moderator_var,
+                           "on", if(input$y_label != "") input$y_label else input$outcome_var)
+      plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Conditional Effect Plot"
+      
+      # Limit Z range to actual data range
+      z_range <- range(plot_data$Z, na.rm = TRUE)
+      
+      # Create the conditional effect plot
+      # Show confidence intervals if checkbox is checked
+      p <- ggplot(plot_data, aes(x = Z, y = Effect)) +
+        {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI)) && !all(is.na(plot_data$ULCI))) 
+          geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, fill = if(input$use_color_lines) "red" else "grey50", show.legend = FALSE)} +
+        geom_hline(yintercept = 0, linetype = "dashed", color = if(input$use_color_lines) "red" else "black", linewidth = 0.8) +
+        geom_line(color = if(input$use_color_lines) "red" else "black", linewidth = 1.2) +
+        {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
+        {if(!input$custom_y_axis) coord_cartesian(xlim = z_range)} +
+        labs(
+          title = plot_title,
+          x = x_label_text,
+          y = y_label_text
+        ) +
+        theme_minimal() +
+        theme(
+          text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          axis.text = element_text(size = 14),
+          plot.title = element_text(size = 18, hjust = 0.5),
+          axis.line = element_line(color = "black", linewidth = 0.5),
+          axis.ticks = element_line(color = "black", linewidth = 0.5)
+        )
     } else {
-      # For continuous moderators, use percentiles (what PROCESS uses)
-      moderator_levels_raw <- as.numeric(quantile(data_used[[active_moderator]], 
-                                                  probs = c(0.16, 0.50, 0.84), 
-                                                  na.rm = TRUE))
-    }
-    
-    # Filter plot_data to only include rows where Moderator is close to one of these 3 percentile values
-    # This handles floating point precision issues in PROCESS output
-    plot_data$Moderator_matched <- FALSE
-    for(mod_val in moderator_levels_raw) {
-      # Match values within 0.1% of the percentile value
-      tolerance <- abs(mod_val) * 0.001 + 0.01
-      plot_data$Moderator_matched[abs(plot_data$Moderator - mod_val) < tolerance] <- TRUE
-    }
-    plot_data <- plot_data[plot_data$Moderator_matched, ]
-    plot_data$Moderator_matched <- NULL  # Remove temporary column
-    
-    if(nrow(plot_data) == 0) {
-      plot.new()
-      text(0.5, 0.5, "No valid plot data after filtering to percentile levels.", cex = 1.2)
-      return()
-    }
-    
-    # Now we should have exactly 3 moderator levels
-    moderator_levels <- round(moderator_levels_raw, input$decimal_places)
-    
-    # Limit predictor range to actual data range in plot_data (PROCESS uses percentiles)
-    predictor_range <- range(plot_data$Predictor, na.rm = TRUE)
-    
-    # Create plot labels
-    y_label_text <- if(outcome_is_binary) {
-      if(input$y_label != "") paste(input$y_label, "(Probability)") else "Predicted Probability"
-    } else {
-      if(input$y_label != "") input$y_label else input$outcome_var
-    }
-    
-    x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
-    mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(active_moderator, " Levels")
-    
-    plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Simple Slopes Plot"
-    
-    # Create the plot
-    # Map moderator values to factors using the raw values, but display rounded labels
-    plot_data$Moderator_factor <- factor(plot_data$Moderator, levels = moderator_levels_raw, labels = format(moderator_levels, nsmall = input$decimal_places))
-    
-    p <- ggplot(plot_data, aes(
-      x = Predictor, 
-      y = Outcome,
-      color = if(input$use_color_lines) Moderator_factor else NULL,
-      linetype = if(!input$use_color_lines) Moderator_factor else NULL,
-      fill = if(input$show_confidence_intervals && input$use_color_lines) Moderator_factor else NULL
-    )) +
-      {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI))) 
-        geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, color = NA)} +
-      geom_line(linewidth = 1) +
-      {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
-      {if(!input$custom_y_axis && outcome_is_binary) coord_cartesian(ylim = c(0, 1))} +
-      {if(!input$custom_y_axis && !outcome_is_binary) coord_cartesian(xlim = predictor_range)} +
-      labs(
-        title = plot_title,
-        x = x_label_text,
-        y = y_label_text,
-        color = if(input$use_color_lines) mod_label_text else NULL,
-        linetype = if(!input$use_color_lines) mod_label_text else NULL,
-        fill = if(input$show_confidence_intervals && input$use_color_lines) mod_label_text else NULL
-      ) +
-      theme_minimal() +
-      theme(
-        text = element_text(size = 14),
-        axis.title = element_text(size = 16),
-        axis.text = element_text(size = 14),
-        plot.title = element_text(size = 18, hjust = 0.5),
-        legend.title = element_text(size = 14),
-        legend.text = element_text(size = 14),
-        axis.line = element_line(color = "black", linewidth = 0.5),
-        axis.ticks = element_line(color = "black", linewidth = 0.5)
-      )
-    
-    # Suppress fill legend if not using color lines or not showing CIs
-    if(!input$show_confidence_intervals || !input$use_color_lines) {
-      p <- p + guides(fill = "none")
+      # Single moderation: Simple slopes plot
+      # Limit predictor range to actual data range in plot_data (PROCESS uses percentiles)
+      predictor_range <- range(plot_data$Predictor, na.rm = TRUE)
+      
+      y_label_text <- if(outcome_is_binary) {
+        if(input$y_label != "") paste(input$y_label, "(Probability)") else "Predicted Probability"
+      } else {
+        if(input$y_label != "") input$y_label else input$outcome_var
+      }
+      
+      x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
+      mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(active_moderator, " Levels")
+      
+      plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Simple Slopes Plot"
+      
+      # Single moderation: single plot with 3 lines
+      # Map moderator values to factors using the raw values, but display rounded labels
+      plot_data$Moderator_factor <- factor(plot_data$Moderator, levels = moderator_levels_raw, labels = format(moderator_levels, nsmall = input$decimal_places))
+      
+      p <- ggplot(plot_data, aes(
+        x = Predictor, 
+        y = Outcome,
+        color = if(input$use_color_lines) Moderator_factor else NULL,
+        linetype = if(!input$use_color_lines) Moderator_factor else NULL,
+        fill = if(input$show_confidence_intervals && input$use_color_lines) Moderator_factor else NULL
+      )) +
+        {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI))) 
+          geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, color = NA)} +
+        geom_line(linewidth = 1) +
+        {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
+        {if(!input$custom_y_axis && outcome_is_binary) coord_cartesian(ylim = c(0, 1))} +
+        {if(!input$custom_y_axis && !outcome_is_binary) coord_cartesian(xlim = predictor_range)} +
+        labs(
+          title = plot_title,
+          x = x_label_text,
+          y = y_label_text,
+          color = if(input$use_color_lines) mod_label_text else NULL,
+          linetype = if(!input$use_color_lines) mod_label_text else NULL,
+          fill = if(input$show_confidence_intervals && input$use_color_lines) mod_label_text else NULL
+        ) +
+        theme_minimal() +
+        theme(
+          text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          axis.text = element_text(size = 14),
+          plot.title = element_text(size = 18, hjust = 0.5),
+          legend.title = element_text(size = 14),
+          legend.text = element_text(size = 14),
+          axis.line = element_line(color = "black", linewidth = 0.5),
+          axis.ticks = element_line(color = "black", linewidth = 0.5)
+        )
+      
+      # Suppress fill legend if not using color lines or not showing CIs
+      if(!input$show_confidence_intervals || !input$use_color_lines) {
+        p <- p + guides(fill = "none")
+      }
     }
     
     print(p)
@@ -3562,6 +4147,16 @@ server <- function(input, output, session) {
     }
     
     req(input$moderator_var)
+    
+    # JN plots are only appropriate for Model 1 (simple moderation with one moderator)
+    model_num <- as.numeric(input$process_model)
+    if(model_num != 1) {
+      plot.new()
+      text(0.5, 0.5, 
+           "Johnson-Neyman plot is only available for Model 1 (simple moderation).\nUse the simple slopes plots for other models.", 
+           cex = 1.2)
+      return()
+    }
     
     if(!jn_available()) {
       plot.new()
@@ -3895,83 +4490,84 @@ server <- function(input, output, session) {
           stop("Plot data not available. Please run the analysis first.")
         }
         
-        # PROCESS returns: X, W, [Z if dual], predicted, se, LLCI, ULCI
-        # Column order: X, W, Z (if dual), Y, se, LLCI, ULCI
+        # For Model 3, parse conditional effect data from PROCESS output
         if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
-          # Dual moderation: X, W, Z, predicted, se, LLCI, ULCI (7 columns)
-          if(ncol(plot_data_df) < 7) {
-            stop("Plot data structure unexpected for dual moderation model.")
+          # Parse "Conditional effect of focal predictor" section from PROCESS output
+          process_output <- results$output
+          # Try multiple possible patterns for conditional effect section
+          start_idx <- which(grepl("Conditional effect.*focal predictor|Conditional effects.*focal predictor|Conditional effect of X.*W|Conditional effect of.*interaction", process_output, ignore.case = TRUE))
+          
+          if(length(start_idx) == 0) {
+            # Try alternative: look for "Conditional effects of the focal predictor at values"
+            start_idx <- which(grepl("Conditional effects.*focal predictor.*values.*moderator", process_output, ignore.case = TRUE))
           }
           
-          plot_data <- data.frame(
-            Predictor = as.numeric(plot_data_df[, 1]),
-            Moderator_W = as.numeric(plot_data_df[, 2]),
-            Moderator_Z = as.numeric(plot_data_df[, 3]),
-            Outcome = as.numeric(plot_data_df[, 4]),
-            LLCI = as.numeric(plot_data_df[, 6]),  # Column 6 for dual moderation
-            ULCI = as.numeric(plot_data_df[, 7])   # Column 7 for dual moderation
-          )
+          if(length(start_idx) == 0) {
+            stop("Conditional effect data not found in PROCESS output. This plot requires probing interactions to be enabled.")
+          }
           
-          # Get the 3 percentile levels for Z (16th, 50th, 84th) - these will be panels
-          if(is_binary_variable(data_used, input$moderator2_var)) {
-            z_levels_raw <- sort(unique(data_used[[input$moderator2_var]][!is.na(data_used[[input$moderator2_var]])]))
+          # Find the data section
+          data_start <- start_idx + 2
+          end_idx <- which(grepl("^\\s*$|^Data for visualizing|^----------", process_output[data_start:length(process_output)]))[1]
+          if(!is.na(end_idx)) {
+            end_idx <- end_idx + data_start - 1
           } else {
-            z_levels_raw <- as.numeric(quantile(data_used[[input$moderator2_var]], 
-                                                probs = c(0.16, 0.50, 0.84), 
-                                                na.rm = TRUE))
-          }
-          z_levels <- round(z_levels_raw, input$decimal_places)
-          
-          # Get the 3 percentile levels for W (16th, 50th, 84th) - these will be lines in each panel
-          if(is_binary_variable(data_used, input$moderator_var)) {
-            w_levels_raw <- sort(unique(data_used[[input$moderator_var]][!is.na(data_used[[input$moderator_var]])]))
-          } else {
-            w_levels_raw <- as.numeric(quantile(data_used[[input$moderator_var]], 
-                                                probs = c(0.16, 0.50, 0.84), 
-                                                na.rm = TRUE))
-          }
-          w_levels <- round(w_levels_raw, input$decimal_places)
-          
-          # Filter plot_data to match percentile levels (with tolerance for floating point)
-          plot_data$Z_matched <- FALSE
-          plot_data$W_matched <- FALSE
-          
-          for(z_val in z_levels_raw) {
-            tolerance <- abs(z_val) * 0.001 + 0.01
-            plot_data$Z_matched[abs(plot_data$Moderator_Z - z_val) < tolerance] <- TRUE
+            end_idx <- which(grepl("^-----------|^\\*+", process_output[data_start:length(process_output)]))[1]
+            if(!is.na(end_idx)) {
+              end_idx <- end_idx + data_start - 1
+            } else {
+              end_idx <- min(data_start + 100, length(process_output))
+            }
           }
           
-          for(w_val in w_levels_raw) {
-            tolerance <- abs(w_val) * 0.001 + 0.01
-            plot_data$W_matched[abs(plot_data$Moderator_W - w_val) < tolerance] <- TRUE
+          if(is.na(end_idx) || end_idx <= data_start) {
+            stop("Unable to parse conditional effect data.")
           }
           
-          plot_data <- plot_data[plot_data$Z_matched & plot_data$W_matched, ]
-          plot_data$Z_matched <- NULL
-          plot_data$W_matched <- NULL
+          # Extract and parse data
+          data_lines <- process_output[data_start:end_idx]
+          data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
           
-          if(nrow(plot_data) == 0) {
-            stop("No valid plot data after filtering to percentile levels.")
+          if(length(data_lines) == 0) {
+            stop("No valid conditional effect data rows found.")
           }
           
-          # Create factor for Z levels for faceting (panels)
-          z_unique <- sort(unique(plot_data$Moderator_Z))
-          plot_data$Z_level <- factor(plot_data$Moderator_Z, 
-                                      levels = z_unique,
-                                      labels = format(round(z_unique, input$decimal_places), 
-                                                    nsmall = input$decimal_places))
+          cond_effect_data <- tryCatch({
+            parsed <- read.table(text = paste(data_lines, collapse = "\n"),
+                                col.names = c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI"),
+                                stringsAsFactors = FALSE,
+                                fill = TRUE,
+                                blank.lines.skip = TRUE)
+            
+            valid_rows <- apply(parsed, 1, function(row) {
+              all(!is.na(suppressWarnings(as.numeric(row[1:7]))))
+            })
+            
+            if(sum(valid_rows) == 0) {
+              stop("No valid data rows found")
+            }
+            
+            parsed[valid_rows, 1:7]
+          }, error = function(e) {
+            parsed_lines <- lapply(data_lines, function(line) {
+              parts <- strsplit(trimws(line), "\\s+")[[1]]
+              nums <- suppressWarnings(as.numeric(parts))
+              nums <- nums[!is.na(nums)]
+              if(length(nums) >= 7) return(nums[1:7])
+              return(NULL)
+            })
+            
+            valid_data <- do.call(rbind, Filter(Negate(is.null), parsed_lines))
+            if(is.null(valid_data) || nrow(valid_data) == 0) {
+              stop("Could not parse data")
+            }
+            
+            colnames(valid_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")
+            as.data.frame(valid_data)
+          })
           
-          # Create factor for W levels for legend (lines within each panel)
-          w_unique <- sort(unique(plot_data$Moderator_W))
-          plot_data$W_level <- factor(plot_data$Moderator_W,
-                                      levels = w_unique,
-                                      labels = format(round(w_unique, input$decimal_places), 
-                                                    nsmall = input$decimal_places))
-          
-          # For dual moderation, we'll use W_level for the legend and Z_level for faceting
-          active_moderator <- input$moderator_var
-          moderator_levels <- w_levels
-          moderator_levels_raw <- w_levels_raw
+          plot_data <- cond_effect_data
+          active_moderator <- input$moderator2_var
         } else {
           # Single moderation: X, W, predicted, se, LLCI, ULCI (6 columns)
           if(ncol(plot_data_df) < 6) {
@@ -3987,52 +4583,33 @@ server <- function(input, output, session) {
           active_moderator <- input$moderator_var
         }
         
-        # Remove any rows with NA values
-        plot_data <- plot_data[complete.cases(plot_data), ]
-        if(nrow(plot_data) == 0) {
-          stop("No valid plot data after filtering.")
-        }
-        
-        # Limit predictor range to actual data range in plot_data (PROCESS uses percentiles)
-        predictor_range <- range(plot_data$Predictor, na.rm = TRUE)
-        
-        # Create plot labels
-        y_label_text <- if(outcome_is_binary) {
-          if(input$y_label != "") paste(input$y_label, "(Probability)") else "Predicted Probability"
-        } else {
-          if(input$y_label != "") input$y_label else input$outcome_var
-        }
-        
-        x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
-        mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(active_moderator, " Levels")
-        
-        plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Simple Slopes Plot"
-        
-        # Create the plot
+        # Create plot labels and determine plot type
         if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
-          # Dual moderation: 3-panel plot (one panel per Z level, showing W at 3 levels)
-          p <- ggplot(plot_data, aes(
-            x = Predictor, 
-            y = Outcome,
-            color = if(input$use_color_lines) W_level else NULL,
-            linetype = if(!input$use_color_lines) W_level else NULL,
-            fill = if(input$show_confidence_intervals && input$use_color_lines) W_level else NULL
-          )) +
-            {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI))) 
-              geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, color = NA)} +
-            geom_line(linewidth = 1) +
-            facet_wrap(~ Z_level, ncol = 1, 
-                       labeller = labeller(Z_level = function(x) paste0(input$moderator2_var, " = ", x))) +
+          # For Model 3: Conditional effect plot
+          # X-axis should be Z (second moderator), not W (first moderator)
+          # Use moderator2_label if provided, otherwise use moderator2_var
+          x_label_text <- if(!is.null(input$moderator2_label) && input$moderator2_label != "") input$moderator2_label else input$moderator2_var
+          y_label_text <- paste("Conditional effect of", if(input$x_label != "") input$x_label else input$predictor_var, 
+                               "*", if(input$moderator_label != "") input$moderator_label else input$moderator_var,
+                               "on", if(input$y_label != "") input$y_label else input$outcome_var)
+          # For Model 3, default title should be "Conditional Effect Plot"
+          plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Conditional Effect Plot"
+          
+          z_range <- range(plot_data$Z, na.rm = TRUE)
+          
+          # Create the conditional effect plot
+          # Show confidence intervals if checkbox is checked
+          p <- ggplot(plot_data, aes(x = Z, y = Effect)) +
+            {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI)) && !all(is.na(plot_data$ULCI))) 
+              geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, fill = if(input$use_color_lines) "red" else "grey50", show.legend = FALSE)} +
+            geom_hline(yintercept = 0, linetype = "dashed", color = if(input$use_color_lines) "red" else "black", linewidth = 0.8) +
+            geom_line(color = if(input$use_color_lines) "red" else "black", linewidth = 1.2) +
             {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
-            {if(!input$custom_y_axis && outcome_is_binary) coord_cartesian(ylim = c(0, 1))} +
-            {if(!input$custom_y_axis && !outcome_is_binary) coord_cartesian(xlim = predictor_range)} +
+            {if(!input$custom_y_axis) coord_cartesian(xlim = z_range)} +
             labs(
               title = plot_title,
               x = x_label_text,
-              y = y_label_text,
-              color = if(input$use_color_lines) mod_label_text else NULL,
-              linetype = if(!input$use_color_lines) mod_label_text else NULL,
-              fill = if(input$show_confidence_intervals && input$use_color_lines) mod_label_text else NULL
+              y = y_label_text
             ) +
             theme_minimal() +
             theme(
@@ -4040,21 +4617,11 @@ server <- function(input, output, session) {
               axis.title = element_text(size = 16),
               axis.text = element_text(size = 14),
               plot.title = element_text(size = 18, hjust = 0.5),
-              legend.title = element_text(size = 14),
-              legend.text = element_text(size = 14),
               axis.line = element_line(color = "black", linewidth = 0.5),
-              axis.ticks = element_line(color = "black", linewidth = 0.5),
-              strip.text = element_text(size = 14, face = "bold"),
-              strip.background = element_rect(fill = "lightgrey", color = "black")
+              axis.ticks = element_line(color = "black", linewidth = 0.5)
             )
           
-          # Suppress fill legend if not using color lines or not showing CIs
-          if(!input$show_confidence_intervals || !input$use_color_lines) {
-            p <- p + guides(fill = "none")
-          }
-          
-          # For 3-panel plots, increase height
-          ggsave(file, plot = p, device = "jpg", width = 10, height = 12, dpi = 600)
+          ggsave(file, plot = p, device = "jpg", width = 10, height = 8, dpi = 600)
         } else {
           # Single moderation: Get the 3 percentile moderator levels
           if(is_binary_variable(data_used, active_moderator)) {
@@ -4079,6 +4646,19 @@ server <- function(input, output, session) {
           }
           
           moderator_levels <- round(moderator_levels_raw, input$decimal_places)
+          predictor_range <- range(plot_data$Predictor, na.rm = TRUE)
+          
+          # Create plot labels
+          y_label_text <- if(outcome_is_binary) {
+            if(input$y_label != "") paste(input$y_label, "(Probability)") else "Predicted Probability"
+          } else {
+            if(input$y_label != "") input$y_label else input$outcome_var
+          }
+          
+          x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
+          mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(active_moderator, " Levels")
+          
+          plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Simple Slopes Plot"
           
           # Single moderation: single plot with 3 lines
           plot_data$Moderator_factor <- factor(plot_data$Moderator, levels = moderator_levels_raw, labels = format(moderator_levels, nsmall = input$decimal_places))
@@ -4153,6 +4733,13 @@ server <- function(input, output, session) {
         updateTextInput(session, "x_label", value = input$predictor_var)
         updateTextInput(session, "y_label", value = input$outcome_var)
         updateTextInput(session, "moderator_label", value = input$moderator_var)
+        
+        # For models with second moderator, also auto-populate moderator2_label
+        model_num <- as.numeric(input$process_model)
+        if(model_num %in% models_with_second_moderator && 
+           !is.null(input$moderator2_var) && input$moderator2_var != "") {
+          updateTextInput(session, "moderator2_label", value = input$moderator2_var)
+        }
       }
     }
   })
