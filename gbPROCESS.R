@@ -705,9 +705,7 @@ ui <- fluidPage(
             plotOutput("slopes_plot", height = "500px", width = "800px"),
             br(),
             div(style = "margin-top: 20px;",
-              downloadButton("download_slopes", "Download Simple Slopes Plot (JPG)", 
-                class = "btn-success", 
-                style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
+              uiOutput("download_slopes_button")
             )
           ),
           conditionalPanel(
@@ -777,6 +775,14 @@ server <- function(input, output, session) {
   observeEvent(input$process_model, {
     rv$analysis_results <- NULL
     print("DEBUG - Model changed, clearing analysis results")
+    
+    # Clear moderator2_var if new model doesn't require it
+    model_num <- tryCatch(as.numeric(input$process_model), error = function(e) NULL)
+    if(!is.null(model_num) && !(model_num %in% models_with_second_moderator)) {
+      # New model doesn't need second moderator, so clear it
+      updateSelectInput(session, "moderator2_var", selected = "")
+      print("DEBUG - Cleared moderator2_var for model that doesn't require it")
+    }
   })
   
   # Clear analysis results when key variables change (to prevent stale data)
@@ -1973,21 +1979,25 @@ server <- function(input, output, session) {
           }
         }
         
-        if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
-          # Validate that moderator2 is not also used as mediator or moderator1
-          if(!is.null(input$mediator_vars) && input$moderator2_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var))
+        # Only add Z if model requires it AND moderator2_var is set
+        model_num <- as.numeric(input$process_model)
+        if(model_num %in% models_with_second_moderator) {
+          if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+            # Validate that moderator2 is not also used as mediator or moderator1
+            if(!is.null(input$mediator_vars) && input$moderator2_var %in% input$mediator_vars) {
+              stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var))
+            }
+            if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
+              showNotification(
+                "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- "W and Z moderators must be different variables."
+              return(NULL)
+            }
+            process_args$z <- input$moderator2_var
           }
-          if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
-            showNotification(
-              "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- "W and Z moderators must be different variables."
-            return(NULL)
-          }
-          process_args$z <- input$moderator2_var
         }
       }
       
@@ -2510,21 +2520,25 @@ server <- function(input, output, session) {
           }
         }
         
-        if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
-          # Validate that moderator2 is not also used as mediator or moderator1
-          if(!is.null(input$mediator_vars) && input$moderator2_var %in% input$mediator_vars) {
-            stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var))
+        # Only add Z if model requires it AND moderator2_var is set
+        model_num <- as.numeric(input$process_model)
+        if(model_num %in% models_with_second_moderator) {
+          if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+            # Validate that moderator2 is not also used as mediator or moderator1
+            if(!is.null(input$mediator_vars) && input$moderator2_var %in% input$mediator_vars) {
+              stop(sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var))
+            }
+            if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
+              showNotification(
+                "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
+                type = "error",
+                duration = 10
+              )
+              rv$validation_error <- "W and Z moderators must be different variables."
+              return(NULL)
+            }
+            process_args$z <- input$moderator2_var
           }
-          if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
-            showNotification(
-              "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- "W and Z moderators must be different variables."
-            return(NULL)
-          }
-          process_args$z <- input$moderator2_var
         }
       }
       
@@ -4447,7 +4461,7 @@ server <- function(input, output, session) {
                 axis.ticks = element_line(color = "black", linewidth = 0.5)
               )
             
-              ggsave(file, plot = p, device = "jpg", width = 10, height = 8, dpi = 600)
+              ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
             } else {
               stop("No valid JN data found")
             }
@@ -4467,7 +4481,14 @@ server <- function(input, output, session) {
   
   output$download_slopes <- downloadHandler(
     filename = function() {
-      paste0("slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+      # Determine if this is a conditional effect plot or simple slopes plot
+      model_num <- tryCatch(as.numeric(input$process_model), error = function(e) NULL)
+      has_second_mod <- !is.null(model_num) && model_num %in% models_with_second_moderator
+      if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
+        paste0("conditional_effect_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+      } else {
+        paste0("simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+      }
     },
     content = function(file) {
       tryCatch({
@@ -4490,81 +4511,109 @@ server <- function(input, output, session) {
           stop("Plot data not available. Please run the analysis first.")
         }
         
-        # For Model 3, parse conditional effect data from PROCESS output
+        # For Model 3, extract conditional effect data from result object (same as output$slopes_plot)
         if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
-          # Parse "Conditional effect of focal predictor" section from PROCESS output
-          process_output <- results$output
-          # Try multiple possible patterns for conditional effect section
-          start_idx <- which(grepl("Conditional effect.*focal predictor|Conditional effects.*focal predictor|Conditional effect of X.*W|Conditional effect of.*interaction", process_output, ignore.case = TRUE))
+          # Try to extract from result object first (same logic as output$slopes_plot)
+          cond_effect_data <- NULL
+          result_obj <- results$result
           
-          if(length(start_idx) == 0) {
-            # Try alternative: look for "Conditional effects of the focal predictor at values"
-            start_idx <- which(grepl("Conditional effects.*focal predictor.*values.*moderator", process_output, ignore.case = TRUE))
-          }
-          
-          if(length(start_idx) == 0) {
-            stop("Conditional effect data not found in PROCESS output. This plot requires probing interactions to be enabled.")
-          }
-          
-          # Find the data section
-          data_start <- start_idx + 2
-          end_idx <- which(grepl("^\\s*$|^Data for visualizing|^----------", process_output[data_start:length(process_output)]))[1]
-          if(!is.na(end_idx)) {
-            end_idx <- end_idx + data_start - 1
-          } else {
-            end_idx <- which(grepl("^-----------|^\\*+", process_output[data_start:length(process_output)]))[1]
-            if(!is.na(end_idx)) {
-              end_idx <- end_idx + data_start - 1
-            } else {
-              end_idx <- min(data_start + 100, length(process_output))
+          tryCatch({
+            # Check if result object contains conditional effect data
+            if(is.list(result_obj)) {
+              # Look for conditional effect data in result object
+              # This data should be in a data frame with columns: Z, Effect, se, t, p, LLCI, ULCI
+              for(i in 1:length(result_obj)) {
+                elem <- result_obj[[i]]
+                if(is.data.frame(elem) && ncol(elem) >= 7) {
+                  # Check if this looks like conditional effect data
+                  col_check <- tryCatch({
+                    z_vals <- as.numeric(elem[, 1])
+                    effects <- as.numeric(elem[, 2])
+                    if(!all(is.na(z_vals)) && !all(is.na(effects)) && 
+                       length(unique(z_vals)) > 1 && length(unique(effects)) > 1) {
+                      TRUE
+                    } else {
+                      FALSE
+                    }
+                  }, error = function(e) FALSE)
+                  
+                  if(col_check) {
+                    cond_effect_data <- as.data.frame(elem[, 1:7])
+                    colnames(cond_effect_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")
+                    break
+                  }
+                }
+              }
             }
-          }
-          
-          if(is.na(end_idx) || end_idx <= data_start) {
-            stop("Unable to parse conditional effect data.")
-          }
-          
-          # Extract and parse data
-          data_lines <- process_output[data_start:end_idx]
-          data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
-          
-          if(length(data_lines) == 0) {
-            stop("No valid conditional effect data rows found.")
-          }
-          
-          cond_effect_data <- tryCatch({
-            parsed <- read.table(text = paste(data_lines, collapse = "\n"),
-                                col.names = c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI"),
-                                stringsAsFactors = FALSE,
-                                fill = TRUE,
-                                blank.lines.skip = TRUE)
-            
-            valid_rows <- apply(parsed, 1, function(row) {
-              all(!is.na(suppressWarnings(as.numeric(row[1:7]))))
-            })
-            
-            if(sum(valid_rows) == 0) {
-              stop("No valid data rows found")
-            }
-            
-            parsed[valid_rows, 1:7]
           }, error = function(e) {
-            parsed_lines <- lapply(data_lines, function(line) {
-              parts <- strsplit(trimws(line), "\\s+")[[1]]
-              nums <- suppressWarnings(as.numeric(parts))
-              nums <- nums[!is.na(nums)]
-              if(length(nums) >= 7) return(nums[1:7])
-              return(NULL)
-            })
+            # If extraction from result fails, will try text parsing below
+          })
+          
+          # If not found in result object, try parsing text output (fallback)
+          if(is.null(cond_effect_data)) {
+            process_output <- results$output
             
-            valid_data <- do.call(rbind, Filter(Negate(is.null), parsed_lines))
-            if(is.null(valid_data) || nrow(valid_data) == 0) {
-              stop("Could not parse data")
+            # Look for "Conditional X*W interaction at values of the moderator Z:"
+            start_idx <- which(grepl("Conditional X\\*W interaction at values of the moderator Z:", process_output, ignore.case = TRUE))
+            
+            if(length(start_idx) == 0) {
+              start_idx <- which(grepl("Conditional effect.*X.*W.*interaction.*values.*moderator.*Z", process_output, ignore.case = TRUE))
             }
             
-            colnames(valid_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")
-            as.data.frame(valid_data)
-          })
+            if(length(start_idx) == 0) {
+              start_idx <- which(grepl("Conditional effect.*focal predictor|Conditional effects.*focal predictor", process_output, ignore.case = TRUE))
+            }
+            
+            if(length(start_idx) > 0) {
+              start_line <- start_idx[1]
+              data_start <- start_line + 2
+              
+              # Find where the data section ends - use safer approach
+              search_start <- data_start
+              search_end <- min(data_start + 50, length(process_output))
+              search_subset <- process_output[search_start:search_end]
+              end_candidates <- which(grepl("^\\s*$|^Data for visualizing|^----------|^\\*+", search_subset))
+              
+              if(length(end_candidates) > 0) {
+                end_idx <- search_start + end_candidates[1] - 1
+              } else {
+                end_idx <- min(data_start + 100, length(process_output))
+              }
+              
+              if(end_idx > data_start) {
+                data_lines <- process_output[data_start:end_idx]
+                data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
+                
+                if(length(data_lines) > 0) {
+                  parsed <- tryCatch({
+                    read.table(text = paste(data_lines, collapse = "\n"),
+                              col.names = c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI"),
+                              stringsAsFactors = FALSE,
+                              fill = TRUE,
+                              blank.lines.skip = TRUE)
+                  }, error = function(e) NULL)
+                  
+                  if(!is.null(parsed) && nrow(parsed) > 0) {
+                    # Convert to numeric and validate
+                    for(col in names(parsed)) {
+                      parsed[[col]] <- as.numeric(parsed[[col]])
+                    }
+                    valid_rows <- apply(parsed, 1, function(row) {
+                      !any(is.na(row[1:7])) && is.numeric(row[1]) && is.numeric(row[2])
+                    })
+                    if(sum(valid_rows) > 0) {
+                      cond_effect_data <- parsed[valid_rows, 1:7]
+                      colnames(cond_effect_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")
+                    }
+                  }
+                }
+              }
+            }
+          }
+          
+          if(is.null(cond_effect_data)) {
+            stop("Conditional effect data not found. This plot requires probing interactions to be enabled.")
+          }
           
           plot_data <- cond_effect_data
           active_moderator <- input$moderator2_var
@@ -4621,7 +4670,7 @@ server <- function(input, output, session) {
               axis.ticks = element_line(color = "black", linewidth = 0.5)
             )
           
-          ggsave(file, plot = p, device = "jpg", width = 10, height = 8, dpi = 600)
+          ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
         } else {
           # Single moderation: Get the 3 percentile moderator levels
           if(is_binary_variable(data_used, active_moderator)) {
@@ -4701,13 +4750,32 @@ server <- function(input, output, session) {
             p <- p + guides(fill = "none")
           }
           
-          ggsave(file, plot = p, device = "jpg", width = 10, height = 8, dpi = 600)
+          ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
         }
       }, error = function(e) {
         print(paste("Error saving slopes plot:", e$message))
+        # Create an error message file instead
+        writeLines(paste("Error generating plot:", e$message), file)
       })
     }
   )
+  
+  # Dynamic button label for download slopes plot
+  output$download_slopes_button <- renderUI({
+    model_num <- tryCatch(as.numeric(input$process_model), error = function(e) NULL)
+    has_second_mod <- !is.null(model_num) && model_num %in% models_with_second_moderator
+    has_z_var <- !is.null(input$moderator2_var) && input$moderator2_var != ""
+    
+    button_label <- if(has_second_mod && has_z_var) {
+      "Download Conditional Effect Plot (JPG)"
+    } else {
+      "Download Simple Slopes Plot (JPG)"
+    }
+    
+    downloadButton("download_slopes", button_label, 
+                  class = "btn-success", 
+                  style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
+  })
   
   # Disable plot download buttons until analysis is run
   observe({
