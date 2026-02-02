@@ -1,0 +1,558 @@
+# PROCESS V5 Analysis with Hayes PROCESS for R
+
+## Overview
+
+This Shiny application provides a user-friendly interface for conducting moderation and mediation analyses using Hayes' PROCESS macro for R (Version 5). The application supports PROCESS models 1-92, allowing researchers to examine complex relationships between variables including direct effects, indirect effects (mediation), conditional effects (moderation), and their combinations.
+
+### Key Features
+
+- **Comprehensive Model Support**: PROCESS models 1-92 from Hayes' framework (Model 0 is not included - see Model Selection section for details)
+- **Flexible Data Input**: Supports CSV and SPSS (.sav) file formats
+- **Assumption Checking**: Built-in diagnostic tools for regression assumptions
+- **Outlier Detection**: Automatic identification of outliers and influential cases
+- **Bootstrap Confidence Intervals**: Support for percentile and bias-corrected bootstrap methods
+- **Visualization**: Simple slopes plots and Johnson-Neyman plots for moderation models
+- **Export Options**: Download results as HTML files and filtered datasets
+
+---
+
+## User Guide
+
+### Step 1: Upload Your Data
+
+1. Click the **"Choose CSV or SAV File"** button in the **Upload Data** section
+2. Select your data file (CSV or SPSS .sav format)
+3. Wait for the upload to complete
+4. The application will display "Upload complete" when ready
+
+**Note**: File size limit is 50MB.
+
+### Step 2: Select Your Model
+
+1. In the **Model Selection** section, click the **"PROCESS Model Number"** dropdown
+2. Select the appropriate model number (1-92) for your research question
+3. Refer to Hayes' PROCESS documentation or book for model diagrams and descriptions
+
+**Important**: When you change the model number, all previously selected variables and analysis results are automatically cleared to prevent confusion.
+
+### Step 3: Select Variables
+
+1. Expand the **"Select Variables"** section (click the header to expand/collapse)
+2. Select variables from the dropdown menus based on your chosen model:
+   - **Predictor Variable (X)**: Your independent variable
+   - **Outcome Variable (Y)**: Your dependent variable
+   - **Moderator Variable (W)**: If your model requires a moderator (enabled for applicable models)
+   - **Second Moderator Variable (Z)**: If your model requires a second moderator (Models 2, 3)
+   - **Number of Mediators**: Select the number of mediators from the dropdown (for models with mediators)
+   - **M1, M2, M3...**: Select your mediator variables in order (appears after selecting number of mediators)
+   - **Covariates**: Select one or more covariates (optional, multiple selection allowed)
+
+**Note**: Variable selection menus are automatically enabled/disabled based on your selected model. Variables that aren't needed for your model will be grayed out.
+
+### Step 4: Review Assumption Checks (Optional but Recommended)
+
+1. Expand the **"Assumption Checks"** section
+2. Review the outlier detection settings:
+   - **For continuous outcomes**: Set your standardized residual threshold (default: 2.0)
+   - **For binary outcomes**: Choose Cook's Distance threshold (Conservative, Liberal, or Custom)
+3. Navigate to the **"Assumption Checks"** tab in the main panel to view:
+   - Outlier/influential case identification
+   - Diagnostic plots (Q-Q plots, residual plots, scale-location plots)
+   - Distribution plots for continuous variables
+4. Review the diagnostic information to assess model assumptions
+
+### Step 5: Configure PROCESS Options
+
+Expand and configure the following sections as needed:
+
+#### Centering Options
+- Select mean centering approach (see detailed options below)
+
+#### Bootstrap Settings
+- Enable/disable bootstrapping (recommended for indirect effects)
+- Set number of bootstrap samples (default: 5000)
+- Choose confidence interval method
+- Set confidence level (default: 95%)
+- Optionally set a random seed for reproducibility
+
+#### Advanced Options
+- Select standard error method
+- Enable standardized coefficients if needed
+- Enable normal theory tests if appropriate
+- Enable pairwise contrasts for multiple mediators (if applicable)
+
+#### Output Options
+- Configure decimal places for output
+- Select additional output options (descriptives, diagnostics, etc.)
+
+#### Probing Moderation (for moderation models only)
+- Enable interaction probing
+- Set probing threshold
+- Choose conditioning values
+- Enable Johnson-Neyman technique if desired
+
+#### Plot Options (for Models 1 and 3 only)
+- Customize plot titles and labels
+- Adjust visualization settings
+
+### Step 6: Run Your Analysis
+
+1. Click **"With Original Dataset"** to run the analysis with all cases
+2. OR click **"With Outliers Removed"** (if available) to run the analysis after removing outliers/influential cases identified in Step 4
+3. Wait for the analysis to complete (progress indicators will show)
+4. View results in the **"Analysis Results"** tab
+
+### Step 7: Review Results
+
+1. Navigate to the **"Analysis Results"** tab to view:
+   - Analysis summary
+   - Model coefficients
+   - Direct and indirect effects (for mediation models)
+   - Conditional effects (for moderation models)
+   - Bootstrap confidence intervals (if enabled)
+2. Navigate to the **"Plots"** tab (for Models 1 and 3) to view:
+   - Simple slopes plots
+   - Johnson-Neyman plots (Model 1 only)
+
+### Step 8: Download Results
+
+1. Click **"Results output (html)"** to download a formatted HTML file with all analysis results
+2. If you ran analysis with outliers removed, you can also download the filtered dataset:
+   - Choose format (CSV or SPSS .sav)
+   - Click **"Dataset Without Outliers"**
+
+---
+
+## Detailed Options Reference
+
+This section explains each option organized by UI section headers.
+
+### Upload Data
+
+**Choose CSV or SAV File**
+- Upload your dataset in either CSV (comma-separated values) or SPSS (.sav) format
+- Maximum file size: 50MB
+- The application automatically detects variable types (continuous, binary, categorical)
+
+### Model Selection
+
+**PROCESS Model Number**
+- Select from models 1-92
+- Each model represents a different conceptual framework for examining relationships
+- Model diagrams and descriptions should be referenced from Hayes' PROCESS documentation or book
+- **Important**: Changing the model number clears all variable selections and previous results
+
+**Note on Model 0**: Model 0 (multiple regression with 2-15 predictors) is not included in this application. Model 0 requires unique syntax that is not well-suited for the graphical interface. For multiple regression analyses, users should use standard R regression functions or other statistical software.
+
+### Select Variables
+
+**Predictor Variable (X)**
+- Your independent variable (the variable that predicts or causes changes)
+- Required for all models
+
+**Outcome Variable (Y)**
+- Your dependent variable (the variable being predicted or affected)
+- Required for all models
+
+**Moderator Variable (W)**
+- A variable that moderates (changes the strength/direction of) the relationship between X and Y
+- Enabled for models that include moderation (Models 1, 2, 3, 5, 14, 15, 58, 59, 74, 83-92)
+- Disabled for models that don't use moderators (e.g., Models 4, 6, 80-82)
+
+**Second Moderator Variable (Z)**
+- A second moderating variable
+- Only enabled for models with two moderators (Models 2, 3)
+
+**Number of Mediators**
+- Dropdown menu to select how many mediator variables you want to include
+- Available for models that support mediators (Models 4-92, except Models 1-3)
+- Maximum number depends on model:
+  - Model 4: up to 10 mediators
+  - Model 6: up to 6 mediators
+  - Model 82: up to 4 mediators
+  - Models 83-92: up to 2 mediators
+  - Other models: up to 10 mediators (default)
+- **Note**: Changing the number of mediators clears all mediator variable selections
+
+**M1, M2, M3... (Mediator Variables)**
+- Select your mediator variables in order
+- Appears after you select the number of mediators
+- The order matters for models with multiple mediators
+- Each mediator represents a pathway through which X affects Y
+
+**Covariates (optional)**
+- Additional variables to control for in the analysis
+- Multiple selection allowed
+- Included in all regression equations unless "Exclude covariates from Y equation" is enabled
+
+### Assumption Checks
+
+This section allows you to configure how outliers and influential cases are identified.
+
+**For Continuous Outcomes:**
+
+**Standardized Residual Threshold**
+- Threshold for identifying outliers based on standardized residuals
+- Cases with |standardized residual| > threshold are flagged as outliers
+- Default: 2.0
+- Common values:
+  - 2.0: Standard criterion (flags ~5% of cases if normally distributed)
+  - 2.5: More stringent
+  - 3.0: Very conservative
+
+**For Binary Outcomes:**
+
+**Cook's Distance Threshold**
+- Method for identifying influential cases in logistic regression
+- Options:
+  - **Conservative (4/n)**: Uses 4 divided by sample size (recommended default)
+  - **Liberal (1.0)**: Uses a fixed threshold of 1.0
+  - **Custom**: Allows you to specify your own threshold (0-1)
+
+**Note**: The assumption checks are performed on the original dataset and update automatically as you change variable selections or threshold values.
+
+### PROCESS Options
+
+#### Centering Options
+
+**Mean Centering**
+- Controls how variables are centered before creating interaction terms
+- Options:
+  - **No centering (0)**: Variables used as-is (default)
+  - **All variables that define products (1)**: Centers all variables involved in interaction terms
+  - **Only continuous variables that define products (2)**: Centers only continuous variables in interactions, leaves categorical variables uncentered
+- **When to use**: Centering is recommended when interaction terms are included, especially for interpretation of simple slopes
+
+#### Bootstrap Settings
+
+**Use bootstrapping**
+- Enable bootstrap confidence intervals for indirect effects and other statistics
+- **Recommended**: Keep enabled (default: ON) for mediation analyses
+- Bootstrap methods don't assume normality and provide more robust confidence intervals
+
+**Number of bootstrap samples**
+- Number of bootstrap resamples to perform
+- Default: 5000
+- Range: 1000-10000
+- Higher values provide more stable estimates but take longer to compute
+- 5000 is generally sufficient for most analyses
+
+**Bootstrap Confidence Interval Method**
+- **Percentile bootstrap (0)**: Uses percentiles of bootstrap distribution (default)
+- **Bias-corrected bootstrap (1)**: Adjusts for bias in bootstrap distribution
+- Bias-corrected is more accurate but can be less stable with small samples
+
+**Confidence Level (%)**
+- Confidence level for confidence intervals
+- Default: 95%
+- Range: 80-99%
+- Common choices: 90%, 95%, 99%
+
+**Random Seed (optional)**
+- Set a specific seed for random number generation
+- Leave blank for random seed (different results each run)
+- Enter a number (1-999999) to set a specific seed for reproducibility
+- **Useful for**: Reproducing exact results, sharing analyses with exact same bootstrap samples
+
+#### Advanced Options
+
+**Standard Errors**
+- Method for calculating standard errors
+- Options:
+  - **OLS**: Ordinary least squares (default, assumes homoscedasticity)
+  - **HC0 (Huber-White)**: Robust to heteroscedasticity
+  - **HC1 (Hinkley)**: Small-sample correction for HC0
+  - **HC2**: Alternative small-sample correction
+  - **HC3 (Davidson-MacKinnon)**: Recommended for small samples
+  - **HC4 (Cribari-Neto)**: More conservative, good for influential cases
+- **When to use**: Use robust standard errors if you suspect heteroscedasticity (unequal variance)
+
+**Standardized coefficients**
+- Requests standardized regression coefficients (beta weights)
+- **Useful for**: Comparing effects across variables with different scales
+- Default: OFF
+
+**Normal theory tests**
+- Uses z-tests instead of t-tests for significance testing
+- Less conservative than t-tests
+- **Assumes**: Large sample sizes
+- Default: OFF
+
+**Pairwise contrasts of indirect effects**
+- Compares indirect effects when multiple mediators are included
+- Determines which mediators are most important
+- **Only available**: When 2+ mediators are selected
+- Default: OFF
+
+#### Output Options
+
+**Decimal Places**
+- Number of decimal places to display in output
+- Default: 4
+- Range: 0-10
+
+**Descriptives and variable correlations**
+- Displays descriptive statistics (means, SDs, min, max) and correlation matrices
+- **Useful for**: Understanding your data and bivariate relationships
+- Default: ON
+
+**Show regression coefficient covariance matrix**
+- Displays the covariance matrix of regression parameter estimates
+- **Useful for**: Understanding relationships between coefficients, advanced analyses
+- Default: OFF
+
+**Scale-free measures of (partial) association**
+- Provides partial correlations, semi-partial correlations, and standardized coefficients
+- **Useful for**: Comparing effects across variables with different scales
+- Default: OFF
+
+**List cases deleted due to missing data**
+- Lists all cases excluded from analysis due to missing data
+- **Useful for**: Identifying data quality issues, understanding sample size reductions
+- Default: OFF
+
+**Sums of squares and adjusted R-squared**
+- Displays detailed model fit information (regression SS, residual SS, total SS, df, mean squares, adjusted R²)
+- **Useful for**: Detailed model evaluation
+- Default: OFF
+
+**Shrunken R estimates**
+- Cross-validated R-squared values that adjust for overfitting
+- Indicates how well the model would perform on new data
+- **Only available**: For continuous outcomes with multiple mediators
+- Default: OFF
+
+**Model diagnostics and assumptions**
+- Comprehensive regression diagnostics including:
+  - Residual analysis
+  - Influential cases
+  - Multicollinearity (VIF)
+  - Assumption tests
+- **Essential for**: Evaluating model quality
+- Default: OFF
+
+**Allow X by M interaction (model 4 only)**
+- Includes X*M interaction term in Model 4
+- Allows the effect of mediator (M) on outcome (Y) to depend on level of X
+- Changes model to counterfactual framework with different effect interpretations
+- **Mutually exclusive with**: "Test for X by M interaction"
+- Default: OFF
+
+**Test for X by M interaction**
+- Tests whether X*M interaction terms are significant
+- Determines if effect of mediators (M) on outcome (Y) depends on level of X
+- Does not change model structure
+- **For Model 4**: Use this to decide whether to enable "Allow X by M interaction"
+- **Mutually exclusive with**: "Allow X by M interaction" for Model 4
+- **Available for**: Mediation models (except Model 74)
+- Default: OFF
+
+**Total effect of X**
+- Shows the total effect of X on Y (direct + indirect effects combined)
+- **Useful for**: Understanding overall relationship before examining mediation pathways
+- **Available for**: Models 4, 6, 80, 81, 82
+- Default: OFF
+
+**Matrices output**
+- Displays model definition matrices showing which paths are estimated and which variables moderate which paths
+- **Useful for**: Understanding model structure
+- Default: OFF
+
+**Exclude covariates from Y equation**
+- When checked, covariates are excluded from the outcome (Y) equation
+- Affects model specification
+- **Note**: For Model 1, this option works around a PROCESS limitation
+- Default: OFF
+
+#### Probing Moderation
+
+**Available only for moderation models (Models 1, 2, 3, 5, 14, 15, 58, 59, 74, 83-92)**
+
+**Probe interactions**
+- Enables probing of interaction effects
+- When enabled, shows conditional effects at different levels of the moderator
+- Default: OFF
+
+**When to probe:**
+- Threshold for determining when to probe interactions
+- Enter threshold as text (e.g., "p < .10" or "p < .05")
+- Default: "p < .10"
+- Interactions meeting this threshold will be probed
+
+**Values for nondiscrete moderators:**
+- Determines which values of continuous moderators to use for probing
+- Options:
+  - **Percentiles (16th, 50th, 84th)**: Uses 16th percentile (low), median (medium), 84th percentile (high) - Default
+  - **Moments (Mean and ±1 SD)**: Uses mean minus 1 SD (low), mean (medium), mean plus 1 SD (high)
+- **When to use**: Percentiles are more robust to outliers; moments are more interpretable
+
+**Johnson-Neyman technique**
+- Identifies regions of significance where the effect of X on Y is statistically significant
+- Shows the range of moderator values where the effect is significant vs. non-significant
+- **Useful for**: Finding exact boundaries of significance
+- Default: OFF
+
+#### Plot Options
+
+**Available only for Models 1 and 3**
+
+**Plot Title**
+- Custom title for the simple slopes plot
+- Default: "Simple Slopes Plot"
+
+**Use color for lines**
+- Uses different colors for different moderator levels
+- Default: ON
+- If OFF, uses different line types instead
+
+**Customize y-axis range**
+- Allows you to set custom minimum and maximum values for the y-axis
+- Default: OFF
+- When enabled, specify:
+  - **Y-axis minimum**: Lower bound for y-axis
+  - **Y-axis maximum**: Upper bound for y-axis
+
+**Label for Predictor**
+- Custom label for the X-axis (predictor variable)
+- Leave blank to use variable name
+
+**Label for Outcome**
+- Custom label for the Y-axis (outcome variable)
+- Leave blank to use variable name
+
+**Label for Moderator**
+- Custom label for the moderator in the legend
+- Leave blank to use variable name
+
+**Label for Second Moderator (Z)** (Models 2, 3 only)
+- Custom label for the second moderator
+- Leave blank to use variable name
+
+**Decimal Places for Moderator Levels**
+- Number of decimal places shown for moderator level labels in the plot
+- Default: 2
+- Range: 0-5
+
+**Show confidence intervals**
+- Displays confidence bands around the simple slopes lines
+- Default: ON
+- Helps visualize uncertainty in the conditional effects
+
+### Run Analysis
+
+**With Original Dataset**
+- Runs the analysis using all cases in your dataset
+- No cases are removed
+- Use this for your primary analysis
+
+**With Outliers Removed** (appears after assumption checks identify outliers)
+- Runs the analysis after removing cases identified as outliers/influential
+- Number of cases removed is shown in the button text
+- Use this to assess the impact of outliers on your results
+- **Note**: Results will differ from the original dataset analysis
+
+### Download Options
+
+**Results output (html)**
+- Downloads a formatted HTML file containing all analysis results
+- Includes all output from the PROCESS analysis
+- Can be opened in any web browser
+- **Available**: Only when analysis has been run
+
+**Download Reduced Dataset** (appears after running analysis with outliers removed)
+- Downloads the dataset with outliers/influential cases removed
+- Format options:
+  - **CSV (.csv)**: Comma-separated values format
+  - **SPSS (.sav)**: SPSS format
+- **Useful for**: Further analyses on the cleaned dataset
+
+---
+
+## Main Panel Tabs
+
+### Assumption Checks Tab
+
+This tab provides comprehensive diagnostic information:
+
+**Detailed Assumption Check Results**
+- Summary of outliers/influential cases identified
+- Lists specific cases and their diagnostic values
+- Updates automatically based on selected variables and thresholds
+
+**Diagnostic Plots**
+- **Normal Q-Q Plot** (continuous outcomes only): Checks normality of residuals
+- **Residuals vs Fitted Plot**: Checks linearity and homoscedasticity
+- **Scale-Location Plot** (continuous outcomes only): Checks variance stability
+
+**Continuous Variable Distributions**
+- Violin plots showing distributions of continuous variables
+- Shows both original dataset and analysis dataset (if cases were removed)
+
+**Download Assumption Checks (html)**
+- Downloads all assumption check results and plots as an HTML file
+
+### Analysis Results Tab
+
+Displays the complete PROCESS analysis output including:
+- Analysis summary (dataset info, model number, variables used)
+- Model coefficients
+- Direct and indirect effects (mediation models)
+- Conditional effects (moderation models)
+- Bootstrap confidence intervals (if enabled)
+- All requested output options
+
+### Plots Tab
+
+**Available for Models 1 and 3 only**
+
+**Simple Slopes Plot**
+- Visualizes the relationship between X and Y at different levels of the moderator
+- Shows how the effect of X on Y changes across moderator values
+- Customizable titles, labels, and appearance
+
+**Johnson-Neyman Plot** (Model 1 only)
+- Shows regions of significance
+- Identifies moderator values where the effect of X on Y is significant vs. non-significant
+- Only available when Johnson-Neyman technique is enabled
+
+**Download Options**
+- Download plots as JPG image files
+
+---
+
+## Tips and Best Practices
+
+1. **Always check assumptions first**: Review the Assumption Checks tab before running your main analysis
+2. **Use bootstrapping for mediation**: Bootstrap confidence intervals are recommended for indirect effects
+3. **Consider centering for interactions**: Mean centering improves interpretation of interaction effects
+4. **Document your settings**: Note your choices (especially bootstrap samples, seed, thresholds) for reproducibility
+5. **Compare with and without outliers**: Run both analyses to assess robustness of your findings
+6. **Review diagnostic plots**: Check Q-Q plots and residual plots to assess model assumptions
+7. **Use appropriate thresholds**: Choose outlier detection thresholds based on your field's conventions and sample size
+
+---
+
+## Technical Notes
+
+- **File Format Support**: CSV files should have headers. SPSS files (.sav) preserve variable labels and value labels.
+- **Missing Data**: Cases with missing data on any analysis variable are automatically excluded (listwise deletion).
+- **Variable Types**: The application automatically detects binary variables (0/1 or exactly 2 unique values) and continuous variables.
+- **Model Validation**: The application validates variable selections based on model requirements and prevents duplicate variable selection.
+- **Results Clearing**: Analysis results are automatically cleared when you change the model number to prevent confusion.
+
+---
+
+## References
+
+This application implements Hayes' PROCESS macro for R (Version 5). For detailed information about PROCESS models, interpretation, and methodology, refer to:
+
+- Hayes, A. F. (2018). *Introduction to Mediation, Moderation, and Conditional Process Analysis: A Regression-Based Approach* (2nd ed.). Guilford Press.
+- PROCESS documentation and model diagrams
+
+---
+
+## Support
+
+For issues, questions, or feature requests related to this Shiny application, please contact the application developer.
+
+For questions about PROCESS methodology, interpretation, or model selection, refer to Hayes' book or the PROCESS documentation.
