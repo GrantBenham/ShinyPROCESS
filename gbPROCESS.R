@@ -267,9 +267,7 @@ ui <- fluidPage(
                               "77" = "77", "78" = "78", "79" = "79", "80" = "80",
                               "81" = "81", "82" = "82", "83" = "83", "84" = "84",
                               "85" = "85", "86" = "86", "87" = "87", "88" = "88",
-                              "89" = "89", "90" = "90", "91" = "91", "92" = "92",
-                              "93" = "93", "94" = "94", "95" = "95", "96" = "96",
-                              "97" = "97", "98" = "98", "99" = "99", "100" = "100"),
+                              "89" = "89", "90" = "90", "91" = "91", "92" = "92"),
                   selected = ""),
       uiOutput("model_description"),
       
@@ -918,7 +916,6 @@ server <- function(input, output, session) {
     # Disabled inputs can't be changed by user, so we only validate enabled ones
     models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
     models_with_second_moderator <- c(2, 3)
-    models_with_mediator <- c(4, 5, 6, 7, 8, 14)
     models_with_moderators_disabled <- c(4, 6, 80:82)
     
     all_vars <- character(0)
@@ -947,10 +944,8 @@ server <- function(input, output, session) {
       }
     }
     
-    # Only include mediators if current model uses mediators (and it's enabled)
-    if(!is.null(current_model) && 
-       current_model %in% models_with_mediator && 
-       !(current_model %in% c(1, 2, 3))) {
+    # Only include mediators if current model uses mediators (models 4-92)
+    if(!is.null(current_model) && current_model >= 4 && current_model <= 92) {
       current_mediators <- NULL
       if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
         current_mediators <- rv$mediator_order
@@ -1135,9 +1130,8 @@ server <- function(input, output, session) {
     
     # Determine if mediators should be enabled for current model
     model_num <- as.numeric(input$process_model)
-    models_with_mediator <- c(4, 5, 6, 7, 8, 14)
-    # Mediators are disabled for models 1-3
-    mediator_enabled <- model_num %in% models_with_mediator && !(model_num %in% c(1, 2, 3))
+    # Mediators are enabled for models 4-92 (disabled only for models 1-3)
+    mediator_enabled <- model_num >= 4 && model_num <= 92
     
     # Use stored order if available, otherwise use input order
     selected_mediators <- if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
@@ -1225,8 +1219,6 @@ server <- function(input, output, session) {
     models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
     # Models with two moderators (W and Z): 2, 3
     models_with_second_moderator <- c(2, 3)
-    # Models with mediators: 4, 5, 6, 7, 8, 14
-    models_with_mediator <- c(4, 5, 6, 7, 8, 14)
     # Models with moderators disabled: 4, 6, 80-82
     models_with_moderators_disabled <- c(4, 6, 80:82)
     
@@ -1235,8 +1227,8 @@ server <- function(input, output, session) {
                          !(model_num %in% models_with_moderators_disabled)
     # Moderator Z is enabled only for models with second moderator
     moderator2_enabled <- model_num %in% models_with_second_moderator
-    # Mediators are enabled if model uses mediators AND mediators are not disabled (models 1-3)
-    mediator_enabled <- model_num %in% models_with_mediator && !(model_num %in% c(1, 2, 3))
+    # Mediators are enabled for models 4-92 (disabled only for models 1-3)
+    mediator_enabled <- model_num >= 4 && model_num <= 92
     
     # ALWAYS render ALL inputs, but disable the ones not relevant to current model
     # This ensures updateSelectInput always works because all inputs exist in DOM
@@ -2115,43 +2107,23 @@ server <- function(input, output, session) {
       }
     }
     
-    # Model 4: Simple/Parallel mediation (1 or more mediators, up to 10)
-    if(model_num == 4) {
-      print("DEBUG: This is Model 4 (simple/parallel mediation) - checking for mediator(s)")
-      print(paste("DEBUG: input$mediator_vars:", paste(input$mediator_vars, collapse=", ")))
-      validate(
-        need(!is.null(input$mediator_vars) && length(input$mediator_vars) >= 1, 
-             "Model 4 requires at least one mediator variable")
-      )
-      validate(
-        need(length(input$mediator_vars) <= 10,
-             "Model 4 allows up to 10 mediators")
-      )
-      print("DEBUG: Mediator validation passed (Model 4)")
-    }
-    
-    # Model 5: First and Second Stage Moderation (requires moderator W and mediator M)
-    if(model_num == 5) {
-      print("DEBUG: This is Model 5 - checking for moderator W and mediator M")
-      validate(
-        need(!is.null(input$moderator_var) && input$moderator_var != "", 
-             "Model 5 requires moderator variable W")
-      )
-      validate(
-        need(!is.null(input$mediator_vars) && length(input$mediator_vars) >= 1, 
-             "Model 5 requires at least one mediator variable")
-      )
-      print("DEBUG: Model 5 validation passed")
-    }
-    
-    # Models 6, 7, 8, 14: Multiple mediators
-    if(model_num %in% c(6, 7, 8, 14)) {
-      print("DEBUG: This is a mediation model - checking for mediator(s)")
+    # Models 4-92: All require at least one mediator
+    if(model_num >= 4 && model_num <= 92) {
+      print("DEBUG: This model requires mediator(s) - checking for mediator(s)")
       print(paste("DEBUG: input$mediator_vars:", paste(input$mediator_vars, collapse=", ")))
       validate(
         need(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0, 
              "At least one mediator variable is required for this model")
       )
+      
+      # Model 4 allows up to 10 mediators
+      if(model_num == 4) {
+        validate(
+          need(length(input$mediator_vars) <= 10,
+               "Model 4 allows up to 10 mediators")
+        )
+      }
+      
       # Model 6 requires 2-6 mediators
       if(model_num == 6) {
         validate(
@@ -2159,7 +2131,33 @@ server <- function(input, output, session) {
                "Model 6 requires between 2 and 6 mediators")
         )
       }
+      
+      # Model 82 requires exactly 4 mediators
+      if(model_num == 82) {
+        validate(
+          need(length(input$mediator_vars) == 4,
+               "Model 82 requires exactly 4 mediators")
+        )
+      }
+      
+      # Models 83-92 require exactly 2 mediators
+      if(model_num >= 83 && model_num <= 92) {
+        validate(
+          need(length(input$mediator_vars) == 2,
+               "Models 83-92 require exactly 2 mediators")
+        )
+      }
       print("DEBUG: Mediator validation passed")
+    }
+    
+    # Model 5: First and Second Stage Moderation (requires moderator W and mediator M)
+    if(model_num == 5) {
+      print("DEBUG: This is Model 5 - checking for moderator W")
+      validate(
+        need(!is.null(input$moderator_var) && input$moderator_var != "", 
+             "Model 5 requires moderator variable W")
+      )
+      print("DEBUG: Model 5 validation passed")
     }
     
     # Check for validation errors (set by real-time validation observer)
@@ -2188,7 +2186,6 @@ server <- function(input, output, session) {
     # Determine which inputs are actually used by the current model
     models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
     models_with_second_moderator <- c(2, 3)
-    models_with_mediator <- c(4, 5, 6, 7, 8, 14)
     models_with_moderators_disabled <- c(4, 6, 80:82)
     
     all_vars <- character(0)
@@ -2218,8 +2215,8 @@ server <- function(input, output, session) {
     } else {
       print("DEBUG: Ignoring moderator2_var (current model doesn't use second moderator)")
     }
-    # Only include mediators if current model uses mediators (and mediators aren't disabled for models 1-3)
-    if(model_num %in% models_with_mediator && !(model_num %in% c(1, 2, 3))) {
+    # Only include mediators if current model uses mediators (models 4-92)
+    if(model_num >= 4 && model_num <= 92) {
       current_mediators <- NULL
       if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
         current_mediators <- rv$mediator_order
@@ -2378,9 +2375,9 @@ server <- function(input, output, session) {
       )
       
       # Add model-specific variables
-      # Models 4, 5, 6, 7, 8, 14: Mediation models (with mediators)
+      # Models 4-92: Mediation models (with mediators)
       # Note: model_num was already defined above
-      if(model_num %in% c(4, 5, 6, 7, 8, 14)) {
+      if(model_num >= 4 && model_num <= 92) {
         # Get current mediator list - only use if rv$mediator_order is explicitly set and not empty
         # If rv$mediator_order is NULL or empty, use input$mediator_vars (which should be empty after clearing)
         current_mediators <- NULL
@@ -2406,6 +2403,7 @@ server <- function(input, output, session) {
             mediators_ordered
           }
           process_args$m <- mediator_arg
+          print(paste("DEBUG: Added mediator(s) to process_args$m:", paste(mediator_arg, collapse=", ")))
           
           # Add contrast for mediation models (Model 4 and 6 with multiple mediators)
           if(model_num %in% c(4, 6) && input$pairwise_contrasts && length(current_mediators) > 1) {
@@ -2414,8 +2412,10 @@ server <- function(input, output, session) {
         }
       }
       
-      # Add moderators ONLY for models that require them (not mediation-only models like 4, 6, 7, 8)
-      if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74)) {
+      # Add moderators ONLY for models that require them
+      # Models 1, 5, 14, 15, 58, 59, 74, 83-92 have one moderator (W)
+      # Models 2, 3 have two moderators (W and Z)
+      if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74, 83:92)) {
         if(!is.null(input$moderator_var) && input$moderator_var != "") {
           process_args$w <- input$moderator_var
           # Always generate JN data for moderation models (for plotting), regardless of checkbox
@@ -2794,15 +2794,44 @@ server <- function(input, output, session) {
         )
       }
     }
-    if(model_num == 4) {
+    # Models 4-92: All require at least one mediator
+    if(model_num >= 4 && model_num <= 92) {
       validate(
-        need(!is.null(input$mediator_vars) && length(input$mediator_vars) >= 1, 
-             "Model 4 requires at least one mediator variable")
+        need(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0, 
+             "At least one mediator variable is required for this model")
       )
-      validate(
-        need(length(input$mediator_vars) <= 10,
-             "Model 4 allows up to 10 mediators")
-      )
+      
+      # Model 4 allows up to 10 mediators
+      if(model_num == 4) {
+        validate(
+          need(length(input$mediator_vars) <= 10,
+               "Model 4 allows up to 10 mediators")
+        )
+      }
+      
+      # Model 6 requires 2-6 mediators
+      if(model_num == 6) {
+        validate(
+          need(length(input$mediator_vars) >= 2 && length(input$mediator_vars) <= 6,
+               "Model 6 requires between 2 and 6 mediators")
+        )
+      }
+      
+      # Model 82 requires exactly 4 mediators
+      if(model_num == 82) {
+        validate(
+          need(length(input$mediator_vars) == 4,
+               "Model 82 requires exactly 4 mediators")
+        )
+      }
+      
+      # Models 83-92 require exactly 2 mediators
+      if(model_num >= 83 && model_num <= 92) {
+        validate(
+          need(length(input$mediator_vars) == 2,
+               "Models 83-92 require exactly 2 mediators")
+        )
+      }
     }
     
     # Check for validation errors (set by real-time validation observer)
@@ -2831,7 +2860,6 @@ server <- function(input, output, session) {
     # Determine which inputs are actually used by the current model
     models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
     models_with_second_moderator <- c(2, 3)
-    models_with_mediator <- c(4, 5, 6, 7, 8, 14)
     models_with_moderators_disabled <- c(4, 6, 80:82)
     
     all_vars <- character(0)
@@ -2861,8 +2889,8 @@ server <- function(input, output, session) {
     } else {
       print("DEBUG: Ignoring moderator2_var (current model doesn't use second moderator)")
     }
-    # Only include mediators if current model uses mediators (and mediators aren't disabled for models 1-3)
-    if(model_num %in% models_with_mediator && !(model_num %in% c(1, 2, 3))) {
+    # Only include mediators if current model uses mediators (models 4-92)
+    if(model_num >= 4 && model_num <= 92) {
       current_mediators <- NULL
       if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
         current_mediators <- rv$mediator_order
@@ -2898,27 +2926,12 @@ server <- function(input, output, session) {
     }
     print("DEBUG: ===== Analysis duplicate check PASSED (outliers_analysis) =====")
     
+    # Model 5: First and Second Stage Moderation (requires moderator W and mediator M)
     if(model_num == 5) {
       validate(
         need(!is.null(input$moderator_var) && input$moderator_var != "", 
              "Model 5 requires moderator variable W")
       )
-      validate(
-        need(!is.null(input$mediator_vars) && length(input$mediator_vars) >= 1, 
-             "Model 5 requires at least one mediator variable")
-      )
-    }
-    if(model_num %in% c(6, 7, 8, 14)) {
-      validate(
-        need(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0, 
-             "At least one mediator variable is required for this model")
-      )
-      if(model_num == 6) {
-        validate(
-          need(length(input$mediator_vars) >= 2 && length(input$mediator_vars) <= 6,
-               "Model 6 requires between 2 and 6 mediators")
-        )
-      }
     }
     
     req(rv$original_dataset, input$outcome_var, input$predictor_var, input$process_model)
@@ -3050,8 +3063,8 @@ server <- function(input, output, session) {
       )
       
       # Add model-specific variables
-      # Models 4, 5, 6, 7, 8, 14: Mediation models (with mediators)
-      if(model_num %in% c(4, 5, 6, 7, 8, 14)) {
+      # Models 4-92: Mediation models (with mediators)
+      if(model_num >= 4 && model_num <= 92) {
         # Get current mediator list - only use if rv$mediator_order is explicitly set and not empty
         # If rv$mediator_order is NULL or empty, use input$mediator_vars (which should be empty after clearing)
         current_mediators <- NULL
@@ -3079,6 +3092,7 @@ server <- function(input, output, session) {
             current_mediators
           }
           process_args$m <- mediator_arg
+          print(paste("DEBUG: Added mediator(s) to process_args$m (outliers analysis):", paste(mediator_arg, collapse=", ")))
           
           # Add contrast for mediation models (Model 4 and 6 with multiple mediators)
           if(model_num %in% c(4, 6) && input$pairwise_contrasts && length(current_mediators) > 1) {
@@ -3087,8 +3101,10 @@ server <- function(input, output, session) {
         }
       }
       
-      # Add moderators ONLY for models that require them (not mediation-only models like 4, 6, 7, 8)
-      if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74)) {
+      # Add moderators ONLY for models that require them
+      # Models 1, 5, 14, 15, 58, 59, 74, 83-92 have one moderator (W)
+      # Models 2, 3 have two moderators (W and Z)
+      if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74, 83:92)) {
         if(!is.null(input$moderator_var) && input$moderator_var != "") {
           process_args$w <- input$moderator_var
           # Always generate JN data for moderation models (for plotting), regardless of checkbox
