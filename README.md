@@ -2,11 +2,11 @@
 
 ## Overview
 
-This Shiny application provides a user-friendly interface for conducting moderation and mediation analyses using Hayes' PROCESS macro for R (Version 5). The application supports PROCESS models 1-92, allowing researchers to examine complex relationships between variables including direct effects, indirect effects (mediation), conditional effects (moderation), and their combinations.
+This Shiny application provides a user-friendly interface for conducting moderation and mediation analyses using Hayes' PROCESS macro for R (Version 5). The application supports PROCESS models 1-73 and 75-92 (Model 74 is automatically created from Model 4 when needed), allowing researchers to examine complex relationships between variables including direct effects, indirect effects (mediation), conditional effects (moderation), and their combinations.
 
 ### Key Features
 
-- **Comprehensive Model Support**: PROCESS models 1-92 from Hayes' framework (Model 0 is not included - see Model Selection section for details)
+- **Comprehensive Model Support**: PROCESS models 1-73 and 75-92 from Hayes' framework (Models 0 and 74 are not directly selectable - see Model Selection section for details)
 - **Flexible Data Input**: Supports CSV and SPSS (.sav) file formats
 - **Assumption Checking**: Built-in diagnostic tools for regression assumptions
 - **Outlier Detection**: Automatic identification of outliers and influential cases
@@ -30,8 +30,9 @@ This Shiny application provides a user-friendly interface for conducting moderat
 ### Step 2: Select Your Model
 
 1. In the **Model Selection** section, click the **"PROCESS Model Number"** dropdown
-2. Select the appropriate model number (1-92) for your research question
+2. Select the appropriate model number (1-73, 75-92) for your research question
 3. Refer to Hayes' PROCESS documentation or book for model diagrams and descriptions
+4. **Note**: Model 74 is not directly selectable. To use Model 74, select Model 4 and enable "Allow X by M interaction"
 
 **Important**: When you change the model number, all previously selected variables and analysis results are automatically cleared to prevent confusion.
 
@@ -137,12 +138,14 @@ This section explains each option organized by UI section headers.
 ### Model Selection
 
 **PROCESS Model Number**
-- Select from models 1-92
+- Select from models 1-73, 75-92 (Model 74 is not user-selectable - see note below)
 - Each model represents a different conceptual framework for examining relationships
 - Model diagrams and descriptions should be referenced from Hayes' PROCESS documentation or book
 - **Important**: Changing the model number clears all variable selections and previous results
 
 **Note on Model 0**: Model 0 (multiple regression with 2-15 predictors) is not included in this application. Model 0 requires unique syntax that is not well-suited for the graphical interface. For multiple regression analyses, users should use standard R regression functions or other statistical software.
+
+**Note on Model 74**: Model 74 is not directly selectable in this application. It is automatically created internally when Model 4 has the "Allow X by M interaction" option enabled. When this option is checked, PROCESS converts Model 4 to Model 74 and automatically uses the predictor variable (X) as the moderator variable (W). To use Model 74, select Model 4 and enable the "Allow X by M interaction" checkbox.
 
 ### Select Variables
 
@@ -156,8 +159,9 @@ This section explains each option organized by UI section headers.
 
 **Moderator Variable (W)**
 - A variable that moderates (changes the strength/direction of) the relationship between X and Y
-- Enabled for models that include moderation (Models 1, 2, 3, 5, 14, 15, 58, 59, 74, 83-92)
+- Enabled for models that include moderation (Models 1, 2, 3, 5, 14, 15, 58, 59, 83-92)
 - Disabled for models that don't use moderators (e.g., Models 4, 6, 80-82)
+- **Note**: Model 74 is not user-selectable. It is automatically created from Model 4 when "Allow X by M interaction" is enabled, and PROCESS automatically uses X as W internally.
 
 **Second Moderator Variable (Z)**
 - A second moderating variable
@@ -333,8 +337,9 @@ This section allows you to configure how outliers and influential cases are iden
 
 **Allow X by M interaction (model 4 only)**
 - Includes X*M interaction term in Model 4
+- When enabled, PROCESS automatically converts Model 4 to Model 74 internally, using the predictor variable (X) as the moderator variable (W)
 - Allows the effect of mediator (M) on outcome (Y) to depend on level of X
-- Changes model to counterfactual framework with different effect interpretations
+- Changes model to counterfactual framework with different effect interpretations (natural direct and indirect effects)
 - **Mutually exclusive with**: "Test for X by M interaction"
 - Default: OFF
 
@@ -344,7 +349,7 @@ This section allows you to configure how outliers and influential cases are iden
 - Does not change model structure
 - **For Model 4**: Use this to decide whether to enable "Allow X by M interaction"
 - **Mutually exclusive with**: "Allow X by M interaction" for Model 4
-- **Available for**: Mediation models (except Model 74)
+- **Available for**: Mediation models
 - Default: OFF
 
 **Total effect of X**
@@ -366,7 +371,7 @@ This section allows you to configure how outliers and influential cases are iden
 
 #### Probing Moderation
 
-**Available only for moderation models (Models 1, 2, 3, 5, 14, 15, 58, 59, 74, 83-92)**
+**Available only for moderation models (Models 1, 2, 3, 5, 14, 15, 58, 59, 83-92)**
 
 **Probe interactions**
 - Enables probing of interaction effects

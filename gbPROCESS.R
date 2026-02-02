@@ -263,7 +263,7 @@ ui <- fluidPage(
                               "61" = "61", "62" = "62", "63" = "63", "64" = "64",
                               "65" = "65", "66" = "66", "67" = "67", "68" = "68",
                               "69" = "69", "70" = "70", "71" = "71", "72" = "72",
-                              "73" = "73", "74" = "74", "75" = "75", "76" = "76",
+                              "73" = "73", "75" = "75", "76" = "76",
                               "77" = "77", "78" = "78", "79" = "79", "80" = "80",
                               "81" = "81", "82" = "82", "83" = "83", "84" = "84",
                               "85" = "85", "86" = "86", "87" = "87", "88" = "88",
@@ -424,17 +424,8 @@ ui <- fluidPage(
               checkboxInput("diagnose", "Model diagnostics and assumptions", FALSE)
             ),
             conditionalPanel(
-              condition = "input.process_model == '0'",
-              tags$div(title = "Determines the relative importance of each predictor by comparing their contributions to R-squared. Shows which predictors contribute most to model fit. Only available for Model 0 with 2-15 predictors.",
-                checkboxInput("dominate", "Dominance analysis (model 0 only)", FALSE)
-              ),
-              tags$div(title = "Tests all possible combinations of predictors to find the best subset model. Compares models with different predictor combinations based on R-squared and adjusted R-squared. Only available for Model 0 with 2-15 predictors.",
-                checkboxInput("subsets", "All subsets regression (model 0 only)", FALSE)
-              )
-            ),
-            conditionalPanel(
               condition = "input.process_model == '4'",
-              tags$div(title = "Includes the X*M interaction term in Model 4, allowing the effect of the mediator (M) on the outcome (Y) to depend on the level of X. Changes the model to a counterfactual framework with different effect interpretations. Mutually exclusive with 'Test for X by M interaction'.",
+              tags$div(title = "Includes the X*M interaction term in Model 4, allowing the effect of the mediator (M) on the outcome (Y) to depend on the level of X. When enabled, PROCESS automatically converts Model 4 to Model 74 internally, using the predictor variable (X) as the moderator variable (W). This changes the model to a counterfactual framework with different effect interpretations (natural direct and indirect effects). Mutually exclusive with 'Test for X by M interaction'.",
                 checkboxInput("xmint", "Allow X by M interaction (model 4 only)", FALSE)
               )
             ),
@@ -877,6 +868,9 @@ server <- function(input, output, session) {
     print("DEBUG: ===== MODEL CHANGE OBSERVER COMPLETED =====")
   })
   
+  # Note: Model 74 is not user-selectable - it is automatically created from Model 4
+  # when "Allow X by M interaction" (xmint) is enabled. PROCESS handles W=X internally.
+  
   # Separate observer to clear the is_clearing flag after UI updates complete
   # This runs independently and checks if we're still clearing
   # Wait for UI updates to complete, then clear the flag
@@ -984,18 +978,45 @@ server <- function(input, output, session) {
     print(paste("DEBUG: Unique variables:", paste(unique(all_vars), collapse=", ")))
     print(paste("DEBUG: Length all_vars:", length(all_vars), "Length unique:", length(unique(all_vars))))
     
-    # Check for duplicates
+    # Check for duplicates (with exception for Model 74 where X and W can be the same)
     if(length(all_vars) > 0 && length(all_vars) != length(unique(all_vars))) {
       duplicate_vars <- all_vars[duplicated(all_vars)]
-      print(paste("DEBUG: DUPLICATES FOUND:", paste(unique(duplicate_vars), collapse=", ")))
-      rv$validation_error <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
-                                    paste(unique(duplicate_vars), collapse = "', '"), 
-                                    "' is/are used in more than one role.")
-      showNotification(
-        rv$validation_error,
-        type = "error",
-        duration = 10
-      )
+      
+      # Exception: For Model 74, allow predictor_var and moderator_var to be the same
+      if(!is.null(current_model) && current_model == 74) {
+        # Remove the X=W duplicate from the check if it's the only duplicate
+        if(length(duplicate_vars) == 1 && 
+           !is.null(input$predictor_var) && input$predictor_var != "" &&
+           !is.null(input$moderator_var) && input$moderator_var != "" &&
+           input$predictor_var == input$moderator_var &&
+           duplicate_vars[1] == input$predictor_var) {
+          # This is the expected X=W for Model 74, so clear any error
+          print("DEBUG: Model 74 - X=W is allowed, clearing duplicate error")
+          rv$validation_error <- NULL
+        } else {
+          # There are other duplicates beyond X=W
+          print(paste("DEBUG: DUPLICATES FOUND:", paste(unique(duplicate_vars), collapse=", ")))
+          rv$validation_error <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
+                                        paste(unique(duplicate_vars), collapse = "', '"), 
+                                        "' is/are used in more than one role.")
+          showNotification(
+            rv$validation_error,
+            type = "error",
+            duration = 10
+          )
+        }
+      } else {
+        # Not Model 74, so duplicates are not allowed
+        print(paste("DEBUG: DUPLICATES FOUND:", paste(unique(duplicate_vars), collapse=", ")))
+        rv$validation_error <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
+                                      paste(unique(duplicate_vars), collapse = "', '"), 
+                                      "' is/are used in more than one role.")
+        showNotification(
+          rv$validation_error,
+          type = "error",
+          duration = 10
+        )
+      }
     } else {
       # Clear validation error if no duplicates
       print("DEBUG: No duplicates found - clearing validation error")
@@ -1202,7 +1223,8 @@ server <- function(input, output, session) {
   
   # Define which models require a second moderator (Z)
   # This list can be easily extended by adding model numbers
-  models_with_second_moderator <- c(2, 3, 9, 10, 58, 59, 74)
+  # Note: Model 74 requires W = X (moderator must equal predictor), not a second moderator Z
+  models_with_second_moderator <- c(2, 3, 9, 10, 58, 59)
   
   # Dynamically generate variable selectors based on model
   output$variable_selectors <- renderUI({
@@ -1230,6 +1252,7 @@ server <- function(input, output, session) {
     models_with_moderators_disabled <- c(4, 6, 80:82)
     
     # Moderator W is enabled if model uses moderators AND moderators are not disabled for this model
+    # Note: Model 74 is not user-selectable (created automatically from Model 4 with xmint)
     moderator_enabled <- (model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) && 
                          !(model_num %in% models_with_moderators_disabled)
     # Moderator Z is enabled only for models with second moderator
@@ -2273,16 +2296,40 @@ server <- function(input, output, session) {
     print(paste("DEBUG: Unique variables:", paste(unique(all_vars), collapse=", ")))
     print(paste("DEBUG: Length all_vars:", length(all_vars), "Length unique:", length(unique(all_vars))))
     
-    # Final duplicate check
+    # Final duplicate check (with exception for Model 74 where X and W can be the same)
     if(length(all_vars) > 0 && length(all_vars) != length(unique(all_vars))) {
       duplicate_vars <- all_vars[duplicated(all_vars)]
-      print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
-      error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
-                          paste(unique(duplicate_vars), collapse = "', '"), 
-                          "' is/are used in more than one role.")
-      showNotification(error_msg, type = "error", duration = 10)
-      rv$validation_error <- error_msg
-      return(NULL)
+      
+      # Exception: For Model 74, allow predictor_var and moderator_var to be the same
+      if(model_num == 74) {
+        # Check if the only duplicate is X=W (which is allowed for Model 74)
+        if(length(duplicate_vars) == 1 && 
+           !is.null(input$predictor_var) && input$predictor_var != "" &&
+           !is.null(input$moderator_var) && input$moderator_var != "" &&
+           input$predictor_var == input$moderator_var &&
+           duplicate_vars[1] == input$predictor_var) {
+          # This is the expected X=W for Model 74, so allow it
+          print("DEBUG: Model 74 - X=W is allowed, proceeding with analysis")
+        } else {
+          # There are other duplicates beyond X=W
+          print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
+          error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
+                              paste(unique(duplicate_vars), collapse = "', '"), 
+                              "' is/are used in more than one role.")
+          showNotification(error_msg, type = "error", duration = 10)
+          rv$validation_error <- error_msg
+          return(NULL)
+        }
+      } else {
+        # Not Model 74, so duplicates are not allowed
+        print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
+        error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
+                            paste(unique(duplicate_vars), collapse = "', '"), 
+                            "' is/are used in more than one role.")
+        showNotification(error_msg, type = "error", duration = 10)
+        rv$validation_error <- error_msg
+        return(NULL)
+      }
     }
     print("DEBUG: ===== Analysis duplicate check PASSED (original_analysis) =====")
     
@@ -2533,8 +2580,6 @@ server <- function(input, output, session) {
       if(input$diagnose) process_args$diagnose <- 1
       if(isTRUE(input$ssquares)) process_args$ssquares <- 1
       if(isTRUE(input$modelres)) process_args$modelres <- 1
-      if(isTRUE(input$dominate)) process_args$dominate <- 1
-      if(isTRUE(input$subsets)) process_args$subsets <- 1
       # xmint only for Model 4 - explicitly set to 0 if not used
       # When xmint=1 for Model 4, PROCESS automatically:
       #   - Converts to Model 74 internally (line 807-816)
@@ -2950,16 +2995,40 @@ server <- function(input, output, session) {
     print(paste("DEBUG: Unique variables:", paste(unique(all_vars), collapse=", ")))
     print(paste("DEBUG: Length all_vars:", length(all_vars), "Length unique:", length(unique(all_vars))))
     
-    # Final duplicate check
+    # Final duplicate check (with exception for Model 74 where X and W can be the same)
     if(length(all_vars) > 0 && length(all_vars) != length(unique(all_vars))) {
       duplicate_vars <- all_vars[duplicated(all_vars)]
-      print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
-      error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
-                          paste(unique(duplicate_vars), collapse = "', '"), 
-                          "' is/are used in more than one role.")
-      showNotification(error_msg, type = "error", duration = 10)
-      rv$validation_error <- error_msg
-      return(NULL)
+      
+      # Exception: For Model 74, allow predictor_var and moderator_var to be the same
+      if(model_num == 74) {
+        # Check if the only duplicate is X=W (which is allowed for Model 74)
+        if(length(duplicate_vars) == 1 && 
+           !is.null(input$predictor_var) && input$predictor_var != "" &&
+           !is.null(input$moderator_var) && input$moderator_var != "" &&
+           input$predictor_var == input$moderator_var &&
+           duplicate_vars[1] == input$predictor_var) {
+          # This is the expected X=W for Model 74, so allow it
+          print("DEBUG: Model 74 - X=W is allowed, proceeding with analysis")
+        } else {
+          # There are other duplicates beyond X=W
+          print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
+          error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
+                              paste(unique(duplicate_vars), collapse = "', '"), 
+                              "' is/are used in more than one role.")
+          showNotification(error_msg, type = "error", duration = 10)
+          rv$validation_error <- error_msg
+          return(NULL)
+        }
+      } else {
+        # Not Model 74, so duplicates are not allowed
+        print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
+        error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
+                            paste(unique(duplicate_vars), collapse = "', '"), 
+                            "' is/are used in more than one role.")
+        showNotification(error_msg, type = "error", duration = 10)
+        rv$validation_error <- error_msg
+        return(NULL)
+      }
     }
     print("DEBUG: ===== Analysis duplicate check PASSED (outliers_analysis) =====")
     
@@ -3232,8 +3301,6 @@ server <- function(input, output, session) {
       if(isTRUE(input$diagnose)) process_args$diagnose <- 1
       if(isTRUE(input$ssquares)) process_args$ssquares <- 1
       if(input$modelres) process_args$modelres <- 1
-      if(input$dominate) process_args$dominate <- 1
-      if(input$subsets) process_args$subsets <- 1
       # xmint only for Model 4
       # When xmint=1 for Model 4, PROCESS automatically:
       #   - Converts to Model 74 internally (line 807-816)
