@@ -608,10 +608,7 @@ ui <- fluidPage(
           conditionalPanel(
             condition = "output.outcome_is_selected && output.outcome_is_continuous === true",
             div(style = "margin-bottom: 20px",
-              p(strong("Note:"), " These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value.")
-            ),
-            div(style = "margin-bottom: 20px",
-              h5("Understanding Standardized Residual Outliers"),
+              p(strong("Standardized Residual Outliers"), style = "font-weight: bold; font-size: 1.1em;"),
               p("Standardized residuals (SR) represent how many standard deviations an observed value deviates from the model's prediction. Outliers can affect analyses in several ways:",
                 tags$ul(
                   tags$li(strong("Impact on Results:"), " Outliers can inflate or deflate effects and influence statistical significance"),
@@ -1588,7 +1585,7 @@ server <- function(input, output, session) {
         
         # Create summary text with scrollable div for cases
         c(
-          "Standardized Residual Analysis:",
+          "<strong>Standardized Residual Analysis:</strong>",
           sprintf("Cases exceeding threshold (|SR| > %.1f):", input$residual_threshold),
           sprintf("Number of cases: %d (%.1f%%)", 
                   length(outliers),
@@ -1600,13 +1597,13 @@ server <- function(input, output, session) {
         )
       } else {
         c(
-          "Standardized Residual Analysis:",
+          "<strong>Standardized Residual Analysis:</strong>",
           sprintf("No cases exceed the threshold (|SR| > %.1f)", input$residual_threshold)
         )
       }
     }, error = function(e) {
       c(
-        "Standardized Residual Analysis:",
+        "<strong>Standardized Residual Analysis:</strong>",
         "Unable to compute residuals. Please check that all variables are numeric.",
         paste("Error details:", e$message)
       )
@@ -1703,9 +1700,14 @@ server <- function(input, output, session) {
           "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
           "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
           "<strong>Note on Assumption Checks:</strong><br>",
+          "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
           "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
           "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
           "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+          "</div>",
+          "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
+          "<strong>Example Reporting Format:</strong><br>",
+          "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
           "</div>",
           "<strong>Note: Binary Outcome Detected</strong><br>",
           "<em>Your outcome variable is binary (0/1). PROCESS will use logistic regression for this analysis.</em><br><br>",
@@ -1729,11 +1731,6 @@ server <- function(input, output, session) {
           "<strong>Additional Diagnostics:</strong><br>",
           paste(diagnostics, collapse = "<br>"),
           "<br><em>Note: VIF calculated for all predictors. For binary outcomes, focus on model fit statistics and residual patterns rather than normality/homoscedasticity.</em>",
-          "<br><br>",
-          "<div style='background-color: #fff9e6; padding: 10px; margin-top: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
-          "<strong>Example Reporting Format:</strong><br>",
-          "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
-          "</div>",
           "</div>",
           sep = ""
         )
@@ -1778,9 +1775,14 @@ server <- function(input, output, session) {
           "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
           "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
           "<strong>Note on Assumption Checks:</strong><br>",
+          "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
           "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
           "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
           "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+          "</div>",
+          "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
+          "<strong>Example Reporting Format:</strong><br>",
+          "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
           "</div>",
           if(length(na.omit(bin_counts)) > 0) {
             paste(
@@ -1807,11 +1809,6 @@ server <- function(input, output, session) {
           "<br><em>Interpretation:<br>",
           "- VIF > 5 suggests potential multicollinearity issues<br>",
           "- With bootstrapping, these diagnostics become less crucial as bootstrap methods are more robust to violations</em>",
-          "<br><br>",
-          "<div style='background-color: #fff9e6; padding: 10px; margin-top: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
-          "<strong>Example Reporting Format:</strong><br>",
-          "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
-          "</div>",
           "</div>",
           sep = ""
         )
@@ -4071,9 +4068,14 @@ server <- function(input, output, session) {
             "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
             "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
             "<strong>Note on Assumption Checks:</strong><br>",
+            "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
             "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
             "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
             "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+            "</div>",
+            "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
+            "<strong>Example Reporting Format:</strong><br>",
+            "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
             "</div>",
             "<strong>Note: Binary Outcome Detected</strong><br>",
             "<em>Your outcome variable is binary (0/1). PROCESS will use logistic regression for this analysis.</em><br><br>",
@@ -4097,11 +4099,6 @@ server <- function(input, output, session) {
             "<strong>Additional Diagnostics:</strong><br>",
             paste(diagnostics, collapse = "<br>"),
             "<br><em>Note: VIF calculated for all predictors. For binary outcomes, focus on model fit statistics and residual patterns rather than normality/homoscedasticity.</em>",
-            "<br><br>",
-            "<div style='background-color: #fff9e6; padding: 10px; margin-top: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
-            "<strong>Example Reporting Format:</strong><br>",
-            "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
-            "</div>",
             "</div>",
             sep = ""
           )
@@ -4124,9 +4121,14 @@ server <- function(input, output, session) {
             "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
             "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
             "<strong>Note on Assumption Checks:</strong><br>",
+            "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
             "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
             "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
             "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+            "</div>",
+            "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
+            "<strong>Example Reporting Format:</strong><br>",
+            "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
             "</div>",
             if(length(na.omit(bin_counts)) > 0) {
               paste(
@@ -4153,11 +4155,6 @@ server <- function(input, output, session) {
             "<br><em>Interpretation:<br>",
             "- VIF > 5 suggests potential multicollinearity issues<br>",
             "- With bootstrapping, these diagnostics become less crucial as bootstrap methods are more robust to violations</em>",
-            "<br><br>",
-            "<div style='background-color: #fff9e6; padding: 10px; margin-top: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
-            "<strong>Example Reporting Format:</strong><br>",
-            "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
-            "</div>",
             "</div>",
             sep = ""
           )
