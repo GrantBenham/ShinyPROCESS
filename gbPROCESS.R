@@ -2134,18 +2134,38 @@ server <- function(input, output, session) {
       
       # Model 82 requires exactly 4 mediators
       if(model_num == 82) {
-        validate(
-          need(length(input$mediator_vars) == 4,
-               "Model 82 requires exactly 4 mediators")
-        )
+        mediator_count <- length(input$mediator_vars)
+        if(mediator_count != 4) {
+          if(mediator_count < 4) {
+            error_msg <- paste0("Model 82 requires exactly 4 mediators. You have selected ", 
+                               mediator_count, " mediator(s). Please select ", (4 - mediator_count), 
+                               " more mediator(s).")
+          } else {
+            error_msg <- paste0("Model 82 requires exactly 4 mediators. You have selected ", 
+                               mediator_count, " mediators. Please remove ", (mediator_count - 4), 
+                               " mediator(s).")
+          }
+          showNotification(error_msg, type = "error", duration = 10)
+          validate(need(FALSE, error_msg))
+        }
       }
       
       # Models 83-92 require exactly 2 mediators
       if(model_num >= 83 && model_num <= 92) {
-        validate(
-          need(length(input$mediator_vars) == 2,
-               "Models 83-92 require exactly 2 mediators")
-        )
+        mediator_count <- length(input$mediator_vars)
+        if(mediator_count != 2) {
+          if(mediator_count < 2) {
+            error_msg <- paste0("Model ", model_num, " requires exactly 2 mediators. You have selected ", 
+                               mediator_count, " mediator(s). Please select ", (2 - mediator_count), 
+                               " more mediator(s).")
+          } else {
+            error_msg <- paste0("Model ", model_num, " requires exactly 2 mediators. You have selected ", 
+                               mediator_count, " mediators. Please remove ", (mediator_count - 2), 
+                               " mediator(s).")
+          }
+          showNotification(error_msg, type = "error", duration = 10)
+          validate(need(FALSE, error_msg))
+        }
       }
       print("DEBUG: Mediator validation passed")
     }
@@ -2819,18 +2839,38 @@ server <- function(input, output, session) {
       
       # Model 82 requires exactly 4 mediators
       if(model_num == 82) {
-        validate(
-          need(length(input$mediator_vars) == 4,
-               "Model 82 requires exactly 4 mediators")
-        )
+        mediator_count <- length(input$mediator_vars)
+        if(mediator_count != 4) {
+          if(mediator_count < 4) {
+            error_msg <- paste0("Model 82 requires exactly 4 mediators. You have selected ", 
+                               mediator_count, " mediator(s). Please select ", (4 - mediator_count), 
+                               " more mediator(s).")
+          } else {
+            error_msg <- paste0("Model 82 requires exactly 4 mediators. You have selected ", 
+                               mediator_count, " mediators. Please remove ", (mediator_count - 4), 
+                               " mediator(s).")
+          }
+          showNotification(error_msg, type = "error", duration = 10)
+          validate(need(FALSE, error_msg))
+        }
       }
       
       # Models 83-92 require exactly 2 mediators
       if(model_num >= 83 && model_num <= 92) {
-        validate(
-          need(length(input$mediator_vars) == 2,
-               "Models 83-92 require exactly 2 mediators")
-        )
+        mediator_count <- length(input$mediator_vars)
+        if(mediator_count != 2) {
+          if(mediator_count < 2) {
+            error_msg <- paste0("Model ", model_num, " requires exactly 2 mediators. You have selected ", 
+                               mediator_count, " mediator(s). Please select ", (2 - mediator_count), 
+                               " more mediator(s).")
+          } else {
+            error_msg <- paste0("Model ", model_num, " requires exactly 2 mediators. You have selected ", 
+                               mediator_count, " mediators. Please remove ", (mediator_count - 2), 
+                               " mediator(s).")
+          }
+          showNotification(error_msg, type = "error", duration = 10)
+          validate(need(FALSE, error_msg))
+        }
       }
     }
     
