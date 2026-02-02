@@ -758,7 +758,8 @@ server <- function(input, output, session) {
     current_model = NULL,
     is_clearing = FALSE,  # Flag to prevent observers from repopulating during clearing
     mediator_order = NULL,  # Track the order of mediator selection
-    validation_error = NULL
+    validation_error = NULL,
+    previous_model = NULL  # Track previous model to detect model changes
   )
   
   # Load PROCESS function
@@ -814,52 +815,181 @@ server <- function(input, output, session) {
   
   # Clear analysis results and all variables when model changes
   observeEvent(input$process_model, {
+    print("DEBUG: ===== MODEL CHANGE OBSERVER STARTED =====")
+    print(paste("DEBUG: New model number:", input$process_model))
+    print(paste("DEBUG: Previous model number:", rv$previous_model))
+    
+    # DEBUG: Print current values BEFORE clearing
+    print("DEBUG: Values BEFORE clearing:")
+    print(paste("  predictor_var:", if(is.null(input$predictor_var) || input$predictor_var == "") "EMPTY" else input$predictor_var))
+    print(paste("  outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
+    print(paste("  moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
+    print(paste("  moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
+    print(paste("  mediator_vars:", if(is.null(input$mediator_vars) || length(input$mediator_vars) == 0) "EMPTY" else paste(input$mediator_vars, collapse=", ")))
+    print(paste("  covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
+    print(paste("  rv$mediator_order:", if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) "NULL/EMPTY" else paste(rv$mediator_order, collapse=", ")))
+    
     # Set clearing flag to prevent observers from repopulating and validation from running
     isolate({
       rv$is_clearing <- TRUE
       rv$mediator_order <- NULL
-      rv$analysis_results <- NULL  # Clear analysis results immediately
-      rv$validation_error <- NULL
-    })
-    
-    print("DEBUG - Model changed, clearing analysis results and all variables")
-    
-    # Clear all variable selections - use reset to ensure complete clearing
-    # First clear reactive values
-    isolate({
-      rv$mediator_order <- NULL
-    })
-    
-    # Clear all selectInputs - do this synchronously
-    updateSelectInput(session, "predictor_var", selected = "")
-    updateSelectInput(session, "outcome_var", selected = "")
-    updateSelectInput(session, "moderator_var", selected = "")
-    updateSelectInput(session, "moderator2_var", selected = "")
-    updateSelectInput(session, "mediator_vars", selected = character(0))  # Use character(0) instead of NULL
-    updateSelectInput(session, "covariates", selected = NULL)
-    
-    # Force clear analysis results again to ensure UI updates
-    isolate({
       rv$analysis_results <- NULL
       rv$validation_error <- NULL
+      rv$previous_model <- input$process_model  # Store current model as previous for next change
     })
     
-    # Keep is_clearing TRUE - it will be cleared by the separate observer after UI updates complete
-    print("DEBUG - Cleared all variable selections and analysis results")
+    print("DEBUG - Model changed, resetting all variables to initial state")
+    
+    # Clear all reactive values first
+    isolate({
+      rv$mediator_order <- NULL
+      rv$validation_error <- NULL
+    })
+    
+    # CRITICAL: Now that ALL inputs are always rendered (just disabled when not relevant),
+    # we can simply use updateSelectInput to clear all of them - it will always work!
+    if(!is.null(rv$original_dataset)) {
+      vars <- names(rv$original_dataset)
+      
+      # Clear all variable inputs - they all exist in DOM now, so this will always work
+      updateSelectInput(session, "predictor_var", choices = c("Select variable" = "", vars), selected = "")
+      updateSelectInput(session, "outcome_var", choices = c("Select variable" = "", vars), selected = "")
+      updateSelectInput(session, "moderator_var", choices = c("Select variable" = "", vars), selected = "")
+      updateSelectInput(session, "moderator2_var", choices = c("Select variable" = "", vars), selected = "")
+      updateSelectInput(session, "mediator_vars", choices = c("Select variable" = "", vars), selected = character(0))
+      updateSelectInput(session, "covariates", choices = vars, selected = NULL)
+      
+      print("DEBUG: All variable inputs cleared via updateSelectInput (all inputs exist in DOM)")
+    }
+    
+    # Clear analysis results
+    isolate({
+      rv$analysis_results <- NULL
+    })
+    
+    print("DEBUG - All clearing methods attempted")
+    print("DEBUG: ===== MODEL CHANGE OBSERVER COMPLETED =====")
   })
   
   # Separate observer to clear the is_clearing flag after UI updates complete
   # This runs independently and checks if we're still clearing
+  # Wait for UI updates to complete, then clear the flag
+  # NOTE: We don't wait for inputs to be empty - they will have values once user selects them
+  # We just need to wait long enough for updateSelectInput calls to propagate
   observe({
     if(isTRUE(rv$is_clearing)) {
-      # Wait a bit for UI updates to complete, then clear the flag
-      invalidateLater(500, session)
+      # Wait for UI updates to complete, then clear the flag
+      # updateSelectInput is asynchronous, so we need to wait for it to propagate
+      invalidateLater(500, session)  # Wait 500ms for UI updates to complete
       isolate({
         rv$is_clearing <- FALSE
         print("DEBUG - Cleared is_clearing flag")
       })
     }
   }, priority = -1)  # Low priority to run after other observers
+  
+  # Real-time validation: Check for duplicate variables as user selects them
+  observeEvent(c(input$predictor_var, input$outcome_var, input$moderator_var, input$moderator2_var, input$mediator_vars, input$covariates), {
+    # Skip validation if we're in the middle of clearing (model change)
+    if(isTRUE(rv$is_clearing)) {
+      print("DEBUG: Real-time validation skipped - is_clearing is TRUE")
+      return()
+    }
+    
+    # Get current model to determine which inputs are actually in use
+    current_model <- if(!is.null(input$process_model) && input$process_model != "") {
+      as.numeric(input$process_model)
+    } else {
+      NULL
+    }
+    
+    # DEBUG: Print all current input values
+    print("DEBUG: ===== Real-time validation check =====")
+    print(paste("DEBUG: Current model:", if(is.null(current_model)) "NULL" else current_model))
+    print(paste("DEBUG: predictor_var:", if(is.null(input$predictor_var) || input$predictor_var == "") "EMPTY" else input$predictor_var))
+    print(paste("DEBUG: outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
+    print(paste("DEBUG: moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
+    print(paste("DEBUG: moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
+    print(paste("DEBUG: mediator_vars:", if(is.null(input$mediator_vars) || length(input$mediator_vars) == 0) "EMPTY" else paste(input$mediator_vars, collapse=", ")))
+    print(paste("DEBUG: covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
+    print(paste("DEBUG: rv$mediator_order:", if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) "NULL/EMPTY" else paste(rv$mediator_order, collapse=", ")))
+    
+    # Collect all selected variables - but only check enabled inputs
+    # Disabled inputs can't be changed by user, so we only validate enabled ones
+    models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
+    models_with_second_moderator <- c(2, 3)
+    models_with_mediator <- c(4, 5, 6, 7, 8, 14)
+    models_with_moderators_disabled <- c(4, 6, 80:82)
+    
+    all_vars <- character(0)
+    
+    # Always include predictor and outcome (all models use these)
+    if(!is.null(input$predictor_var) && input$predictor_var != "") {
+      all_vars <- c(all_vars, input$predictor_var)
+    }
+    if(!is.null(input$outcome_var) && input$outcome_var != "") {
+      all_vars <- c(all_vars, input$outcome_var)
+    }
+    
+    # Only include moderator_var if current model uses moderators (and it's enabled)
+    if(!is.null(current_model) && 
+       (current_model %in% models_with_moderator || current_model %in% models_with_second_moderator) &&
+       !(current_model %in% models_with_moderators_disabled)) {
+      if(!is.null(input$moderator_var) && input$moderator_var != "") {
+        all_vars <- c(all_vars, input$moderator_var)
+      }
+    }
+    
+    # Only include moderator2_var if current model uses second moderator (and it's enabled)
+    if(!is.null(current_model) && current_model %in% models_with_second_moderator) {
+      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+        all_vars <- c(all_vars, input$moderator2_var)
+      }
+    }
+    
+    # Only include mediators if current model uses mediators (and it's enabled)
+    if(!is.null(current_model) && 
+       current_model %in% models_with_mediator && 
+       !(current_model %in% c(1, 2, 3))) {
+      current_mediators <- NULL
+      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+        current_mediators <- rv$mediator_order
+      } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        current_mediators <- input$mediator_vars
+      }
+      if(!is.null(current_mediators) && length(current_mediators) > 0) {
+        all_vars <- c(all_vars, current_mediators)
+      }
+    }
+    
+    # Always include covariates (all models can use them)
+    if(!is.null(input$covariates) && length(input$covariates) > 0) {
+      all_vars <- c(all_vars, input$covariates)
+    }
+    
+    print(paste("DEBUG: All collected variables (only enabled inputs):", paste(all_vars, collapse=", ")))
+    print(paste("DEBUG: Unique variables:", paste(unique(all_vars), collapse=", ")))
+    print(paste("DEBUG: Length all_vars:", length(all_vars), "Length unique:", length(unique(all_vars))))
+    
+    # Check for duplicates
+    if(length(all_vars) > 0 && length(all_vars) != length(unique(all_vars))) {
+      duplicate_vars <- all_vars[duplicated(all_vars)]
+      print(paste("DEBUG: DUPLICATES FOUND:", paste(unique(duplicate_vars), collapse=", ")))
+      rv$validation_error <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
+                                    paste(unique(duplicate_vars), collapse = "', '"), 
+                                    "' is/are used in more than one role.")
+      showNotification(
+        rv$validation_error,
+        type = "error",
+        duration = 10
+      )
+    } else {
+      # Clear validation error if no duplicates
+      print("DEBUG: No duplicates found - clearing validation error")
+      rv$validation_error <- NULL
+    }
+    print("DEBUG: ===== End real-time validation check =====")
+  }, ignoreNULL = FALSE, ignoreInit = TRUE)
   
   # Clear analysis results when key variables change (to prevent stale data)
   observeEvent(c(input$outcome_var, input$predictor_var, input$moderator_var, input$moderator2_var), {
@@ -997,8 +1127,17 @@ server <- function(input, output, session) {
   
   # Mediator list UI with M1, M2, M3 display
   output$mediator_list_ui <- renderUI({
-    req(rv$original_dataset, input$process_model)
+    # Check if dataset and model are available
+    if(is.null(rv$original_dataset) || is.null(input$process_model) || input$process_model == "") {
+      return(NULL)
+    }
     vars <- names(rv$original_dataset)
+    
+    # Determine if mediators should be enabled for current model
+    model_num <- as.numeric(input$process_model)
+    models_with_mediator <- c(4, 5, 6, 7, 8, 14)
+    # Mediators are disabled for models 1-3
+    mediator_enabled <- model_num %in% models_with_mediator && !(model_num %in% c(1, 2, 3))
     
     # Use stored order if available, otherwise use input order
     selected_mediators <- if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
@@ -1010,10 +1149,39 @@ server <- function(input, output, session) {
     }
     
     tagList(
-      selectInput("mediator_vars", "Mediator Variable(s) (M)", 
-                 choices = c("Select variable" = "", vars), 
-                 selected = selected_mediators,
-                 multiple = TRUE),
+      div(id = "mediator_vars_wrapper", style = if(!mediator_enabled) "opacity: 0.6;" else "",
+        selectInput("mediator_vars", "Mediator Variable(s) (M)", 
+                   choices = c("Select variable" = "", vars), 
+                   selected = selected_mediators,
+                   multiple = TRUE)
+      ),
+      # Use JavaScript to properly disable/enable mediator input based on model
+      tags$script(HTML(paste0("
+        (function() {
+          function updateMediatorState() {
+            var medVar = document.getElementById('mediator_vars');
+            if (medVar) {
+              if (", if(mediator_enabled) "false" else "true", ") {
+                medVar.disabled = true;
+                medVar.style.pointerEvents = 'none';
+                medVar.style.cursor = 'not-allowed';
+              } else {
+                medVar.disabled = false;
+                medVar.style.pointerEvents = 'auto';
+                medVar.style.cursor = 'pointer';
+              }
+            }
+          }
+          // Run immediately
+          updateMediatorState();
+          // Also run after delays to catch any re-rendering
+          setTimeout(updateMediatorState, 100);
+          setTimeout(updateMediatorState, 500);
+          // Listen for Shiny events
+          $(document).on('shiny:connected', updateMediatorState);
+          $(document).on('shiny:value', updateMediatorState);
+        })();
+      "))),
       # Display selected mediators with M1, M2, M3 labels using stored order
       if(!is.null(selected_mediators) && length(selected_mediators) > 0) {
         div(style = "margin-top: 10px; padding: 10px; background-color: #f5f5f5; border-radius: 4px;",
@@ -1037,82 +1205,121 @@ server <- function(input, output, session) {
   
   # Dynamically generate variable selectors based on model
   output$variable_selectors <- renderUI({
-    req(rv$original_dataset, input$process_model)
+    # Debug output
+    print(paste("DEBUG: variable_selectors renderUI called"))
+    print(paste("DEBUG: rv$original_dataset is NULL?", is.null(rv$original_dataset)))
+    print(paste("DEBUG: input$process_model:", input$process_model))
+    
+    # Check if dataset and model are available
+    if(is.null(rv$original_dataset) || is.null(input$process_model) || input$process_model == "") {
+      print("DEBUG: variable_selectors - dataset or model not available, returning NULL")
+      return(tags$p("Please load a dataset and select a model number first."))
+    }
+    
     vars <- names(rv$original_dataset)
     model_num <- as.numeric(input$process_model)
+    print(paste("DEBUG: variable_selectors - rendering for model", model_num))
     
-    # Build variable selector UI based on model type (predictor first, outcome second)
+    # Determine which inputs should be enabled/disabled for this model
+    # Models with one moderator (W): 1, 5, 14, 15, 58, 59, 74, 83-92
+    models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
+    # Models with two moderators (W and Z): 2, 3
+    models_with_second_moderator <- c(2, 3)
+    # Models with mediators: 4, 5, 6, 7, 8, 14
+    models_with_mediator <- c(4, 5, 6, 7, 8, 14)
+    # Models with moderators disabled: 4, 6, 80-82
+    models_with_moderators_disabled <- c(4, 6, 80:82)
+    
+    # Moderator W is enabled if model uses moderators AND moderators are not disabled for this model
+    moderator_enabled <- (model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) && 
+                         !(model_num %in% models_with_moderators_disabled)
+    # Moderator Z is enabled only for models with second moderator
+    moderator2_enabled <- model_num %in% models_with_second_moderator
+    # Mediators are enabled if model uses mediators AND mediators are not disabled (models 1-3)
+    mediator_enabled <- model_num %in% models_with_mediator && !(model_num %in% c(1, 2, 3))
+    
+    # ALWAYS render ALL inputs, but disable the ones not relevant to current model
+    # This ensures updateSelectInput always works because all inputs exist in DOM
     selectors <- tagList(
       selectInput("predictor_var", "Predictor Variable (X)", 
                  choices = c("Select variable" = "", vars), 
                  selected = ""),
       selectInput("outcome_var", "Outcome Variable (Y)", 
                  choices = c("Select variable" = "", vars), 
-                 selected = "")
-    )
-    
-    # Add moderator(s) for moderation models
-    if(model_num %in% c(1, 2, 3, 14, 15, 58, 59, 74)) {
-      selectors <- tagList(selectors,
+                 selected = ""),
+      div(id = "moderator_var_wrapper", style = if(!moderator_enabled) "opacity: 0.6;" else "",
         selectInput("moderator_var", "Moderator Variable (W)", 
                    choices = c("Select variable" = "", vars), 
                    selected = "")
-      )
-      
-      # Add second moderator for models that require it
-      if(model_num %in% models_with_second_moderator) {
-        selectors <- tagList(selectors,
-          selectInput("moderator2_var", "Second Moderator Variable (Z)", 
-                     choices = c("Select variable" = "", vars), 
-                     selected = "")
-        )
-      }
-    }
-    
-    # Model 5: First and Second Stage Moderation (requires W and M)
-    if(model_num == 5) {
-      selectors <- tagList(selectors,
-        selectInput("moderator_var", "Moderator Variable (W)", 
+      ),
+      div(id = "moderator2_var_wrapper", style = if(!moderator2_enabled) "opacity: 0.6;" else "",
+        selectInput("moderator2_var", "Second Moderator Variable (Z)", 
                    choices = c("Select variable" = "", vars), 
                    selected = "")
-      )
-    }
-    
-    # Add mediator(s) for mediation models
-    # Model 4: Simple/Parallel mediation (1 or more mediators)
-    if(model_num == 4) {
-      selectors <- tagList(selectors,
-        uiOutput("mediator_list_ui"),
-        p(em("Model 4: Simple or parallel mediation (1 or more mediators)"))
-      )
-    }
-    # Model 5: First and Second Stage Moderation (requires mediator)
-    if(model_num == 5) {
-      selectors <- tagList(selectors,
-        uiOutput("mediator_list_ui"),
-        p(em("Model 5: Requires moderator W and mediator M"))
-      )
-    }
-    # Models 6, 7, 8, 14: Multiple mediators (2-6 for Model 6)
-    if(model_num %in% c(6, 7, 8, 14)) {
-      selectors <- tagList(selectors,
-        uiOutput("mediator_list_ui"),
-        p(em(if(model_num == 6) {
-          "Model 6: Parallel mediation (requires 2-6 mediators)"
-        } else if(model_num == 7) {
-          "Model 7: Serial mediation with two mediators"
-        } else if(model_num == 8) {
-          "Model 8: Parallel and serial mediation"
-        } else {
-          "Select mediator variable(s)"
-        }))
-      )
-    }
-    
-    # Add covariates (always available)
-    selectors <- tagList(selectors,
-      selectInput("covariates", "Covariates (optional)", vars, multiple = TRUE)
+      ),
+      uiOutput("mediator_list_ui"),
+      selectInput("covariates", "Covariates (optional)", vars, multiple = TRUE),
+      # Use JavaScript to properly disable/enable inputs based on model
+      tags$script(HTML(paste0("
+        (function() {
+          function updateInputStates() {
+            ", if(!moderator_enabled) "
+            var modVar = document.getElementById('moderator_var');
+            if (modVar) {
+              modVar.disabled = true;
+              modVar.style.pointerEvents = 'none';
+              modVar.style.cursor = 'not-allowed';
+            }
+            " else "
+            var modVar = document.getElementById('moderator_var');
+            if (modVar) {
+              modVar.disabled = false;
+              modVar.style.pointerEvents = 'auto';
+              modVar.style.cursor = 'pointer';
+            }
+            ", "
+            ", if(!moderator2_enabled) "
+            var mod2Var = document.getElementById('moderator2_var');
+            if (mod2Var) {
+              mod2Var.disabled = true;
+              mod2Var.style.pointerEvents = 'none';
+              mod2Var.style.cursor = 'not-allowed';
+            }
+            " else "
+            var mod2Var = document.getElementById('moderator2_var');
+            if (mod2Var) {
+              mod2Var.disabled = false;
+              mod2Var.style.pointerEvents = 'auto';
+              mod2Var.style.cursor = 'pointer';
+            }
+            ", "
+          }
+          // Run immediately
+          updateInputStates();
+          // Also run after delays to catch any re-rendering
+          setTimeout(updateInputStates, 100);
+          setTimeout(updateInputStates, 500);
+          // Listen for Shiny events
+          $(document).on('shiny:connected', updateInputStates);
+          $(document).on('shiny:value', updateInputStates);
+        })();
+      ")))
     )
+    
+    # Add help text based on model
+    if(!moderator_enabled && !mediator_enabled) {
+      selectors <- tagList(selectors,
+        p(em("Note: This model does not use moderators or mediators."))
+      )
+    } else if(!moderator_enabled) {
+      selectors <- tagList(selectors,
+        p(em("Note: Moderator inputs are disabled for this model."))
+      )
+    } else if(!mediator_enabled) {
+      selectors <- tagList(selectors,
+        p(em("Note: Mediator inputs are disabled for this model."))
+      )
+    }
     
     selectors
   })
@@ -1859,6 +2066,7 @@ server <- function(input, output, session) {
     rv$validation_error <- NULL
     
     print("DEBUG: ===== original_analysis eventReactive STARTED =====")
+    print(paste("DEBUG: rv$is_clearing is TRUE?", isTRUE(rv$is_clearing)))
     
     # Basic validation with detailed debug
     print("DEBUG: Checking basic validation...")
@@ -1877,59 +2085,14 @@ server <- function(input, output, session) {
     )
     print("DEBUG: Basic validation passed")
     
-    # GENERAL VALIDATION: Check for duplicate variables across ALL model variables
-    # Skip this check if we're in a clearing state
-    if(!isTRUE(rv$is_clearing)) {
-      # Collect all model variables
-      all_vars <- character(0)
-      
-      # Add predictor
-      if(!is.null(input$predictor_var) && input$predictor_var != "") {
-        all_vars <- c(all_vars, input$predictor_var)
-      }
-      
-      # Add outcome
-      if(!is.null(input$outcome_var) && input$outcome_var != "") {
-        all_vars <- c(all_vars, input$outcome_var)
-      }
-      
-      # Add moderator(s)
-      if(!is.null(input$moderator_var) && input$moderator_var != "") {
-        all_vars <- c(all_vars, input$moderator_var)
-      }
-      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
-        all_vars <- c(all_vars, input$moderator2_var)
-      }
-      
-      # Add mediator(s)
-      current_mediators <- NULL
-      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-        current_mediators <- rv$mediator_order
-      } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        current_mediators <- input$mediator_vars
-      }
-      if(!is.null(current_mediators) && length(current_mediators) > 0) {
-        all_vars <- c(all_vars, current_mediators)
-      }
-      
-      # Check for duplicates
-      if(length(all_vars) != length(unique(all_vars))) {
-        showNotification(
-          "Error: The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator). Please ensure each variable is used in only one role.",
-          type = "error",
-          duration = 10
-        )
-        rv$validation_error <- "The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator)."
-        return(NULL)
-      }
-    }
-    
     # Model-specific validation
     model_num <- as.numeric(input$process_model)
     print(paste("DEBUG: Model number:", model_num))
     
     # Moderation models require moderator (Model 5 handled separately)
-    if(model_num %in% c(1, 2, 3, 14, 15, 58, 59, 74)) {
+    # Models with one moderator: 1, 5, 14, 15, 58, 59, 74, 83-92
+    # Models with two moderators: 2, 3
+    if(model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74, 83:92)) {
       print("DEBUG: This is a moderation model - checking for moderator")
       print(paste("DEBUG: input$moderator_var:", input$moderator_var))
       print(paste("DEBUG: moderator_var is NULL?", is.null(input$moderator_var)))
@@ -1998,6 +2161,99 @@ server <- function(input, output, session) {
       }
       print("DEBUG: Mediator validation passed")
     }
+    
+    # Check for validation errors (set by real-time validation observer)
+    if(!is.null(rv$validation_error)) {
+      showNotification(
+        rv$validation_error,
+        type = "error",
+        duration = 10
+      )
+      return(NULL)
+    }
+    
+    # Simple duplicate check: collect all selected variables and check for duplicates
+    # IMPORTANT: Only check inputs that are relevant to the current model
+    # This prevents old values from previous models from causing false duplicate errors
+    print("DEBUG: ===== Analysis duplicate check STARTED (original_analysis) =====")
+    print(paste("DEBUG: Current model:", model_num))
+    print(paste("DEBUG: predictor_var:", if(is.null(input$predictor_var) || input$predictor_var == "") "EMPTY" else input$predictor_var))
+    print(paste("DEBUG: outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
+    print(paste("DEBUG: moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
+    print(paste("DEBUG: moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
+    print(paste("DEBUG: mediator_vars:", if(is.null(input$mediator_vars) || length(input$mediator_vars) == 0) "EMPTY" else paste(input$mediator_vars, collapse=", ")))
+    print(paste("DEBUG: covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
+    print(paste("DEBUG: rv$mediator_order:", if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) "NULL/EMPTY" else paste(rv$mediator_order, collapse=", ")))
+    
+    # Determine which inputs are actually used by the current model
+    models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
+    models_with_second_moderator <- c(2, 3)
+    models_with_mediator <- c(4, 5, 6, 7, 8, 14)
+    models_with_moderators_disabled <- c(4, 6, 80:82)
+    
+    all_vars <- character(0)
+    # Always include predictor and outcome
+    if(!is.null(input$predictor_var) && input$predictor_var != "") {
+      all_vars <- c(all_vars, input$predictor_var)
+    }
+    if(!is.null(input$outcome_var) && input$outcome_var != "") {
+      all_vars <- c(all_vars, input$outcome_var)
+    }
+    # Only include moderator_var if current model uses moderators (and moderators aren't disabled)
+    if((model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) &&
+       !(model_num %in% models_with_moderators_disabled)) {
+      if(!is.null(input$moderator_var) && input$moderator_var != "") {
+        all_vars <- c(all_vars, input$moderator_var)
+        print("DEBUG: Including moderator_var (model uses moderators)")
+      }
+    } else {
+      print("DEBUG: Ignoring moderator_var (current model doesn't use moderators or moderators are disabled)")
+    }
+    # Only include moderator2_var if current model uses second moderator
+    if(model_num %in% models_with_second_moderator) {
+      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+        all_vars <- c(all_vars, input$moderator2_var)
+        print("DEBUG: Including moderator2_var (model uses second moderator)")
+      }
+    } else {
+      print("DEBUG: Ignoring moderator2_var (current model doesn't use second moderator)")
+    }
+    # Only include mediators if current model uses mediators (and mediators aren't disabled for models 1-3)
+    if(model_num %in% models_with_mediator && !(model_num %in% c(1, 2, 3))) {
+      current_mediators <- NULL
+      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+        current_mediators <- rv$mediator_order
+      } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        current_mediators <- input$mediator_vars
+      }
+      if(!is.null(current_mediators) && length(current_mediators) > 0) {
+        all_vars <- c(all_vars, current_mediators)
+        print("DEBUG: Including mediator_vars (model uses mediators)")
+      }
+    } else {
+      print("DEBUG: Ignoring mediator_vars (current model doesn't use mediators or mediators are disabled)")
+    }
+    # Always include covariates
+    if(!is.null(input$covariates) && length(input$covariates) > 0) {
+      all_vars <- c(all_vars, input$covariates)
+    }
+    
+    print(paste("DEBUG: All collected variables:", paste(all_vars, collapse=", ")))
+    print(paste("DEBUG: Unique variables:", paste(unique(all_vars), collapse=", ")))
+    print(paste("DEBUG: Length all_vars:", length(all_vars), "Length unique:", length(unique(all_vars))))
+    
+    # Final duplicate check
+    if(length(all_vars) > 0 && length(all_vars) != length(unique(all_vars))) {
+      duplicate_vars <- all_vars[duplicated(all_vars)]
+      print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
+      error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
+                          paste(unique(duplicate_vars), collapse = "', '"), 
+                          "' is/are used in more than one role.")
+      showNotification(error_msg, type = "error", duration = 10)
+      rv$validation_error <- error_msg
+      return(NULL)
+    }
+    print("DEBUG: ===== Analysis duplicate check PASSED (original_analysis) =====")
     
     print("DEBUG: All validation passed, proceeding with req()")
     req(rv$original_dataset, input$outcome_var, input$predictor_var, input$process_model)
@@ -2520,63 +2776,18 @@ server <- function(input, output, session) {
       stop(e)
     })
     
-    # GENERAL VALIDATION: Check for duplicate variables across ALL model variables
-    # Skip this check if we're in a clearing state
-    if(!isTRUE(rv$is_clearing)) {
-      # Collect all model variables
-      all_vars <- character(0)
-      
-      # Add predictor
-      if(!is.null(input$predictor_var) && input$predictor_var != "") {
-        all_vars <- c(all_vars, input$predictor_var)
-      }
-      
-      # Add outcome
-      if(!is.null(input$outcome_var) && input$outcome_var != "") {
-        all_vars <- c(all_vars, input$outcome_var)
-      }
-      
-      # Add moderator(s)
-      if(!is.null(input$moderator_var) && input$moderator_var != "") {
-        all_vars <- c(all_vars, input$moderator_var)
-      }
-      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
-        all_vars <- c(all_vars, input$moderator2_var)
-      }
-      
-      # Add mediator(s)
-      current_mediators <- NULL
-      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-        current_mediators <- rv$mediator_order
-      } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        current_mediators <- input$mediator_vars
-      }
-      if(!is.null(current_mediators) && length(current_mediators) > 0) {
-        all_vars <- c(all_vars, current_mediators)
-      }
-      
-      # Check for duplicates
-      if(length(all_vars) != length(unique(all_vars))) {
-        showNotification(
-          "Error: The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator). Please ensure each variable is used in only one role.",
-          type = "error",
-          duration = 10
-        )
-        rv$validation_error <- "The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator)."
-        return(NULL)
-      }
-    }
-    
     # Model-specific validation
     model_num <- as.numeric(input$process_model)
-    if(model_num %in% c(1, 2, 3, 14, 15, 58, 59, 74)) {
+    # Models with one moderator: 1, 5, 14, 15, 58, 59, 74, 83-92
+    # Models with two moderators: 2, 3
+    if(model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74, 83:92)) {
       validate(
         need(!is.null(input$moderator_var) && input$moderator_var != "", 
              "Moderator variable (W) is required for this model")
       )
       
       # Models with second moderator require it to be selected
-      if(model_num %in% models_with_second_moderator) {
+      if(model_num %in% c(2, 3)) {
         validate(
           need(!is.null(input$moderator2_var) && input$moderator2_var != "", 
                "Second moderator variable (Z) is required for this model")
@@ -2593,6 +2804,100 @@ server <- function(input, output, session) {
              "Model 4 allows up to 10 mediators")
       )
     }
+    
+    # Check for validation errors (set by real-time validation observer)
+    if(!is.null(rv$validation_error)) {
+      showNotification(
+        rv$validation_error,
+        type = "error",
+        duration = 10
+      )
+      return(NULL)
+    }
+    
+    # Simple duplicate check: collect all selected variables and check for duplicates
+    # IMPORTANT: Only check inputs that are relevant to the current model
+    # This prevents old values from previous models from causing false duplicate errors
+    print("DEBUG: ===== Analysis duplicate check STARTED (outliers_analysis) =====")
+    print(paste("DEBUG: Current model:", model_num))
+    print(paste("DEBUG: predictor_var:", if(is.null(input$predictor_var) || input$predictor_var == "") "EMPTY" else input$predictor_var))
+    print(paste("DEBUG: outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
+    print(paste("DEBUG: moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
+    print(paste("DEBUG: moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
+    print(paste("DEBUG: mediator_vars:", if(is.null(input$mediator_vars) || length(input$mediator_vars) == 0) "EMPTY" else paste(input$mediator_vars, collapse=", ")))
+    print(paste("DEBUG: covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
+    print(paste("DEBUG: rv$mediator_order:", if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) "NULL/EMPTY" else paste(rv$mediator_order, collapse=", ")))
+    
+    # Determine which inputs are actually used by the current model
+    models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
+    models_with_second_moderator <- c(2, 3)
+    models_with_mediator <- c(4, 5, 6, 7, 8, 14)
+    models_with_moderators_disabled <- c(4, 6, 80:82)
+    
+    all_vars <- character(0)
+    # Always include predictor and outcome
+    if(!is.null(input$predictor_var) && input$predictor_var != "") {
+      all_vars <- c(all_vars, input$predictor_var)
+    }
+    if(!is.null(input$outcome_var) && input$outcome_var != "") {
+      all_vars <- c(all_vars, input$outcome_var)
+    }
+    # Only include moderator_var if current model uses moderators (and moderators aren't disabled)
+    if((model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) &&
+       !(model_num %in% models_with_moderators_disabled)) {
+      if(!is.null(input$moderator_var) && input$moderator_var != "") {
+        all_vars <- c(all_vars, input$moderator_var)
+        print("DEBUG: Including moderator_var (model uses moderators)")
+      }
+    } else {
+      print("DEBUG: Ignoring moderator_var (current model doesn't use moderators or moderators are disabled)")
+    }
+    # Only include moderator2_var if current model uses second moderator
+    if(model_num %in% models_with_second_moderator) {
+      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+        all_vars <- c(all_vars, input$moderator2_var)
+        print("DEBUG: Including moderator2_var (model uses second moderator)")
+      }
+    } else {
+      print("DEBUG: Ignoring moderator2_var (current model doesn't use second moderator)")
+    }
+    # Only include mediators if current model uses mediators (and mediators aren't disabled for models 1-3)
+    if(model_num %in% models_with_mediator && !(model_num %in% c(1, 2, 3))) {
+      current_mediators <- NULL
+      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+        current_mediators <- rv$mediator_order
+      } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        current_mediators <- input$mediator_vars
+      }
+      if(!is.null(current_mediators) && length(current_mediators) > 0) {
+        all_vars <- c(all_vars, current_mediators)
+        print("DEBUG: Including mediator_vars (model uses mediators)")
+      }
+    } else {
+      print("DEBUG: Ignoring mediator_vars (current model doesn't use mediators or mediators are disabled)")
+    }
+    # Always include covariates
+    if(!is.null(input$covariates) && length(input$covariates) > 0) {
+      all_vars <- c(all_vars, input$covariates)
+    }
+    
+    print(paste("DEBUG: All collected variables:", paste(all_vars, collapse=", ")))
+    print(paste("DEBUG: Unique variables:", paste(unique(all_vars), collapse=", ")))
+    print(paste("DEBUG: Length all_vars:", length(all_vars), "Length unique:", length(unique(all_vars))))
+    
+    # Final duplicate check
+    if(length(all_vars) > 0 && length(all_vars) != length(unique(all_vars))) {
+      duplicate_vars <- all_vars[duplicated(all_vars)]
+      print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
+      error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
+                          paste(unique(duplicate_vars), collapse = "', '"), 
+                          "' is/are used in more than one role.")
+      showNotification(error_msg, type = "error", duration = 10)
+      rv$validation_error <- error_msg
+      return(NULL)
+    }
+    print("DEBUG: ===== Analysis duplicate check PASSED (outliers_analysis) =====")
+    
     if(model_num == 5) {
       validate(
         need(!is.null(input$moderator_var) && input$moderator_var != "", 
