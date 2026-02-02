@@ -756,8 +756,9 @@ server <- function(input, output, session) {
     outliers_info = NULL,
     analysis_results = NULL,
     current_model = NULL,
-    validation_error = NULL,
-    mediator_order = NULL  # Track the order of mediator selection
+    is_clearing = FALSE,  # Flag to prevent observers from repopulating during clearing
+    mediator_order = NULL,  # Track the order of mediator selection
+    validation_error = NULL
   )
   
   # Load PROCESS function
@@ -787,31 +788,78 @@ server <- function(input, output, session) {
       stop("Invalid file type. Please upload a CSV or SAV file.")
     }
     
+    # Set clearing flag to prevent observers from repopulating and validation from running
+    isolate({
+      rv$is_clearing <- TRUE
+      rv$mediator_order <- NULL
+    })
+    
     rv$original_dataset <- data
     rv$current_dataset <- data
     print(paste("DEBUG - Dataset loaded with", nrow(data), "rows"))
     rv$analysis_results <- NULL  # Reset analysis results when new file is loaded
-  })
-  
-  # Clear analysis results and all variables when model changes
-  observeEvent(input$process_model, {
-    rv$analysis_results <- NULL
     rv$validation_error <- NULL
-    print("DEBUG - Model changed, clearing analysis results and all variables")
     
     # Clear all variable selections
     updateSelectInput(session, "predictor_var", selected = "")
     updateSelectInput(session, "outcome_var", selected = "")
     updateSelectInput(session, "moderator_var", selected = "")
     updateSelectInput(session, "moderator2_var", selected = "")
-    updateSelectInput(session, "mediator_vars", selected = NULL)
+    updateSelectInput(session, "mediator_vars", selected = character(0))
     updateSelectInput(session, "covariates", selected = NULL)
     
-    # Clear mediator order tracking (must be done BEFORE clearing mediator_vars)
-    rv$mediator_order <- NULL
-    
-    print("DEBUG - Cleared all variable selections")
+    # The is_clearing flag will be cleared by the separate observer after UI updates complete
+    print("DEBUG - Cleared all variable selections after dataset upload")
   })
+  
+  # Clear analysis results and all variables when model changes
+  observeEvent(input$process_model, {
+    # Set clearing flag to prevent observers from repopulating and validation from running
+    isolate({
+      rv$is_clearing <- TRUE
+      rv$mediator_order <- NULL
+      rv$analysis_results <- NULL  # Clear analysis results immediately
+      rv$validation_error <- NULL
+    })
+    
+    print("DEBUG - Model changed, clearing analysis results and all variables")
+    
+    # Clear all variable selections - use reset to ensure complete clearing
+    # First clear reactive values
+    isolate({
+      rv$mediator_order <- NULL
+    })
+    
+    # Clear all selectInputs - do this synchronously
+    updateSelectInput(session, "predictor_var", selected = "")
+    updateSelectInput(session, "outcome_var", selected = "")
+    updateSelectInput(session, "moderator_var", selected = "")
+    updateSelectInput(session, "moderator2_var", selected = "")
+    updateSelectInput(session, "mediator_vars", selected = character(0))  # Use character(0) instead of NULL
+    updateSelectInput(session, "covariates", selected = NULL)
+    
+    # Force clear analysis results again to ensure UI updates
+    isolate({
+      rv$analysis_results <- NULL
+      rv$validation_error <- NULL
+    })
+    
+    # Keep is_clearing TRUE - it will be cleared by the separate observer after UI updates complete
+    print("DEBUG - Cleared all variable selections and analysis results")
+  })
+  
+  # Separate observer to clear the is_clearing flag after UI updates complete
+  # This runs independently and checks if we're still clearing
+  observe({
+    if(isTRUE(rv$is_clearing)) {
+      # Wait a bit for UI updates to complete, then clear the flag
+      invalidateLater(500, session)
+      isolate({
+        rv$is_clearing <- FALSE
+        print("DEBUG - Cleared is_clearing flag")
+      })
+    }
+  }, priority = -1)  # Low priority to run after other observers
   
   # Clear analysis results when key variables change (to prevent stale data)
   observeEvent(c(input$outcome_var, input$predictor_var, input$moderator_var, input$moderator2_var), {
@@ -900,32 +948,50 @@ server <- function(input, output, session) {
   # Observer to track mediator selection order
   # This preserves the order in which mediators are selected, not the dataset order
   observeEvent(input$mediator_vars, {
-    if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-      current_selected <- input$mediator_vars
-      
-      # If we have a stored order, preserve it for existing variables and add new ones at the end
-      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-        # Keep existing order for variables that are still selected
-        existing_in_order <- rv$mediator_order[rv$mediator_order %in% current_selected]
-        # Add new variables at the end (in the order they appear in current_selected, but only new ones)
-        new_vars <- current_selected[!current_selected %in% rv$mediator_order]
-        rv$mediator_order <- c(existing_in_order, new_vars)
-      } else {
-        # First time selection - preserve the order from input (even if it's dataset order, it's what user sees)
-        # But we'll update it when user makes changes
-        rv$mediator_order <- current_selected
+    # Don't do anything if we're in the middle of clearing
+    if(isTRUE(rv$is_clearing)) {
+      return()
+    }
+    
+    # If mediator_vars is NULL or empty, clear the order and return immediately
+    # This prevents repopulating from stale values when switching models
+    if(is.null(input$mediator_vars) || length(input$mediator_vars) == 0) {
+      isolate({
+        rv$mediator_order <- NULL
+      })
+      return()
+    }
+    
+    current_selected <- input$mediator_vars
+    
+    # If rv$mediator_order is NULL or empty, this might be a fresh selection OR a clearing operation
+    # Only repopulate if we have mediators selected AND rv$mediator_order is truly empty (not just cleared)
+    if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) {
+      # Only set it if we actually have mediators selected (not a clearing operation)
+      # This prevents repopulation from stale input$mediator_vars values during model switching
+      if(length(current_selected) > 0) {
+        isolate({
+          rv$mediator_order <- current_selected
+        })
       }
-      
+      return()
+    }
+    
+    # If we have a stored order, preserve it for existing variables and add new ones at the end
+    # Keep existing order for variables that are still selected
+    existing_in_order <- rv$mediator_order[rv$mediator_order %in% current_selected]
+    # Add new variables at the end (in the order they appear in current_selected, but only new ones)
+    new_vars <- current_selected[!current_selected %in% rv$mediator_order]
+    
+    isolate({
+      rv$mediator_order <- c(existing_in_order, new_vars)
       # Ensure all selected variables are in the order, and remove any that are deselected
       rv$mediator_order <- rv$mediator_order[rv$mediator_order %in% current_selected]
-      
-      # If the order doesn't match current_selected exactly, update selectInput to preserve our order
-      if(!identical(rv$mediator_order, current_selected)) {
-        updateSelectInput(session, "mediator_vars", selected = rv$mediator_order)
-      }
-    } else {
-      # No mediators selected
-      rv$mediator_order <- NULL
+    })
+    
+    # If the order doesn't match current_selected exactly, update selectInput to preserve our order
+    if(!identical(rv$mediator_order, current_selected)) {
+      updateSelectInput(session, "mediator_vars", selected = rv$mediator_order)
     }
   }, ignoreNULL = FALSE, ignoreInit = TRUE)
   
@@ -1811,6 +1877,53 @@ server <- function(input, output, session) {
     )
     print("DEBUG: Basic validation passed")
     
+    # GENERAL VALIDATION: Check for duplicate variables across ALL model variables
+    # Skip this check if we're in a clearing state
+    if(!isTRUE(rv$is_clearing)) {
+      # Collect all model variables
+      all_vars <- character(0)
+      
+      # Add predictor
+      if(!is.null(input$predictor_var) && input$predictor_var != "") {
+        all_vars <- c(all_vars, input$predictor_var)
+      }
+      
+      # Add outcome
+      if(!is.null(input$outcome_var) && input$outcome_var != "") {
+        all_vars <- c(all_vars, input$outcome_var)
+      }
+      
+      # Add moderator(s)
+      if(!is.null(input$moderator_var) && input$moderator_var != "") {
+        all_vars <- c(all_vars, input$moderator_var)
+      }
+      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+        all_vars <- c(all_vars, input$moderator2_var)
+      }
+      
+      # Add mediator(s)
+      current_mediators <- NULL
+      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+        current_mediators <- rv$mediator_order
+      } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        current_mediators <- input$mediator_vars
+      }
+      if(!is.null(current_mediators) && length(current_mediators) > 0) {
+        all_vars <- c(all_vars, current_mediators)
+      }
+      
+      # Check for duplicates
+      if(length(all_vars) != length(unique(all_vars))) {
+        showNotification(
+          "Error: The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator). Please ensure each variable is used in only one role.",
+          type = "error",
+          duration = 10
+        )
+        rv$validation_error <- "The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator)."
+        return(NULL)
+      }
+    }
+    
     # Model-specific validation
     model_num <- as.numeric(input$process_model)
     print(paste("DEBUG: Model number:", model_num))
@@ -2012,56 +2125,16 @@ server <- function(input, output, session) {
       # Models 4, 5, 6, 7, 8, 14: Mediation models (with mediators)
       # Note: model_num was already defined above
       if(model_num %in% c(4, 5, 6, 7, 8, 14)) {
-        if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-          # Validate that mediators are not also used as moderators
-          if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$mediator_vars) {
-            showNotification(
-              sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var),
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var)
-            return(NULL)
-          }
-          if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$mediator_vars) {
-            showNotification(
-              sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var),
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var)
-            return(NULL)
-          }
-          # Validate that X, Y, or mediators are not duplicated
-          if(input$predictor_var %in% input$mediator_vars) {
-            showNotification(
-              sprintf("Error: Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var),
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- sprintf("Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var)
-            return(NULL)
-          }
-          if(input$outcome_var %in% input$mediator_vars) {
-            showNotification(
-              sprintf("Error: Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var),
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- sprintf("Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var)
-            return(NULL)
-          }
-          # Check for duplicate mediators
-          if(length(input$mediator_vars) != length(unique(input$mediator_vars))) {
-            showNotification(
-              "Error: Duplicate mediator variables detected. Please remove duplicates.",
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- "Duplicate mediator variables detected. Please remove duplicates."
-            return(NULL)
-          }
-          
+        # Get current mediator list - only use if rv$mediator_order is explicitly set and not empty
+        # If rv$mediator_order is NULL or empty, use input$mediator_vars (which should be empty after clearing)
+        current_mediators <- NULL
+        if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+          current_mediators <- rv$mediator_order
+        } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+          current_mediators <- input$mediator_vars
+        }
+        
+        if(!is.null(current_mediators) && length(current_mediators) > 0) {
           # Use stored order if available, otherwise use input order
           mediators_ordered <- if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
             rv$mediator_order
@@ -2079,27 +2152,15 @@ server <- function(input, output, session) {
           process_args$m <- mediator_arg
           
           # Add contrast for mediation models (Model 4 and 6 with multiple mediators)
-          if(model_num %in% c(4, 6) && input$pairwise_contrasts && length(input$mediator_vars) > 1) {
+          if(model_num %in% c(4, 6) && input$pairwise_contrasts && length(current_mediators) > 1) {
             process_args$contrast <- 1
           }
         }
       }
       
       # Add moderators ONLY for models that require them (not mediation-only models like 4, 6, 7, 8)
-      # Model 4, 6, 7, 8 are pure mediation models and don't use W or Z
-      # Model 5, 14 use both mediators and moderators
-      if(model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)) {
+      if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74)) {
         if(!is.null(input$moderator_var) && input$moderator_var != "") {
-          # Validate that moderator is not also used as mediator
-          if(!is.null(input$mediator_vars) && input$moderator_var %in% input$mediator_vars) {
-            showNotification(
-              sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var),
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var)
-            return(NULL)
-          }
           process_args$w <- input$moderator_var
           # Always generate JN data for moderation models (for plotting), regardless of checkbox
           # The checkbox only controls whether it appears in the output text
@@ -2113,25 +2174,6 @@ server <- function(input, output, session) {
         model_num <- as.numeric(input$process_model)
         if(model_num %in% models_with_second_moderator) {
           if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
-            # Validate that moderator2 is not also used as mediator or moderator1
-            if(!is.null(input$mediator_vars) && input$moderator2_var %in% input$mediator_vars) {
-              showNotification(
-                sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var),
-                type = "error",
-                duration = 10
-              )
-              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var)
-              return(NULL)
-            }
-            if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
-              showNotification(
-                "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
-                type = "error",
-                duration = 10
-              )
-              rv$validation_error <- "W and Z moderators must be different variables."
-              return(NULL)
-            }
             process_args$z <- input$moderator2_var
           }
         }
@@ -2469,12 +2511,61 @@ server <- function(input, output, session) {
         need(rv$original_dataset, "Dataset not loaded"),
         need(input$outcome_var, "Outcome variable not selected"),
         need(input$predictor_var, "Predictor variable not selected"),
-        need(input$process_model, "PROCESS model not selected")
+        need(input$process_model, "PROCESS model not selected"),
+        need(input$outcome_var != input$predictor_var, 
+             "Outcome and predictor must be different variables")
       )
     }, error = function(e) {
       rv$validation_error <- conditionMessage(e)
       stop(e)
     })
+    
+    # GENERAL VALIDATION: Check for duplicate variables across ALL model variables
+    # Skip this check if we're in a clearing state
+    if(!isTRUE(rv$is_clearing)) {
+      # Collect all model variables
+      all_vars <- character(0)
+      
+      # Add predictor
+      if(!is.null(input$predictor_var) && input$predictor_var != "") {
+        all_vars <- c(all_vars, input$predictor_var)
+      }
+      
+      # Add outcome
+      if(!is.null(input$outcome_var) && input$outcome_var != "") {
+        all_vars <- c(all_vars, input$outcome_var)
+      }
+      
+      # Add moderator(s)
+      if(!is.null(input$moderator_var) && input$moderator_var != "") {
+        all_vars <- c(all_vars, input$moderator_var)
+      }
+      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+        all_vars <- c(all_vars, input$moderator2_var)
+      }
+      
+      # Add mediator(s)
+      current_mediators <- NULL
+      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+        current_mediators <- rv$mediator_order
+      } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+        current_mediators <- input$mediator_vars
+      }
+      if(!is.null(current_mediators) && length(current_mediators) > 0) {
+        all_vars <- c(all_vars, current_mediators)
+      }
+      
+      # Check for duplicates
+      if(length(all_vars) != length(unique(all_vars))) {
+        showNotification(
+          "Error: The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator). Please ensure each variable is used in only one role.",
+          type = "error",
+          duration = 10
+        )
+        rv$validation_error <- "The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator)."
+        return(NULL)
+      }
+    }
     
     # Model-specific validation
     model_num <- as.numeric(input$process_model)
@@ -2656,94 +2747,44 @@ server <- function(input, output, session) {
       # Add model-specific variables
       # Models 4, 5, 6, 7, 8, 14: Mediation models (with mediators)
       if(model_num %in% c(4, 5, 6, 7, 8, 14)) {
-        if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-          # Validate that mediators are not also used as moderators
-          if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$mediator_vars) {
+        # Get current mediator list - only use if rv$mediator_order is explicitly set and not empty
+        # If rv$mediator_order is NULL or empty, use input$mediator_vars (which should be empty after clearing)
+        current_mediators <- NULL
+        if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
+          current_mediators <- rv$mediator_order
+        } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
+          current_mediators <- input$mediator_vars
+        }
+        
+        if(!is.null(current_mediators) && length(current_mediators) > 0) {
+          # Check for duplicate mediators within the mediator list itself
+          if(length(current_mediators) != length(unique(current_mediators))) {
             showNotification(
-              sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var),
+              "Error: The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator). Please ensure each variable is used in only one role.",
               type = "error",
               duration = 10
             )
-            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator_var)
-            return(NULL)
-          }
-          if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$mediator_vars) {
-            showNotification(
-              sprintf("Error: Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var),
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a mediator and a moderator.", input$moderator2_var)
-            return(NULL)
-          }
-          # Validate that X, Y, or mediators are not duplicated
-          if(input$predictor_var %in% input$mediator_vars) {
-            showNotification(
-              sprintf("Error: Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var),
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- sprintf("Variable '%s' cannot be used as both predictor (X) and mediator.", input$predictor_var)
-            return(NULL)
-          }
-          if(input$outcome_var %in% input$mediator_vars) {
-            showNotification(
-              sprintf("Error: Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var),
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- sprintf("Variable '%s' cannot be used as both outcome (Y) and mediator.", input$outcome_var)
-            return(NULL)
-          }
-          # Check for duplicate mediators
-          if(length(input$mediator_vars) != length(unique(input$mediator_vars))) {
-            showNotification(
-              "Error: Duplicate mediator variables detected. Please remove duplicates.",
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- "Duplicate mediator variables detected. Please remove duplicates."
+            rv$validation_error <- "The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator)."
             return(NULL)
           }
           
-          # Use stored order if available, otherwise use input order
-          mediators_ordered <- if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-            rv$mediator_order
-          } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-            input$mediator_vars
+          mediator_arg <- if(length(current_mediators) == 1) {
+            current_mediators[1]
           } else {
-            NULL
-          }
-          
-          mediator_arg <- if(length(mediators_ordered) == 1) {
-            mediators_ordered[1]
-          } else {
-            mediators_ordered
+            current_mediators
           }
           process_args$m <- mediator_arg
           
           # Add contrast for mediation models (Model 4 and 6 with multiple mediators)
-          if(model_num %in% c(4, 6) && input$pairwise_contrasts && length(input$mediator_vars) > 1) {
+          if(model_num %in% c(4, 6) && input$pairwise_contrasts && length(current_mediators) > 1) {
             process_args$contrast <- 1
           }
         }
       }
       
       # Add moderators ONLY for models that require them (not mediation-only models like 4, 6, 7, 8)
-      # Model 4, 6, 7, 8 are pure mediation models and don't use W or Z
-      # Model 5, 14 use both mediators and moderators
-      if(model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)) {
+      if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74)) {
         if(!is.null(input$moderator_var) && input$moderator_var != "") {
-          # Validate that moderator is not also used as mediator
-          if(!is.null(input$mediator_vars) && input$moderator_var %in% input$mediator_vars) {
-            showNotification(
-              sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var),
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- sprintf("Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator_var)
-            return(NULL)
-          }
           process_args$w <- input$moderator_var
           # Always generate JN data for moderation models (for plotting), regardless of checkbox
           # The checkbox only controls whether it appears in the output text
@@ -2757,25 +2798,6 @@ server <- function(input, output, session) {
         model_num <- as.numeric(input$process_model)
         if(model_num %in% models_with_second_moderator) {
           if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
-            # Validate that moderator2 is not also used as mediator or moderator1
-            if(!is.null(input$mediator_vars) && input$moderator2_var %in% input$mediator_vars) {
-              showNotification(
-                sprintf("Error: Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var),
-                type = "error",
-                duration = 10
-              )
-              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a moderator and a mediator.", input$moderator2_var)
-              return(NULL)
-            }
-            if(!is.null(input$moderator_var) && input$moderator2_var == input$moderator_var) {
-              showNotification(
-                "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
-                type = "error",
-                duration = 10
-              )
-              rv$validation_error <- "W and Z moderators must be different variables."
-              return(NULL)
-            }
             process_args$z <- input$moderator2_var
           }
         }
@@ -2992,16 +3014,26 @@ server <- function(input, output, session) {
   
   # Observer to trigger when original_analysis completes
   observeEvent(original_analysis(), {
-    print("DEBUG: original_analysis() completed, updating rv$analysis_results")
-    rv$analysis_results <- original_analysis()
-    print(paste("DEBUG: rv$analysis_results updated. Is NULL?", is.null(rv$analysis_results)))
+    # Only update if we're not in a clearing state (to prevent stale results from previous model)
+    if(!isTRUE(rv$is_clearing)) {
+      print("DEBUG: original_analysis() completed, updating rv$analysis_results")
+      rv$analysis_results <- original_analysis()
+      print(paste("DEBUG: rv$analysis_results updated. Is NULL?", is.null(rv$analysis_results)))
+    } else {
+      print("DEBUG: Skipping analysis results update - in clearing state")
+    }
   }, ignoreNULL = TRUE)
   
   # Observer to trigger when outliers_analysis completes
   observeEvent(outliers_analysis(), {
-    print("DEBUG: outliers_analysis() completed, updating rv$analysis_results")
-    rv$analysis_results <- outliers_analysis()
-    print(paste("DEBUG: rv$analysis_results updated. Is NULL?", is.null(rv$analysis_results)))
+    # Only update if we're not in a clearing state (to prevent stale results from previous model)
+    if(!isTRUE(rv$is_clearing)) {
+      print("DEBUG: outliers_analysis() completed, updating rv$analysis_results")
+      rv$analysis_results <- outliers_analysis()
+      print(paste("DEBUG: rv$analysis_results updated. Is NULL?", is.null(rv$analysis_results)))
+    } else {
+      print("DEBUG: Skipping analysis results update - in clearing state")
+    }
   }, ignoreNULL = TRUE)
   
   # Combined results reactive - use stored results from rv
@@ -3132,19 +3164,6 @@ server <- function(input, output, session) {
     settings <- analysis_results$settings
     process_output <- analysis_results$output
     
-    # Build list of main variables (not covariates) for highlighting
-    main_variables <- c(settings$predictor_var, settings$outcome_var)
-    if(!is.null(settings$mediator_vars)) {
-      main_variables <- c(main_variables, settings$mediator_vars)
-    }
-    if(!is.null(settings$moderator_var) && settings$moderator_var != "") {
-      main_variables <- c(main_variables, settings$moderator_var)
-    }
-    if(!is.null(settings$moderator2_var) && settings$moderator2_var != "") {
-      main_variables <- c(main_variables, settings$moderator2_var)
-    }
-    # Get covariate names to exclude
-    covariate_names <- if(!is.null(settings$covariates)) settings$covariates else character(0)
     
     # Start with summary
     output_text <- c(
@@ -3263,32 +3282,23 @@ server <- function(input, output, session) {
       settings
     )
     
-    # Process PROCESS output - basic formatting with red highlighting for significant results
+    # Process PROCESS output - basic formatting
     # Filter out bootstrap progress lines only
     filtered_output <- process_output[
       !grepl("^Bootstrap|^Percentile bootstrap|^\\*+ BOOTSTRAP|^Level of confidence|^\\s*$|^\\*+$|^\\s*\\||^\\s*\\d+%|^\\s*>+\\s*$", 
              process_output, ignore.case = TRUE)
     ]
     
-    # Improved formatting - highlight significant p-values more accurately
-    # Only highlight actual statistical results, not matrices or headers
+    # Basic formatting - output lines as-is
     processed_output <- character(0)
     in_covariance_matrix <- FALSE
-    in_direct_indirect_section <- FALSE
-    in_bootstrap_section <- FALSE
-    in_model_summary <- FALSE
-    in_model_coefficients <- FALSE
     xmtest_explanation_added <- FALSE
     xmint_explanation_added <- FALSE
-    model_coeff_header <- NULL  # Store header to identify column positions
-    p_col_idx <- NULL
-    llci_col_idx <- NULL
-    ulci_col_idx <- NULL
     
     for(i in seq_along(filtered_output)) {
       line <- filtered_output[i]
       
-      # Highlight important headers
+      # Bold important headers
       if(grepl("^Outcome Variable:", line, ignore.case = TRUE)) {
         processed_output <- c(processed_output, 
           paste0("<strong style='font-size: 1.1em;'>", line, "</strong>"))
@@ -3297,57 +3307,6 @@ server <- function(input, output, session) {
       if(grepl("^Test\\(s\\) of highest order unconditional interaction\\(s\\):", line, ignore.case = TRUE)) {
         processed_output <- c(processed_output, 
           paste0("<strong style='font-size: 1.1em;'>", line, "</strong>"))
-        next
-      }
-      
-      # Track bootstrap results section - skip highlighting here (different criteria)
-      if(grepl("^\\*+ BOOTSTRAP RESULTS|^BOOTSTRAP RESULTS FOR", line, ignore.case = TRUE)) {
-        in_bootstrap_section <- TRUE
-        in_model_summary <- FALSE
-        in_model_coefficients <- FALSE
-        model_coeff_header <- NULL
-        processed_output <- c(processed_output, line)
-        next
-      }
-      if(grepl("^Outcome variable:", line, ignore.case = TRUE) && in_bootstrap_section) {
-        # This is a bootstrap results table header
-        processed_output <- c(processed_output, line)
-        next
-      }
-      if(grepl("^(Coeff|BootMean|BootSE|BootLLCI|BootULCI)", line, ignore.case = TRUE) && in_bootstrap_section) {
-        # Bootstrap table column headers - skip highlighting
-        processed_output <- c(processed_output, line)
-        next
-      }
-      
-      # Track Model Summary section
-      if(grepl("^Model Summary", line, ignore.case = TRUE)) {
-        in_model_summary <- TRUE
-        in_model_coefficients <- FALSE
-        in_bootstrap_section <- FALSE
-        model_coeff_header <- NULL
-        processed_output <- c(processed_output, line)
-        next
-      }
-      
-      # Track Model (coefficients) section
-      if(grepl("^Model$", line, ignore.case = TRUE) && !in_bootstrap_section) {
-        in_model_coefficients <- TRUE
-        in_model_summary <- FALSE
-        in_bootstrap_section <- FALSE
-        model_coeff_header <- NULL
-        processed_output <- c(processed_output, line)
-        next
-      }
-      
-      # Identify column positions from header row in Model section
-      if(in_model_coefficients && grepl("^(coeff|se|t|p|LLCI|ULCI)", line, ignore.case = TRUE)) {
-        model_coeff_header <- strsplit(trimws(line), "\\s+")[[1]]
-        # Find column indices
-        p_col_idx <- which(grepl("^p$", model_coeff_header, ignore.case = TRUE))[1]
-        llci_col_idx <- which(grepl("^LLCI$", model_coeff_header, ignore.case = TRUE))[1]
-        ulci_col_idx <- which(grepl("^ULCI$", model_coeff_header, ignore.case = TRUE))[1]
-        processed_output <- c(processed_output, line)
         next
       }
       
@@ -3375,19 +3334,8 @@ server <- function(input, output, session) {
         processed_output <- c(processed_output, line)
         next
       }
-      if(grepl("^DIRECT AND INDIRECT|^TOTAL, DIRECT", line, ignore.case = TRUE)) {
-        in_covariance_matrix <- FALSE
-        in_direct_indirect_section <- TRUE
-        processed_output <- c(processed_output, line)
-        next
-      }
       if(grepl("^ANALYSIS NOTES|^\\*+$", line, ignore.case = TRUE)) {
         in_covariance_matrix <- FALSE
-        in_direct_indirect_section <- FALSE
-        in_model_summary <- FALSE
-        in_model_coefficients <- FALSE
-        in_bootstrap_section <- FALSE
-        model_coeff_header <- NULL
         processed_output <- c(processed_output, line)
         next
       }
@@ -3400,119 +3348,13 @@ server <- function(input, output, session) {
       
       # Skip header lines (but NOT variable names like "constant" or "int_1" which are actual data rows)
       # Only skip lines that are clearly headers (column names, section titles, etc.)
-      # But NOT if we're in bootstrap section (already handled above)
-      if(!in_bootstrap_section && grepl("^\\s*(Model|Outcome|coeff|se\\(|t|p|LLCI|ULCI|R|R-sq|MSE|F\\(|df|Product|Variable|Mean|SD|Min|Max|Pearson|Spearman|effect|Effect|BootSE|BootLLCI|BootULCI|^\\s*$|Direct effect|Indirect effect|TOTAL|Completely standardized|Partially standardized|Specific indirect)", line, ignore.case = TRUE)) {
+      if(grepl("^\\s*(Model|Outcome|coeff|se\\(|t|p|LLCI|ULCI|R|R-sq|MSE|F\\(|df|Product|Variable|Mean|SD|Min|Max|Pearson|Spearman|effect|Effect|BootSE|BootLLCI|BootULCI|^\\s*$|Direct effect|Indirect effect|TOTAL|Completely standardized|Partially standardized|Specific indirect)", line, ignore.case = TRUE)) {
         processed_output <- c(processed_output, line)
         next
       }
       
-      # Skip bootstrap section rows (they use different significance criteria)
-      if(in_bootstrap_section) {
-        processed_output <- c(processed_output, line)
-        next
-      }
-      
-      # For direct/indirect effects section, check for significant results
-      if(in_direct_indirect_section) {
-        # Direct effect and indirect effects can have significant p-values
-        # Format: effect, se, t, p, LLCI, ULCI (for direct effects)
-        # Or: Effect, BootSE, BootLLCI, BootULCI (for indirect effects with bootstrapping)
-        # Direct effect lines start with spaces and numbers: "     0.8939    0.1079    8.2842    0.0000..."
-        line_parts <- strsplit(trimws(line), "\\s+")[[1]]
-        
-        has_significant_p <- FALSE
-        
-        # Check if this is a data row (has numbers)
-        if(length(line_parts) >= 4) {
-          # Check if first part is a number (direct effect row) or variable name
-          first_part <- line_parts[1]
-          is_data_row <- grepl("^-?\\d+\\.?\\d*$", first_part) || 
-                        !grepl("^(effect|Effect|TOTAL|ULS10|PrSS|C1|C2|C3|C4|C5|C6)$", first_part, ignore.case = TRUE)
-          
-          if(is_data_row) {
-            # Look for p-value in typical position (4th-6th column for direct effects)
-            for(j in 4:min(6, length(line_parts))) {
-              p_val <- line_parts[j]
-              # Check if it looks like a number (could be p-value)
-              # Match numbers with any number of decimal places
-              if(grepl("^-?\\d+\\.?\\d*$", p_val)) {
-                p_num <- tryCatch(as.numeric(p_val), warning = function(e) NA, error = function(e) NA)
-                # Check if it's a valid p-value between 0 and 0.05
-                if(!is.na(p_num) && p_num < 0.05 && p_num >= 0) {
-                  has_significant_p <- TRUE
-                  break
-                }
-              }
-            }
-          }
-        }
-        
-        # Check for explicit "< 0.05" patterns
-        if(grepl("<\\s*0?\\.?0?5|p\\s*<\\s*0?\\.?0?0?1", line, ignore.case = TRUE)) {
-          has_significant_p <- TRUE
-        }
-        
-        if(has_significant_p) {
-          processed_output <- c(processed_output, 
-            paste0("<span style='color: red; font-weight: bold;'>", line, "</span>"))
-        } else {
-          processed_output <- c(processed_output, line)
-        }
-        next
-      }
-      
-      has_significant_p <- FALSE
-      
-      # Pattern 1: Model Summary section - check for significant p-value
-      if(in_model_summary) {
-        # Model summary format: R, R-sq, MSE, F, df1, df2, p
-        # Look for line with numbers ending in p-value
-        line_parts <- strsplit(trimws(line), "\\s+")[[1]]
-        if(length(line_parts) >= 7) {
-          # Last column should be p-value
-          p_val <- line_parts[length(line_parts)]
-          if(grepl("^-?\\d+\\.?\\d*$", p_val)) {
-            p_num <- tryCatch(as.numeric(p_val), warning = function(e) NA, error = function(e) NA)
-            if(!is.na(p_num) && p_num <= 0.05 && p_num >= 0 && p_num <= 1) {
-              has_significant_p <- TRUE
-            }
-          }
-        }
-      }
-      
-      # Pattern 2: Model coefficients table - use identified column positions
-      if(in_model_coefficients && !is.null(model_coeff_header) && !is.null(p_col_idx)) {
-        line_parts <- strsplit(trimws(line), "\\s+")[[1]]
-        if(length(line_parts) >= p_col_idx) {
-          first_part <- line_parts[1]
-          # Only check main model variables (not covariates)
-          is_main_variable <- grepl("^int_", first_part, ignore.case = TRUE) || 
-                            (first_part %in% main_variables) ||
-                            grepl("^constant$", first_part, ignore.case = TRUE)
-          
-          if(is_main_variable && length(line_parts) >= p_col_idx) {
-            p_val <- line_parts[p_col_idx]
-            if(grepl("^-?\\d+\\.?\\d*$", p_val)) {
-              p_num <- tryCatch(as.numeric(p_val), warning = function(e) NA, error = function(e) NA)
-              if(!is.na(p_num) && p_num <= 0.05 && p_num >= 0 && p_num <= 1) {
-                has_significant_p <- TRUE
-              }
-            }
-          }
-        }
-      }
-      
-      # Pattern 3: Explicit "< 0.05" or "< .05" or "p < .001" (for other sections)
-      if(!in_model_summary && !in_model_coefficients && grepl("<\\s*0?\\.?0?5|p\\s*<\\s*0?\\.?0?0?1", line, ignore.case = TRUE)) {
-        has_significant_p <- TRUE
-      }
-      
-      if(has_significant_p) {
-        processed_output <- c(processed_output, 
-          paste0("<span style='color: red; font-weight: bold;'>", line, "</span>"))
-      } else {
-        processed_output <- c(processed_output, line)
-      }
+      # Output all other lines as-is
+      processed_output <- c(processed_output, line)
     }
     
     # Combine all output
@@ -3526,6 +3368,12 @@ server <- function(input, output, session) {
   # Display analysis results
   output$analysis_output <- renderUI({
     print("DEBUG: analysis_output renderUI called")
+    
+    # If analysis results are NULL (e.g., after model switch), show empty state
+    if(is.null(rv$analysis_results)) {
+      print("DEBUG: rv$analysis_results is NULL, showing empty state")
+      return(HTML("<div style='padding: 20px; text-align: center; color: #666;'>Run an analysis to see results here.</div>"))
+    }
     
     # Check for validation errors first
     if(!is.null(rv$validation_error)) {
