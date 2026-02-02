@@ -755,9 +755,11 @@ server <- function(input, output, session) {
     analysis_results = NULL,
     current_model = NULL,
     is_clearing = FALSE,  # Flag to prevent observers from repopulating during clearing
-    mediator_order = NULL,  # Track the order of mediator selection
+    # mediator_order removed - using mediator_vars_collected() reactive instead
     validation_error = NULL,
-    previous_model = NULL  # Track previous model to detect model changes
+    previous_model = NULL,  # Track previous model to detect model changes
+    mediator_ui_initialized = FALSE,  # Track if mediator selectInput has been initialized
+    mediator_count_last_model = NULL  # Track last model to detect when to reset mediator_count
   )
   
   # Load PROCESS function
@@ -823,7 +825,8 @@ server <- function(input, output, session) {
     print(paste("  outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
     print(paste("  moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
     print(paste("  moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
-    print(paste("  mediator_vars:", if(is.null(input$mediator_vars) || length(input$mediator_vars) == 0) "EMPTY" else paste(input$mediator_vars, collapse=", ")))
+    print(paste("  mediator_count:", if(is.null(input$mediator_count) || input$mediator_count == "") "EMPTY" else input$mediator_count))
+    print(paste("  mediator_vars_collected:", if(is.null(mediator_vars_collected()) || length(mediator_vars_collected()) == 0) "EMPTY" else paste(mediator_vars_collected(), collapse=", ")))
     print(paste("  covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
     print(paste("  rv$mediator_order:", if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) "NULL/EMPTY" else paste(rv$mediator_order, collapse=", ")))
     
@@ -854,8 +857,13 @@ server <- function(input, output, session) {
       updateSelectInput(session, "outcome_var", choices = c("Select variable" = "", vars), selected = "")
       updateSelectInput(session, "moderator_var", choices = c("Select variable" = "", vars), selected = "")
       updateSelectInput(session, "moderator2_var", choices = c("Select variable" = "", vars), selected = "")
-      updateSelectInput(session, "mediator_vars", choices = c("Select variable" = "", vars), selected = character(0))
       updateSelectInput(session, "covariates", choices = vars, selected = NULL)
+      
+      # Clear mediator count and all individual mediator selects (M1, M2, M3, etc.)
+      updateSelectInput(session, "mediator_count", selected = "")
+      for(i in 1:10) {  # Clear up to 10 (max for Model 4)
+        updateSelectInput(session, paste0("mediator_m", i), choices = c("Select variable" = "", vars), selected = "")
+      }
       
       print("DEBUG: All variable inputs cleared via updateSelectInput (all inputs exist in DOM)")
     }
@@ -887,7 +895,21 @@ server <- function(input, output, session) {
   }, priority = -1)  # Low priority to run after other observers
   
   # Real-time validation: Check for duplicate variables as user selects them
-  observeEvent(c(input$predictor_var, input$outcome_var, input$moderator_var, input$moderator2_var, input$mediator_vars, input$covariates), {
+  # Use debounce to prevent rapid firing when user is typing/deleting quickly
+  validation_trigger <- reactive({
+    list(
+      predictor = input$predictor_var,
+      outcome = input$outcome_var,
+      moderator = input$moderator_var,
+      moderator2 = input$moderator2_var,
+      mediators = mediator_vars_collected(),
+      covariates = input$covariates
+    )
+  })
+  
+  validation_trigger_debounced <- debounce(validation_trigger, millis = 300)
+  
+  observeEvent(validation_trigger_debounced(), {
     # Skip validation if we're in the middle of clearing (model change)
     if(isTRUE(rv$is_clearing)) {
       print("DEBUG: Real-time validation skipped - is_clearing is TRUE")
@@ -908,9 +930,10 @@ server <- function(input, output, session) {
     print(paste("DEBUG: outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
     print(paste("DEBUG: moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
     print(paste("DEBUG: moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
-    print(paste("DEBUG: mediator_vars:", if(is.null(input$mediator_vars) || length(input$mediator_vars) == 0) "EMPTY" else paste(input$mediator_vars, collapse=", ")))
+    mediator_vars_current <- mediator_vars_collected()
+    print(paste("DEBUG: mediator_count:", if(is.null(input$mediator_count) || input$mediator_count == "") "EMPTY" else input$mediator_count))
+    print(paste("DEBUG: mediator_vars_collected:", if(is.null(mediator_vars_current) || length(mediator_vars_current) == 0) "EMPTY" else paste(mediator_vars_current, collapse=", ")))
     print(paste("DEBUG: covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
-    print(paste("DEBUG: rv$mediator_order:", if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) "NULL/EMPTY" else paste(rv$mediator_order, collapse=", ")))
     
     # Collect all selected variables - but only check enabled inputs
     # Disabled inputs can't be changed by user, so we only validate enabled ones
@@ -945,15 +968,10 @@ server <- function(input, output, session) {
     }
     
     # Only include mediators if current model uses mediators (models 4-92)
+    # Use mediator_vars_collected() - collects M1, M2, M3... in order
     if(!is.null(current_model) && current_model >= 4 && current_model <= 92) {
-      current_mediators <- NULL
-      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-        current_mediators <- rv$mediator_order
-      } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        current_mediators <- input$mediator_vars
-      }
-      if(!is.null(current_mediators) && length(current_mediators) > 0) {
-        all_vars <- c(all_vars, current_mediators)
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        all_vars <- c(all_vars, mediator_vars_current)
       }
     }
     
@@ -1060,138 +1078,156 @@ server <- function(input, output, session) {
   })
   outputOptions(output, "is_mediation_model", suspendWhenHidden = FALSE)
   
-  # Count of mediators for conditional display
+  # Count of mediators for conditional display (now based on mediator_count input)
   output$mediator_count <- reactive({
-    if(is.null(input$mediator_vars)) {
+    if(is.null(input$mediator_count) || input$mediator_count == "" || is.na(as.numeric(input$mediator_count))) {
       0
     } else {
-      length(input$mediator_vars)
+      as.integer(input$mediator_count)
     }
   })
   outputOptions(output, "mediator_count", suspendWhenHidden = FALSE)
   
-  # Observer to track mediator selection order
-  # This preserves the order in which mediators are selected, not the dataset order
-  observeEvent(input$mediator_vars, {
-    # Don't do anything if we're in the middle of clearing
-    if(isTRUE(rv$is_clearing)) {
-      return()
+  # NEW APPROACH: Collect mediators from individual M1, M2, M3... selects
+  # This reactive collects all mediator inputs into a vector (replaces input$mediator_vars)
+  mediator_vars_collected <- reactive({
+    # Check if dataset and model are available
+    if(is.null(rv$original_dataset) || is.null(input$process_model) || input$process_model == "") {
+      return(NULL)
     }
     
-    # If mediator_vars is NULL or empty, clear the order and return immediately
-    # This prevents repopulating from stale values when switching models
-    if(is.null(input$mediator_vars) || length(input$mediator_vars) == 0) {
-      isolate({
-        rv$mediator_order <- NULL
-      })
-      return()
+    model_num <- as.numeric(input$process_model)
+    if(model_num < 4 || model_num > 92) {
+      return(NULL)  # No mediators for models 1-3
     }
     
-    current_selected <- input$mediator_vars
+    # Get the number of mediators user wants
+    # mediator_count is now a character string from selectInput
+    mediator_count <- if(!is.null(input$mediator_count) && input$mediator_count != "" && !is.na(as.numeric(input$mediator_count)) && as.numeric(input$mediator_count) > 0) {
+      as.integer(input$mediator_count)
+    } else {
+      0
+    }
     
-    # If rv$mediator_order is NULL or empty, this might be a fresh selection OR a clearing operation
-    # Only repopulate if we have mediators selected AND rv$mediator_order is truly empty (not just cleared)
-    if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) {
-      # Only set it if we actually have mediators selected (not a clearing operation)
-      # This prevents repopulation from stale input$mediator_vars values during model switching
-      if(length(current_selected) > 0) {
-        isolate({
-          rv$mediator_order <- current_selected
-        })
+    if(mediator_count == 0) {
+      return(NULL)
+    }
+    
+    # Collect M1, M2, M3... in order (only non-empty values)
+    mediators <- character(0)
+    for(i in 1:mediator_count) {
+      input_name <- paste0("mediator_m", i)
+      if(!is.null(input[[input_name]]) && input[[input_name]] != "") {
+        mediators <- c(mediators, input[[input_name]])
       }
-      return()
     }
     
-    # If we have a stored order, preserve it for existing variables and add new ones at the end
-    # Keep existing order for variables that are still selected
-    existing_in_order <- rv$mediator_order[rv$mediator_order %in% current_selected]
-    # Add new variables at the end (in the order they appear in current_selected, but only new ones)
-    new_vars <- current_selected[!current_selected %in% rv$mediator_order]
-    
-    isolate({
-      rv$mediator_order <- c(existing_in_order, new_vars)
-      # Ensure all selected variables are in the order, and remove any that are deselected
-      rv$mediator_order <- rv$mediator_order[rv$mediator_order %in% current_selected]
-    })
-    
-    # If the order doesn't match current_selected exactly, update selectInput to preserve our order
-    if(!identical(rv$mediator_order, current_selected)) {
-      updateSelectInput(session, "mediator_vars", selected = rv$mediator_order)
+    if(length(mediators) > 0) {
+      return(mediators)
+    } else {
+      return(NULL)
     }
-  }, ignoreNULL = FALSE, ignoreInit = TRUE)
+  })
   
-  # Mediator list UI with M1, M2, M3 display
+  # Mediator list UI with dropdown for count + individual M1, M2, M3... selects
+  # Using selectInput (dropdown) instead of numericInput to avoid infinite loop issues
   output$mediator_list_ui <- renderUI({
     # Check if dataset and model are available
     if(is.null(rv$original_dataset) || is.null(input$process_model) || input$process_model == "") {
       return(NULL)
     }
-    vars <- names(rv$original_dataset)
     
-    # Determine if mediators should be enabled for current model
+    vars <- names(rv$original_dataset)
     model_num <- as.numeric(input$process_model)
-    # Mediators are enabled for models 4-92 (disabled only for models 1-3)
     mediator_enabled <- model_num >= 4 && model_num <= 92
     
-    # Use stored order if available, otherwise use input order
-    selected_mediators <- if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-      rv$mediator_order
-    } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-      input$mediator_vars
+    if(!mediator_enabled) {
+      return(NULL)
+    }
+    
+    # Determine max mediators based on model
+    max_mediators <- if(model_num == 4) {
+      10
+    } else if(model_num == 6) {
+      6
+    } else if(model_num == 82) {
+      4
+    } else if(model_num >= 83 && model_num <= 92) {
+      2
     } else {
-      NULL
+      10  # Default max for other models
+    }
+    
+    # Create choices for dropdown: "Select..." option + numbers 1 to max_mediators
+    count_choices <- c("Select number..." = "", as.character(1:max_mediators))
+    names(count_choices)[2:(max_mediators + 1)] <- 1:max_mediators
+    
+    # Get current count for determining how many M1, M2, M3... selects to show
+    current_count <- if(!is.null(input$mediator_count) && input$mediator_count != "" && !is.na(as.numeric(input$mediator_count)) && as.numeric(input$mediator_count) > 0) {
+      min(as.integer(input$mediator_count), max_mediators)
+    } else {
+      0
     }
     
     tagList(
-      div(id = "mediator_vars_wrapper", style = if(!mediator_enabled) "opacity: 0.6;" else "",
-        selectInput("mediator_vars", "Mediator Variable(s) (M)", 
-                   choices = c("Select variable" = "", vars), 
-                   selected = selected_mediators,
-                   multiple = TRUE)
-      ),
-      # Use JavaScript to properly disable/enable mediator input based on model
-      tags$script(HTML(paste0("
-        (function() {
-          function updateMediatorState() {
-            var medVar = document.getElementById('mediator_vars');
-            if (medVar) {
-              if (", if(mediator_enabled) "false" else "true", ") {
-                medVar.disabled = true;
-                medVar.style.pointerEvents = 'none';
-                medVar.style.cursor = 'not-allowed';
-              } else {
-                medVar.disabled = false;
-                medVar.style.pointerEvents = 'auto';
-                medVar.style.cursor = 'pointer';
-              }
-            }
+      # Number of mediators dropdown
+      selectInput("mediator_count", 
+                  "Number of Mediators:", 
+                  choices = count_choices,
+                  selected = if(current_count > 0) as.character(current_count) else ""),
+      
+      # Dynamic M1, M2, M3... selects
+      if(current_count > 0) {
+        lapply(1:current_count, function(i) {
+          # Get current value for this mediator slot (if any)
+          current_val <- if(!is.null(input[[paste0("mediator_m", i)]]) && input[[paste0("mediator_m", i)]] != "") {
+            input[[paste0("mediator_m", i)]]
+          } else {
+            ""
           }
-          // Run immediately
-          updateMediatorState();
-          // Also run after delays to catch any re-rendering
-          setTimeout(updateMediatorState, 100);
-          setTimeout(updateMediatorState, 500);
-          // Listen for Shiny events
-          $(document).on('shiny:connected', updateMediatorState);
-          $(document).on('shiny:value', updateMediatorState);
-        })();
-      "))),
-      # Display selected mediators with M1, M2, M3 labels using stored order
-      if(!is.null(selected_mediators) && length(selected_mediators) > 0) {
-        div(style = "margin-top: 10px; padding: 10px; background-color: #f5f5f5; border-radius: 4px;",
-          h6(strong("Mediator Order (order matters for serial mediation):")),
-          lapply(seq_along(selected_mediators), function(i) {
-            div(style = "margin: 5px 0;",
-              tags$span(style = "font-weight: bold; color: #0066cc;", paste0("M", i, ": ")),
-              tags$span(selected_mediators[i])
-            )
-          }),
-          p(style = "font-size: 11px; color: #666; margin-top: 5px;",
-            em("Note: To reorder mediators, deselect and reselect them in the desired order."))
-        )
+          
+          selectInput(paste0("mediator_m", i),
+                     paste0("M", i, ":"),
+                     choices = c("Select variable" = "", vars),
+                     selected = current_val)
+        })
       }
     )
   })
+  
+  # Observer to clear all mediator inputs when mediator_count changes
+  # This ensures a clean slate when user changes the number of mediators
+  observeEvent(input$mediator_count, {
+    # Skip if we're in the middle of clearing (model change)
+    if(isTRUE(rv$is_clearing)) {
+      return()
+    }
+    
+    # Skip if dataset not available
+    if(is.null(rv$original_dataset)) {
+      return()
+    }
+    
+    vars <- names(rv$original_dataset)
+    
+    # Get the new count
+    new_count <- if(!is.null(input$mediator_count) && input$mediator_count != "" && !is.na(as.numeric(input$mediator_count))) {
+      as.integer(input$mediator_count)
+    } else {
+      0
+    }
+    
+    # Clear all mediator inputs (up to max of 10)
+    # This ensures that if user changes from 3 to 2, M3 gets cleared
+    # And if they change from 2 to 3, M3 starts fresh
+    for(i in 1:10) {
+      updateSelectInput(session, paste0("mediator_m", i), 
+                        choices = c("Select variable" = "", vars), 
+                        selected = "")
+    }
+    
+    print(paste("DEBUG: Mediator count changed to", new_count, "- all mediator inputs cleared"))
+  }, ignoreInit = TRUE)  # ignoreInit = TRUE prevents clearing on initial load
   
   # Define which models require a second moderator (Z)
   # This list can be easily extended by adding model numbers
@@ -1333,7 +1369,8 @@ server <- function(input, output, session) {
   output$has_continuous_selected <- reactive({
     req(rv$original_dataset, input$outcome_var, input$predictor_var)
     selected_vars <- c(input$outcome_var, input$predictor_var)
-    if(!is.null(input$mediator_vars)) selected_vars <- c(selected_vars, input$mediator_vars)
+    mediator_vars_current <- mediator_vars_collected()
+    if(!is.null(mediator_vars_current)) selected_vars <- c(selected_vars, mediator_vars_current)
     if(!is.null(input$moderator_var)) selected_vars <- c(selected_vars, input$moderator_var)
     if(!is.null(input$moderator2_var)) selected_vars <- c(selected_vars, input$moderator2_var)
     any(vapply(selected_vars, function(v) is_continuous_variable(rv$original_dataset, v), logical(1)))
@@ -1376,7 +1413,7 @@ server <- function(input, output, session) {
       data = rv$original_dataset,
       outcome_var = input$outcome_var,
       predictor_var = input$predictor_var,
-      mediator_vars = input$mediator_vars,
+      mediator_vars = mediator_vars_collected(),
       moderator_var = input$moderator_var,
       moderator2_var = input$moderator2_var,
       covariates = input$covariates,
@@ -1405,8 +1442,9 @@ server <- function(input, output, session) {
       }
       
       # Add mediators for mediation models
-      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+      mediator_vars_current <- mediator_vars_collected()
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(mediator_vars_current, collapse = " + "))
       }
       
       # Add covariates
@@ -1562,8 +1600,9 @@ server <- function(input, output, session) {
       }
       
       # Add mediators for mediation models
-      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+      mediator_vars_current <- mediator_vars_collected()
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(mediator_vars_current, collapse = " + "))
       }
       
       # Add covariates
@@ -1599,8 +1638,9 @@ server <- function(input, output, session) {
           bin_counts <- c(bin_counts,
             binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
         }
-        if(!is.null(input$mediator_vars)) {
-          for(med in input$mediator_vars) {
+        mediator_vars_current <- mediator_vars_collected()
+        if(!is.null(mediator_vars_current)) {
+          for(med in mediator_vars_current) {
             bin_counts <- c(bin_counts,
               binary_count_lines(rv$original_dataset, med, paste0("Mediator ", med, " (original)")))
           }
@@ -1659,8 +1699,9 @@ server <- function(input, output, session) {
           bin_counts <- c(bin_counts,
             binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
         }
-        if(!is.null(input$mediator_vars)) {
-          for(med in input$mediator_vars) {
+        mediator_vars_current <- mediator_vars_collected()
+        if(!is.null(mediator_vars_current)) {
+          for(med in mediator_vars_current) {
             bin_counts <- c(bin_counts,
               binary_count_lines(rv$original_dataset, med, paste0("Mediator ", med, " (original)")))
           }
@@ -1727,8 +1768,9 @@ server <- function(input, output, session) {
       if(!is.null(input$moderator_var)) {
         formula_terms <- c(formula_terms, "*", input$moderator_var)
       }
-      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+      mediator_vars_current <- mediator_vars_collected()
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(mediator_vars_current, collapse = " + "))
       }
       if(!is.null(input$covariates) && length(input$covariates) > 0) {
         formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
@@ -1774,8 +1816,9 @@ server <- function(input, output, session) {
       if(!is.null(input$moderator_var)) {
         formula_terms <- c(formula_terms, "*", input$moderator_var)
       }
-      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+      mediator_vars_current <- mediator_vars_collected()
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(mediator_vars_current, collapse = " + "))
       }
       if(!is.null(input$covariates) && length(input$covariates) > 0) {
         formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
@@ -1876,8 +1919,9 @@ server <- function(input, output, session) {
       if(!is.null(input$moderator_var)) {
         formula_terms <- c(formula_terms, "*", input$moderator_var)
       }
-      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+      mediator_vars_current <- mediator_vars_collected()
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        formula_terms <- c(formula_terms, "+", paste(mediator_vars_current, collapse = " + "))
       }
       if(!is.null(input$covariates) && length(input$covariates) > 0) {
         formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
@@ -1932,7 +1976,8 @@ server <- function(input, output, session) {
     
     tryCatch({
       selected_vars <- c(input$outcome_var, input$predictor_var)
-      if(!is.null(input$mediator_vars)) selected_vars <- c(selected_vars, input$mediator_vars)
+      mediator_vars_current <- mediator_vars_collected()
+      if(!is.null(mediator_vars_current)) selected_vars <- c(selected_vars, mediator_vars_current)
       if(!is.null(input$moderator_var)) selected_vars <- c(selected_vars, input$moderator_var)
       
       cont_vars <- selected_vars[vapply(selected_vars, function(v) is_continuous_variable(rv$original_dataset, v), logical(1))]
@@ -2027,8 +2072,9 @@ server <- function(input, output, session) {
           # Check if removing outliers would leave enough cases
           reduced_data <- rv$original_dataset[-outliers$cases, ]
           all_vars <- c(input$outcome_var, input$predictor_var)
-          if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-            all_vars <- c(all_vars, input$mediator_vars)
+          mediator_vars_current <- mediator_vars_collected()
+          if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+            all_vars <- c(all_vars, mediator_vars_current)
           }
           if(!is.null(input$moderator_var) && input$moderator_var != "") {
             all_vars <- c(all_vars, input$moderator_var)
@@ -2110,16 +2156,17 @@ server <- function(input, output, session) {
     # Models 4-92: All require at least one mediator
     if(model_num >= 4 && model_num <= 92) {
       print("DEBUG: This model requires mediator(s) - checking for mediator(s)")
-      print(paste("DEBUG: input$mediator_vars:", paste(input$mediator_vars, collapse=", ")))
+      mediator_vars_current <- mediator_vars_collected()
+      print(paste("DEBUG: mediator_vars_collected:", if(is.null(mediator_vars_current) || length(mediator_vars_current) == 0) "EMPTY" else paste(mediator_vars_current, collapse=", ")))
       validate(
-        need(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0, 
+        need(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0, 
              "At least one mediator variable is required for this model")
       )
       
       # Model 4 allows up to 10 mediators
       if(model_num == 4) {
         validate(
-          need(length(input$mediator_vars) <= 10,
+          need(length(mediator_vars_current) <= 10,
                "Model 4 allows up to 10 mediators")
         )
       }
@@ -2127,14 +2174,14 @@ server <- function(input, output, session) {
       # Model 6 requires 2-6 mediators
       if(model_num == 6) {
         validate(
-          need(length(input$mediator_vars) >= 2 && length(input$mediator_vars) <= 6,
+          need(length(mediator_vars_current) >= 2 && length(mediator_vars_current) <= 6,
                "Model 6 requires between 2 and 6 mediators")
         )
       }
       
       # Model 82 requires exactly 4 mediators
       if(model_num == 82) {
-        mediator_count <- length(input$mediator_vars)
+        mediator_count <- length(mediator_vars_current)
         if(mediator_count != 4) {
           if(mediator_count < 4) {
             error_msg <- paste0("Model 82 requires exactly 4 mediators. You have selected ", 
@@ -2152,7 +2199,7 @@ server <- function(input, output, session) {
       
       # Models 83-92 require exactly 2 mediators
       if(model_num >= 83 && model_num <= 92) {
-        mediator_count <- length(input$mediator_vars)
+        mediator_count <- length(mediator_vars_current)
         if(mediator_count != 2) {
           if(mediator_count < 2) {
             error_msg <- paste0("Model ", model_num, " requires exactly 2 mediators. You have selected ", 
@@ -2199,9 +2246,10 @@ server <- function(input, output, session) {
     print(paste("DEBUG: outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
     print(paste("DEBUG: moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
     print(paste("DEBUG: moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
-    print(paste("DEBUG: mediator_vars:", if(is.null(input$mediator_vars) || length(input$mediator_vars) == 0) "EMPTY" else paste(input$mediator_vars, collapse=", ")))
+    mediator_vars_current <- mediator_vars_collected()
+    print(paste("DEBUG: mediator_count:", if(is.null(input$mediator_count) || input$mediator_count == "") "EMPTY" else input$mediator_count))
+    print(paste("DEBUG: mediator_vars_collected:", if(is.null(mediator_vars_current) || length(mediator_vars_current) == 0) "EMPTY" else paste(mediator_vars_current, collapse=", ")))
     print(paste("DEBUG: covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
-    print(paste("DEBUG: rv$mediator_order:", if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) "NULL/EMPTY" else paste(rv$mediator_order, collapse=", ")))
     
     # Determine which inputs are actually used by the current model
     models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
@@ -2237,12 +2285,7 @@ server <- function(input, output, session) {
     }
     # Only include mediators if current model uses mediators (models 4-92)
     if(model_num >= 4 && model_num <= 92) {
-      current_mediators <- NULL
-      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-        current_mediators <- rv$mediator_order
-      } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        current_mediators <- input$mediator_vars
-      }
+      current_mediators <- mediator_vars_collected()
       if(!is.null(current_mediators) && length(current_mediators) > 0) {
         all_vars <- c(all_vars, current_mediators)
         print("DEBUG: Including mediator_vars (model uses mediators)")
@@ -2283,8 +2326,9 @@ server <- function(input, output, session) {
       # Build variable list for complete cases check
       print("DEBUG: Building variable list for complete cases check")
       all_vars_orig <- c(input$outcome_var, input$predictor_var)
-      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        all_vars_orig <- c(all_vars_orig, input$mediator_vars)
+      mediator_vars_current <- mediator_vars_collected()
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        all_vars_orig <- c(all_vars_orig, mediator_vars_current)
       }
       if(!is.null(input$moderator_var) && input$moderator_var != "") {
         all_vars_orig <- c(all_vars_orig, input$moderator_var)
@@ -2335,13 +2379,7 @@ server <- function(input, output, session) {
         },
         predictor_var = input$predictor_var,
         outcome_var = input$outcome_var,
-        mediator_vars = if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-          rv$mediator_order
-        } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-          input$mediator_vars
-        } else {
-          NULL
-        },
+        mediator_vars = mediator_vars_collected(),
         moderator_var = input$moderator_var,
         moderator2_var = if(!is.null(input$moderator2_var) && input$moderator2_var != "") input$moderator2_var else NULL,
         covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
@@ -2398,29 +2436,14 @@ server <- function(input, output, session) {
       # Models 4-92: Mediation models (with mediators)
       # Note: model_num was already defined above
       if(model_num >= 4 && model_num <= 92) {
-        # Get current mediator list - only use if rv$mediator_order is explicitly set and not empty
-        # If rv$mediator_order is NULL or empty, use input$mediator_vars (which should be empty after clearing)
-        current_mediators <- NULL
-        if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-          current_mediators <- rv$mediator_order
-        } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-          current_mediators <- input$mediator_vars
-        }
+        # Get mediators from collected reactive (M1, M2, M3... in order)
+        current_mediators <- mediator_vars_collected()
         
         if(!is.null(current_mediators) && length(current_mediators) > 0) {
-          # Use stored order if available, otherwise use input order
-          mediators_ordered <- if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-            rv$mediator_order
-          } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-            input$mediator_vars
+          mediator_arg <- if(length(current_mediators) == 1) {
+            current_mediators[1]
           } else {
-            NULL
-          }
-          
-          mediator_arg <- if(length(mediators_ordered) == 1) {
-            mediators_ordered[1]
-          } else {
-            mediators_ordered
+            current_mediators
           }
           process_args$m <- mediator_arg
           print(paste("DEBUG: Added mediator(s) to process_args$m:", paste(mediator_arg, collapse=", ")))
@@ -2517,8 +2540,9 @@ server <- function(input, output, session) {
               return(NULL)
             }
             # Check if any covariate is also a mediator (for models that have mediators)
-            if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-              overlapping_mediators <- intersect(input$covariates, input$mediator_vars)
+            mediator_vars_current <- mediator_vars_collected()
+            if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+              overlapping_mediators <- intersect(input$covariates, mediator_vars_current)
               if(length(overlapping_mediators) > 0) {
                 showNotification(
                   sprintf("Error: When 'Covariance matrix for Y' is checked, variable(s) '%s' cannot be used as both a covariate and a mediator. Please remove from one of these roles.", paste(overlapping_mediators, collapse="', '")),
@@ -2816,15 +2840,16 @@ server <- function(input, output, session) {
     }
     # Models 4-92: All require at least one mediator
     if(model_num >= 4 && model_num <= 92) {
+      mediator_vars_current <- mediator_vars_collected()
       validate(
-        need(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0, 
+        need(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0, 
              "At least one mediator variable is required for this model")
       )
       
       # Model 4 allows up to 10 mediators
       if(model_num == 4) {
         validate(
-          need(length(input$mediator_vars) <= 10,
+          need(length(mediator_vars_current) <= 10,
                "Model 4 allows up to 10 mediators")
         )
       }
@@ -2832,14 +2857,14 @@ server <- function(input, output, session) {
       # Model 6 requires 2-6 mediators
       if(model_num == 6) {
         validate(
-          need(length(input$mediator_vars) >= 2 && length(input$mediator_vars) <= 6,
+          need(length(mediator_vars_current) >= 2 && length(mediator_vars_current) <= 6,
                "Model 6 requires between 2 and 6 mediators")
         )
       }
       
       # Model 82 requires exactly 4 mediators
       if(model_num == 82) {
-        mediator_count <- length(input$mediator_vars)
+        mediator_count <- length(mediator_vars_current)
         if(mediator_count != 4) {
           if(mediator_count < 4) {
             error_msg <- paste0("Model 82 requires exactly 4 mediators. You have selected ", 
@@ -2857,7 +2882,7 @@ server <- function(input, output, session) {
       
       # Models 83-92 require exactly 2 mediators
       if(model_num >= 83 && model_num <= 92) {
-        mediator_count <- length(input$mediator_vars)
+        mediator_count <- length(mediator_vars_current)
         if(mediator_count != 2) {
           if(mediator_count < 2) {
             error_msg <- paste0("Model ", model_num, " requires exactly 2 mediators. You have selected ", 
@@ -2893,9 +2918,10 @@ server <- function(input, output, session) {
     print(paste("DEBUG: outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
     print(paste("DEBUG: moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
     print(paste("DEBUG: moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
-    print(paste("DEBUG: mediator_vars:", if(is.null(input$mediator_vars) || length(input$mediator_vars) == 0) "EMPTY" else paste(input$mediator_vars, collapse=", ")))
+    mediator_vars_current <- mediator_vars_collected()
+    print(paste("DEBUG: mediator_count:", if(is.null(input$mediator_count) || input$mediator_count == "") "EMPTY" else input$mediator_count))
+    print(paste("DEBUG: mediator_vars_collected:", if(is.null(mediator_vars_current) || length(mediator_vars_current) == 0) "EMPTY" else paste(mediator_vars_current, collapse=", ")))
     print(paste("DEBUG: covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
-    print(paste("DEBUG: rv$mediator_order:", if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) "NULL/EMPTY" else paste(rv$mediator_order, collapse=", ")))
     
     # Determine which inputs are actually used by the current model
     models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
@@ -2931,12 +2957,7 @@ server <- function(input, output, session) {
     }
     # Only include mediators if current model uses mediators (models 4-92)
     if(model_num >= 4 && model_num <= 92) {
-      current_mediators <- NULL
-      if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-        current_mediators <- rv$mediator_order
-      } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        current_mediators <- input$mediator_vars
-      }
+      current_mediators <- mediator_vars_collected()
       if(!is.null(current_mediators) && length(current_mediators) > 0) {
         all_vars <- c(all_vars, current_mediators)
         print("DEBUG: Including mediator_vars (model uses mediators)")
@@ -2994,8 +3015,9 @@ server <- function(input, output, session) {
       
       # Build variable list
       all_vars <- c(input$outcome_var, input$predictor_var)
-      if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-        all_vars <- c(all_vars, input$mediator_vars)
+      mediator_vars_current <- mediator_vars_collected()
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        all_vars <- c(all_vars, mediator_vars_current)
       }
       if(!is.null(input$moderator_var)) {
         all_vars <- c(all_vars, input$moderator_var)
@@ -3044,13 +3066,7 @@ server <- function(input, output, session) {
         outliers_method = outliers$method,
         predictor_var = input$predictor_var,
         outcome_var = input$outcome_var,
-        mediator_vars = if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-          rv$mediator_order
-        } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-          input$mediator_vars
-        } else {
-          NULL
-        },
+        mediator_vars = mediator_vars_collected(),
         moderator_var = input$moderator_var,
         moderator2_var = if(!is.null(input$moderator2_var) && input$moderator2_var != "") input$moderator2_var else NULL,
         covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
@@ -3105,14 +3121,8 @@ server <- function(input, output, session) {
       # Add model-specific variables
       # Models 4-92: Mediation models (with mediators)
       if(model_num >= 4 && model_num <= 92) {
-        # Get current mediator list - only use if rv$mediator_order is explicitly set and not empty
-        # If rv$mediator_order is NULL or empty, use input$mediator_vars (which should be empty after clearing)
-        current_mediators <- NULL
-        if(!is.null(rv$mediator_order) && length(rv$mediator_order) > 0) {
-          current_mediators <- rv$mediator_order
-        } else if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-          current_mediators <- input$mediator_vars
-        }
+        # Get mediators from collected reactive (M1, M2, M3... in order)
+        current_mediators <- mediator_vars_collected()
         
         if(!is.null(current_mediators) && length(current_mediators) > 0) {
           # Check for duplicate mediators within the mediator list itself
@@ -3224,8 +3234,9 @@ server <- function(input, output, session) {
               return(NULL)
             }
             # Check if any covariate is also a mediator (for models that have mediators)
-            if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-              overlapping_mediators <- intersect(input$covariates, input$mediator_vars)
+            mediator_vars_current <- mediator_vars_collected()
+            if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+              overlapping_mediators <- intersect(input$covariates, mediator_vars_current)
               if(length(overlapping_mediators) > 0) {
                 showNotification(
                   sprintf("Error: When 'Covariance matrix for Y' is checked, variable(s) '%s' cannot be used as both a covariate and a mediator. Please remove from one of these roles.", paste(overlapping_mediators, collapse="', '")),
@@ -3787,8 +3798,9 @@ server <- function(input, output, session) {
         }
         
         # Add mediators for mediation models
-        if(!is.null(input$mediator_vars) && length(input$mediator_vars) > 0) {
-          formula_terms <- c(formula_terms, "+", paste(input$mediator_vars, collapse = " + "))
+        mediator_vars_current <- mediator_vars_collected()
+        if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+          formula_terms <- c(formula_terms, "+", paste(mediator_vars_current, collapse = " + "))
         }
         
         # Add covariates
@@ -5560,7 +5572,7 @@ server <- function(input, output, session) {
     input$covariates
     input$outcome_var
     input$predictor_var
-    input$mediator_vars
+    mediator_vars_collected()
     input$moderator_var
     input$moderator2_var
     
@@ -5577,7 +5589,8 @@ server <- function(input, output, session) {
         if(!is.null(outliers) && outliers$count > 0) {
           reduced_data <- rv$original_dataset[-outliers$cases, ]
           all_vars <- c(input$outcome_var, input$predictor_var)
-          if(!is.null(input$mediator_vars)) all_vars <- c(all_vars, input$mediator_vars)
+          mediator_vars_current <- mediator_vars_collected()
+          if(!is.null(mediator_vars_current)) all_vars <- c(all_vars, mediator_vars_current)
           if(!is.null(input$moderator_var)) all_vars <- c(all_vars, input$moderator_var)
           if(!is.null(input$covariates) && length(input$covariates) > 0) {
             all_vars <- c(all_vars, input$covariates)
