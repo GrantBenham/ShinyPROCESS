@@ -424,15 +424,15 @@ ui <- fluidPage(
               checkboxInput("diagnose", "Model diagnostics and assumptions", FALSE)
             ),
             conditionalPanel(
-              condition = "input.process_model == '4'",
-              tags$div(title = "Includes the X*M interaction term in Model 4, allowing the effect of the mediator (M) on the outcome (Y) to depend on the level of X. When enabled, PROCESS automatically converts Model 4 to Model 74 internally, using the predictor variable (X) as the moderator variable (W). This changes the model to a counterfactual framework with different effect interpretations (natural direct and indirect effects). Mutually exclusive with 'Test for X by M interaction'.",
-                checkboxInput("xmint", "Allow X by M interaction (model 4 only)", FALSE)
-              )
-            ),
-            conditionalPanel(
               condition = "output.is_mediation_model === true && input.process_model != '74'",
               tags$div(title = "Tests whether X*M interaction terms are significant. Determines if the effect of mediators (M) on the outcome (Y) depends on the level of X, without changing the model structure. For Model 4, use this to decide whether to enable 'Allow X by M interaction'. Mutually exclusive with 'Allow X by M interaction' for Model 4.",
                 checkboxInput("xmtest", "Test for X by M interaction", FALSE)
+              )
+            ),
+            conditionalPanel(
+              condition = "input.process_model == '4'",
+              tags$div(title = "Includes the X*M interaction term in Model 4, allowing the effect of the mediator (M) on the outcome (Y) to depend on the level of X. When enabled, PROCESS automatically converts Model 4 to Model 74 internally, using the predictor variable (X) as the moderator variable (W). This changes the model to a counterfactual framework with different effect interpretations (natural direct and indirect effects). Mutually exclusive with 'Test for X by M interaction'.",
+                checkboxInput("xmint", "Allow X by M interaction (model 4 only)", FALSE)
               )
             ),
             conditionalPanel(
