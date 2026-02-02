@@ -210,6 +210,44 @@ diagnostic_report <- function(model) {
   })
 }
 
+# Helper function to check if all required variables are selected for assumption checks
+check_required_vars_for_assumptions <- function(model_num, predictor_var, outcome_var, 
+                                                 moderator_var, moderator2_var, mediator_vars) {
+  # Always need predictor and outcome
+  if(is.null(predictor_var) || predictor_var == "" || 
+     is.null(outcome_var) || outcome_var == "") {
+    return(list(valid = FALSE, message = "Please select both Predictor (X) and Outcome (Y) variables."))
+  }
+  
+  # Models with one moderator (W): 1, 5, 14, 15, 58, 59, 74, 83-92
+  models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
+  # Models with two moderators (W and Z): 2, 3
+  models_with_second_moderator <- c(2, 3)
+  
+  # Check for moderator if required
+  if(model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) {
+    if(is.null(moderator_var) || moderator_var == "") {
+      return(list(valid = FALSE, message = "Please select Moderator (W) variable for this model."))
+    }
+  }
+  
+  # Check for second moderator if required
+  if(model_num %in% models_with_second_moderator) {
+    if(is.null(moderator2_var) || moderator2_var == "") {
+      return(list(valid = FALSE, message = "Please select Second Moderator (Z) variable for this model."))
+    }
+  }
+  
+  # Models 4-92: All require at least one mediator
+  if(model_num >= 4 && model_num <= 92) {
+    if(is.null(mediator_vars) || length(mediator_vars) == 0) {
+      return(list(valid = FALSE, message = "Please select at least one Mediator variable for this model."))
+    }
+  }
+  
+  return(list(valid = TRUE, message = ""))
+}
+
 # Helper to summarize binary counts
 binary_count_lines <- function(data, var, label) {
   if (is.null(var) || var == "" || is.null(data)) return(NULL)
@@ -1577,9 +1615,27 @@ server <- function(input, output, session) {
   
   # Assumption details output
   output$assumption_details <- renderUI({
-    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    req(rv$original_dataset, input$outcome_var, input$predictor_var, input$process_model)
     
     tryCatch({
+      # Check if all required variables are selected for this model
+      model_num <- as.numeric(input$process_model)
+      mediator_vars_current <- mediator_vars_collected()
+      validation <- check_required_vars_for_assumptions(
+        model_num, input$predictor_var, input$outcome_var,
+        input$moderator_var, input$moderator2_var, mediator_vars_current
+      )
+      
+      if(!validation$valid) {
+        return(HTML(paste(
+          "<div class='alert alert-info' style='font-family: Arial, sans-serif;'>",
+          "<strong>Please select all required variables:</strong><br>",
+          validation$message,
+          "<br><br><em>Assumption checks will appear once all required variables for this model are selected.</em>",
+          "</div>"
+        )))
+      }
+      
       # Build formula based on model type
       formula_terms <- c(input$outcome_var, "~", input$predictor_var)
       
@@ -1645,6 +1701,12 @@ server <- function(input, output, session) {
         
         output_text <- paste(
           "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
+          "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
+          "<strong>Note on Assumption Checks:</strong><br>",
+          "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
+          "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
+          "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+          "</div>",
           "<strong>Note: Binary Outcome Detected</strong><br>",
           "<em>Your outcome variable is binary (0/1). PROCESS will use logistic regression for this analysis.</em><br><br>",
           "<strong>Important:</strong> Standard regression assumptions (normality, homoscedasticity) do not apply to logistic regression.<br>",
@@ -1667,6 +1729,11 @@ server <- function(input, output, session) {
           "<strong>Additional Diagnostics:</strong><br>",
           paste(diagnostics, collapse = "<br>"),
           "<br><em>Note: VIF calculated for all predictors. For binary outcomes, focus on model fit statistics and residual patterns rather than normality/homoscedasticity.</em>",
+          "<br><br>",
+          "<div style='background-color: #fff9e6; padding: 10px; margin-top: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
+          "<strong>Example Reporting Format:</strong><br>",
+          "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
+          "</div>",
           "</div>",
           sep = ""
         )
@@ -1709,6 +1776,12 @@ server <- function(input, output, session) {
         # Create final output
         output_text <- paste(
           "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
+          "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
+          "<strong>Note on Assumption Checks:</strong><br>",
+          "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
+          "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
+          "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+          "</div>",
           if(length(na.omit(bin_counts)) > 0) {
             paste(
               "<strong>Binary Variable Counts (original dataset):</strong><br>",
@@ -1734,6 +1807,11 @@ server <- function(input, output, session) {
           "<br><em>Interpretation:<br>",
           "- VIF > 5 suggests potential multicollinearity issues<br>",
           "- With bootstrapping, these diagnostics become less crucial as bootstrap methods are more robust to violations</em>",
+          "<br><br>",
+          "<div style='background-color: #fff9e6; padding: 10px; margin-top: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
+          "<strong>Example Reporting Format:</strong><br>",
+          "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
+          "</div>",
           "</div>",
           sep = ""
         )
@@ -1754,9 +1832,23 @@ server <- function(input, output, session) {
   
   # Diagnostic plots
   output$qq_plot <- renderPlot({
-    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    req(rv$original_dataset, input$outcome_var, input$predictor_var, input$process_model)
     
     tryCatch({
+      # Check if all required variables are selected for this model
+      model_num <- as.numeric(input$process_model)
+      mediator_vars_current <- mediator_vars_collected()
+      validation <- check_required_vars_for_assumptions(
+        model_num, input$predictor_var, input$outcome_var,
+        input$moderator_var, input$moderator2_var, mediator_vars_current
+      )
+      
+      if(!validation$valid) {
+        plot.new()
+        text(0.5, 0.5, "Please select all required\nvariables for this model", cex = 1.2)
+        return(NULL)
+      }
+      
       # Build formula
       formula_terms <- c(input$outcome_var, "~", input$predictor_var)
       if(!is.null(input$moderator_var)) {
@@ -1802,9 +1894,23 @@ server <- function(input, output, session) {
   })
   
   output$residual_plot <- renderPlot({
-    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    req(rv$original_dataset, input$outcome_var, input$predictor_var, input$process_model)
     
     tryCatch({
+      # Check if all required variables are selected for this model
+      model_num <- as.numeric(input$process_model)
+      mediator_vars_current <- mediator_vars_collected()
+      validation <- check_required_vars_for_assumptions(
+        model_num, input$predictor_var, input$outcome_var,
+        input$moderator_var, input$moderator2_var, mediator_vars_current
+      )
+      
+      if(!validation$valid) {
+        plot.new()
+        text(0.5, 0.5, "Please select all required\nvariables for this model", cex = 1.2)
+        return(NULL)
+      }
+      
       # Build formula
       formula_terms <- c(input$outcome_var, "~", input$predictor_var)
       if(!is.null(input$moderator_var)) {
@@ -3963,6 +4069,12 @@ server <- function(input, output, session) {
           
           paste(
             "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
+            "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
+            "<strong>Note on Assumption Checks:</strong><br>",
+            "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
+            "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
+            "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+            "</div>",
             "<strong>Note: Binary Outcome Detected</strong><br>",
             "<em>Your outcome variable is binary (0/1). PROCESS will use logistic regression for this analysis.</em><br><br>",
             "<strong>Important:</strong> Standard regression assumptions (normality, homoscedasticity) do not apply to logistic regression.<br>",
@@ -3985,6 +4097,11 @@ server <- function(input, output, session) {
             "<strong>Additional Diagnostics:</strong><br>",
             paste(diagnostics, collapse = "<br>"),
             "<br><em>Note: VIF calculated for all predictors. For binary outcomes, focus on model fit statistics and residual patterns rather than normality/homoscedasticity.</em>",
+            "<br><br>",
+            "<div style='background-color: #fff9e6; padding: 10px; margin-top: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
+            "<strong>Example Reporting Format:</strong><br>",
+            "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
+            "</div>",
             "</div>",
             sep = ""
           )
@@ -4005,6 +4122,12 @@ server <- function(input, output, session) {
           
           paste(
             "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
+            "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
+            "<strong>Note on Assumption Checks:</strong><br>",
+            "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
+            "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
+            "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+            "</div>",
             if(length(na.omit(bin_counts)) > 0) {
               paste(
                 "<strong>Binary Variable Counts (original dataset):</strong><br>",
@@ -4030,6 +4153,11 @@ server <- function(input, output, session) {
             "<br><em>Interpretation:<br>",
             "- VIF > 5 suggests potential multicollinearity issues<br>",
             "- With bootstrapping, these diagnostics become less crucial as bootstrap methods are more robust to violations</em>",
+            "<br><br>",
+            "<div style='background-color: #fff9e6; padding: 10px; margin-top: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
+            "<strong>Example Reporting Format:</strong><br>",
+            "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
+            "</div>",
             "</div>",
             sep = ""
           )
