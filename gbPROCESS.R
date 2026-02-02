@@ -269,7 +269,6 @@ ui <- fluidPage(
                               "85" = "85", "86" = "86", "87" = "87", "88" = "88",
                               "89" = "89", "90" = "90", "91" = "91", "92" = "92"),
                   selected = ""),
-      uiOutput("model_description"),
       
       # Select Variables (collapsible)
       tags$details(id = "details_select_vars",
@@ -753,6 +752,7 @@ server <- function(input, output, session) {
     current_dataset = NULL,
     outliers_info = NULL,
     analysis_results = NULL,
+    results_model = NULL,  # Track which model number was used to generate current results
     current_model = NULL,
     is_clearing = FALSE,  # Flag to prevent observers from repopulating during clearing
     # mediator_order removed - using mediator_vars_collected() reactive instead
@@ -831,10 +831,12 @@ server <- function(input, output, session) {
     print(paste("  rv$mediator_order:", if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) "NULL/EMPTY" else paste(rv$mediator_order, collapse=", ")))
     
     # Set clearing flag to prevent observers from repopulating and validation from running
+    # Clear analysis results immediately so old results don't show when model changes
     isolate({
       rv$is_clearing <- TRUE
       rv$mediator_order <- NULL
-      rv$analysis_results <- NULL
+      rv$analysis_results <- NULL  # Clear analysis results immediately on model change
+      rv$results_model <- NULL  # Clear the model number associated with results
       rv$validation_error <- NULL
       rv$previous_model <- input$process_model  # Store current model as previous for next change
     })
@@ -868,10 +870,8 @@ server <- function(input, output, session) {
       print("DEBUG: All variable inputs cleared via updateSelectInput (all inputs exist in DOM)")
     }
     
-    # Clear analysis results
-    isolate({
-      rv$analysis_results <- NULL
-    })
+    # Analysis results already cleared above in the first isolate block
+    # This ensures old results don't persist when model changes
     
     print("DEBUG - All clearing methods attempted")
     print("DEBUG: ===== MODEL CHANGE OBSERVER COMPLETED =====")
@@ -1013,36 +1013,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # Model description output
-  output$model_description <- renderUI({
-    req(input$process_model)
-    model_num <- as.numeric(input$process_model)
-    
-    # Common model descriptions (based on PROCESS V5)
-    model_descriptions <- list(
-      "1" = "Simple Moderation",
-      "2" = "First Stage Moderation",
-      "3" = "Second Stage Moderation",
-      "4" = "Simple/Parallel Mediation (1 or more mediators)",
-      "5" = "First and Second Stage Moderation (Moderator W + Mediator M)",
-      "6" = "Parallel Mediation (2-6 mediators)",
-      "7" = "Serial Mediation (Two Mediators)",
-      "8" = "Parallel and Serial Mediation",
-      "14" = "Moderated Mediation (Moderator on a path)",
-      "15" = "Conditional Process Model 1",
-      "58" = "Moderated Moderation (Three-way Interaction)",
-      "59" = "Moderated Moderation (Three-way Interaction, Alternative)",
-      "74" = "Moderated Mediation with Two Moderators"
-    )
-    
-    desc <- if(model_num %in% names(model_descriptions)) {
-      model_descriptions[[as.character(model_num)]]
-    } else {
-      "See PROCESS documentation for model description"
-    }
-    
-    p(strong(paste("Model", model_num, ":", desc)))
-  })
+  # Model description removed - users should refer to Hayes' book for model diagrams
   
   # Determine if model is moderation or mediation type
   output$is_moderation_model <- reactive({
@@ -2782,9 +2753,14 @@ server <- function(input, output, session) {
           plot_data = plot_data,
           result = result  # Store the full result object
         )
+        # Track which model these results are for
+        if(!is.null(input$process_model) && input$process_model != "") {
+          rv$results_model <- as.numeric(input$process_model)
+        }
         print("DEBUG: Results stored in rv$analysis_results")
         print(paste("DEBUG: rv$analysis_results is NULL?", is.null(rv$analysis_results)))
         print(paste("DEBUG: Number of output lines:", length(rv$analysis_results$output)))
+        print(paste("DEBUG: rv$results_model set to", rv$results_model))
       }, error = function(e) {
         print(paste("DEBUG: ERROR in PROCESS execution:", e$message))
         print(paste("DEBUG: Error class:", class(e)))
@@ -3370,9 +3346,14 @@ server <- function(input, output, session) {
           settings = analysis_settings,
           bootstrap_data = bootstrap_data
         )
+        # Track which model these results are for
+        if(!is.null(input$process_model) && input$process_model != "") {
+          rv$results_model <- as.numeric(input$process_model)
+        }
         # Clear validation error on successful run
         rv$validation_error <- NULL
         print("DEBUG: Results stored in rv$analysis_results (outliers removed)")
+        print(paste("DEBUG: rv$results_model set to", rv$results_model))
       }, error = function(e) {
         print(paste("DEBUG: ERROR in PROCESS execution (outliers removed):", e$message))
         showNotification(paste("Error running PROCESS analysis:", e$message), type = "error")
@@ -3388,9 +3369,26 @@ server <- function(input, output, session) {
   observeEvent(original_analysis(), {
     # Only update if we're not in a clearing state (to prevent stale results from previous model)
     if(!isTRUE(rv$is_clearing)) {
-      print("DEBUG: original_analysis() completed, updating rv$analysis_results")
-      rv$analysis_results <- original_analysis()
-      print(paste("DEBUG: rv$analysis_results updated. Is NULL?", is.null(rv$analysis_results)))
+      print("DEBUG: original_analysis() completed, checking if results match current model")
+      result <- original_analysis()
+      current_model_num <- if(!is.null(input$process_model) && input$process_model != "") {
+        as.numeric(input$process_model)
+      } else {
+        NULL
+      }
+      
+      # Verify results match current model before storing
+      if(!is.null(result) && !is.null(result$settings) && !is.null(result$settings$model)) {
+        if(is.null(current_model_num) || result$settings$model == current_model_num) {
+          rv$analysis_results <- result
+          rv$results_model <- result$settings$model
+          print(paste("DEBUG: rv$analysis_results updated for model", rv$results_model))
+        } else {
+          print(paste("DEBUG: Skipping results update - results are for model", result$settings$model, "but current model is", current_model_num))
+        }
+      } else {
+        print("DEBUG: Skipping results update - result doesn't have valid model information")
+      }
     } else {
       print("DEBUG: Skipping analysis results update - in clearing state")
     }
@@ -3400,9 +3398,26 @@ server <- function(input, output, session) {
   observeEvent(outliers_analysis(), {
     # Only update if we're not in a clearing state (to prevent stale results from previous model)
     if(!isTRUE(rv$is_clearing)) {
-      print("DEBUG: outliers_analysis() completed, updating rv$analysis_results")
-      rv$analysis_results <- outliers_analysis()
-      print(paste("DEBUG: rv$analysis_results updated. Is NULL?", is.null(rv$analysis_results)))
+      print("DEBUG: outliers_analysis() completed, checking if results match current model")
+      result <- outliers_analysis()
+      current_model_num <- if(!is.null(input$process_model) && input$process_model != "") {
+        as.numeric(input$process_model)
+      } else {
+        NULL
+      }
+      
+      # Verify results match current model before storing
+      if(!is.null(result) && !is.null(result$settings) && !is.null(result$settings$model)) {
+        if(is.null(current_model_num) || result$settings$model == current_model_num) {
+          rv$analysis_results <- result
+          rv$results_model <- result$settings$model
+          print(paste("DEBUG: rv$analysis_results updated for model", rv$results_model))
+        } else {
+          print(paste("DEBUG: Skipping results update - results are for model", result$settings$model, "but current model is", current_model_num))
+        }
+      } else {
+        print("DEBUG: Skipping results update - result doesn't have valid model information")
+      }
     } else {
       print("DEBUG: Skipping analysis results update - in clearing state")
     }
@@ -3411,6 +3426,35 @@ server <- function(input, output, session) {
   # Combined results reactive - use stored results from rv
   analysis_results <- reactive({
     print(paste("DEBUG: analysis_results reactive called. rv$analysis_results is NULL?", is.null(rv$analysis_results)))
+    
+    # Get current model number
+    current_model_num <- if(!is.null(input$process_model) && input$process_model != "") {
+      as.numeric(input$process_model)
+    } else {
+      NULL
+    }
+    
+    # Check if stored results match current model
+    if(!is.null(rv$analysis_results) && !is.null(current_model_num)) {
+      stored_model <- if(!is.null(rv$analysis_results$settings) && !is.null(rv$analysis_results$settings$model)) {
+        rv$analysis_results$settings$model
+      } else {
+        NULL
+      }
+      if(!is.null(stored_model) && stored_model != current_model_num) {
+        print(paste("DEBUG: Stored results are for model", stored_model, "but current model is", current_model_num, "- clearing results"))
+        rv$analysis_results <- NULL
+        rv$results_model <- NULL
+        return(NULL)
+      }
+    }
+    
+    # If model has changed (tracked separately), don't try to recover old results
+    if(!is.null(current_model_num) && !is.null(rv$results_model) && current_model_num != rv$results_model) {
+      print(paste("DEBUG: Model changed from", rv$results_model, "to", current_model_num, "- not recovering old results"))
+      return(NULL)
+    }
+    
     if(is.null(rv$analysis_results)) {
       # Try to get from eventReactive if rv is null
       # Check if inputs exist and have valid values before comparing
@@ -3421,9 +3465,15 @@ server <- function(input, output, session) {
         print("DEBUG: rv$analysis_results is NULL, trying to get from original_analysis()")
         tryCatch({
           result <- original_analysis()
-          if(!is.null(result)) {
-            rv$analysis_results <- result
-            print("DEBUG: Retrieved results from original_analysis()")
+          # Verify the recovered results match the current model
+          if(!is.null(result) && !is.null(result$settings) && !is.null(result$settings$model)) {
+            if(is.null(current_model_num) || result$settings$model == current_model_num) {
+              rv$analysis_results <- result
+              rv$results_model <- if(!is.null(result$settings$model)) result$settings$model else current_model_num
+              print(paste("DEBUG: Retrieved results from original_analysis() for model", rv$results_model))
+            } else {
+              print(paste("DEBUG: Recovered results are for model", result$settings$model, "but current model is", current_model_num, "- not using them"))
+            }
           }
         }, error = function(e) {
           print(paste("DEBUG: Error getting from original_analysis():", e$message))
@@ -3432,15 +3482,35 @@ server <- function(input, output, session) {
         print("DEBUG: rv$analysis_results is NULL, trying to get from outliers_analysis()")
         tryCatch({
           result <- outliers_analysis()
-          if(!is.null(result)) {
-            rv$analysis_results <- result
-            print("DEBUG: Retrieved results from outliers_analysis()")
+          # Verify the recovered results match the current model
+          if(!is.null(result) && !is.null(result$settings) && !is.null(result$settings$model)) {
+            if(is.null(current_model_num) || result$settings$model == current_model_num) {
+              rv$analysis_results <- result
+              rv$results_model <- if(!is.null(result$settings$model)) result$settings$model else current_model_num
+              print(paste("DEBUG: Retrieved results from outliers_analysis() for model", rv$results_model))
+            } else {
+              print(paste("DEBUG: Recovered results are for model", result$settings$model, "but current model is", current_model_num, "- not using them"))
+            }
           }
         }, error = function(e) {
           print(paste("DEBUG: Error getting from outliers_analysis():", e$message))
         })
       }
     }
+    
+    # Final check: if we have results, verify they match current model
+    if(!is.null(rv$analysis_results) && !is.null(current_model_num)) {
+      stored_model <- if(!is.null(rv$analysis_results$settings) && !is.null(rv$analysis_results$settings$model)) {
+        rv$analysis_results$settings$model
+      } else {
+        NULL
+      }
+      if(!is.null(stored_model) && stored_model != current_model_num) {
+        print(paste("DEBUG: Final check - results model", stored_model, "doesn't match current", current_model_num, "- returning NULL"))
+        return(NULL)
+      }
+    }
+    
     rv$analysis_results
   })
   
@@ -3949,11 +4019,25 @@ server <- function(input, output, session) {
     contentType = "text/html"
   )
   
-  # Disable download buttons until analysis is run
+  # Disable download buttons until analysis is run and results match current model
   observe({
     tryCatch({
       results <- analysis_results()
+      current_model_num <- if(!is.null(input$process_model) && input$process_model != "") {
+        as.numeric(input$process_model)
+      } else {
+        NULL
+      }
+      
+      # Check if results exist and match current model
       has_results <- !is.null(results)
+      if(has_results && !is.null(current_model_num) && !is.null(results$settings) && !is.null(results$settings$model)) {
+        has_results <- results$settings$model == current_model_num
+        if(!has_results) {
+          print(paste("DEBUG: Download button disabled - results model", results$settings$model, "doesn't match current", current_model_num))
+        }
+      }
+      
       shinyjs::toggleState("download_results", condition = has_results)
     }, error = function(e) {
       # If analysis_results() fails (e.g., inputs not initialized), disable all buttons
