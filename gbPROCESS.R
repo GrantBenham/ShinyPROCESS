@@ -210,13 +210,37 @@ diagnostic_report <- function(model) {
   })
 }
 
+# Helper function to get required variables description for a model
+get_required_vars_description <- function(model_num) {
+  # Models with one moderator (W): 1, 5, 14, 15, 58, 59, 74, 83-92
+  models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
+  # Models with two moderators (W and Z): 2, 3
+  models_with_second_moderator <- c(2, 3)
+  
+  required <- c("Predictor (X)", "Outcome (Y)")
+  
+  if(model_num %in% models_with_second_moderator) {
+    required <- c(required, "Moderator (W)", "Second Moderator (Z)")
+  } else if(model_num %in% models_with_moderator) {
+    required <- c(required, "Moderator (W)")
+  }
+  
+  if(model_num >= 4 && model_num <= 92) {
+    required <- c(required, "at least one Mediator")
+  }
+  
+  return(required)
+}
+
 # Helper function to check if all required variables are selected for assumption checks
 check_required_vars_for_assumptions <- function(model_num, predictor_var, outcome_var, 
                                                  moderator_var, moderator2_var, mediator_vars) {
   # Always need predictor and outcome
   if(is.null(predictor_var) || predictor_var == "" || 
      is.null(outcome_var) || outcome_var == "") {
-    return(list(valid = FALSE, message = "Please select both Predictor (X) and Outcome (Y) variables."))
+    required_desc <- get_required_vars_description(model_num)
+    return(list(valid = FALSE, message = paste0("Please select both Predictor (X) and Outcome (Y) variables. ", 
+                                                 "This model requires: ", paste(required_desc, collapse = ", "), ".")))
   }
   
   # Models with one moderator (W): 1, 5, 14, 15, 58, 59, 74, 83-92
@@ -227,21 +251,27 @@ check_required_vars_for_assumptions <- function(model_num, predictor_var, outcom
   # Check for moderator if required
   if(model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) {
     if(is.null(moderator_var) || moderator_var == "") {
-      return(list(valid = FALSE, message = "Please select Moderator (W) variable for this model."))
+      required_desc <- get_required_vars_description(model_num)
+      return(list(valid = FALSE, message = paste0("Please select Moderator (W) variable. ", 
+                                                   "This model requires: ", paste(required_desc, collapse = ", "), ".")))
     }
   }
   
   # Check for second moderator if required
   if(model_num %in% models_with_second_moderator) {
     if(is.null(moderator2_var) || moderator2_var == "") {
-      return(list(valid = FALSE, message = "Please select Second Moderator (Z) variable for this model."))
+      required_desc <- get_required_vars_description(model_num)
+      return(list(valid = FALSE, message = paste0("Please select Second Moderator (Z) variable. ", 
+                                                   "This model requires: ", paste(required_desc, collapse = ", "), ".")))
     }
   }
   
   # Models 4-92: All require at least one mediator
   if(model_num >= 4 && model_num <= 92) {
     if(is.null(mediator_vars) || length(mediator_vars) == 0) {
-      return(list(valid = FALSE, message = "Please select at least one Mediator variable for this model."))
+      required_desc <- get_required_vars_description(model_num)
+      return(list(valid = FALSE, message = paste0("Please select at least one Mediator variable. ", 
+                                                   "This model requires: ", paste(required_desc, collapse = ", "), ".")))
     }
   }
   
@@ -587,7 +617,7 @@ ui <- fluidPage(
           div(style = "margin-bottom: 20px;",
             h4("Detailed Assumption Check Results"),
             conditionalPanel(
-              condition = "output.outcome_is_selected",
+              condition = "output.all_vars_selected_for_assumptions",
               div(style = "margin-top: 10px;",
                 downloadButton("download_assumptions", "Download Assumption Checks (html)", 
                   class = "btn-success", 
