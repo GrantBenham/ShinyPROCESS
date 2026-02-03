@@ -239,8 +239,7 @@ check_required_vars_for_assumptions <- function(model_num, predictor_var, outcom
   if(is.null(predictor_var) || predictor_var == "" || 
      is.null(outcome_var) || outcome_var == "") {
     required_desc <- get_required_vars_description(model_num)
-    return(list(valid = FALSE, message = paste0("Please select both Predictor (X) and Outcome (Y) variables. ", 
-                                                 "This model requires: ", paste(required_desc, collapse = ", "), ".")))
+    return(list(valid = FALSE, message = paste0("This model requires: ", paste(required_desc, collapse = ", "), ".")))
   }
   
   # Models with one moderator (W): 1, 5, 14, 15, 58, 59, 74, 83-92
@@ -252,8 +251,7 @@ check_required_vars_for_assumptions <- function(model_num, predictor_var, outcom
   if(model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) {
     if(is.null(moderator_var) || moderator_var == "") {
       required_desc <- get_required_vars_description(model_num)
-      return(list(valid = FALSE, message = paste0("Please select Moderator (W) variable. ", 
-                                                   "This model requires: ", paste(required_desc, collapse = ", "), ".")))
+      return(list(valid = FALSE, message = paste0("This model requires: ", paste(required_desc, collapse = ", "), ".")))
     }
   }
   
@@ -261,8 +259,7 @@ check_required_vars_for_assumptions <- function(model_num, predictor_var, outcom
   if(model_num %in% models_with_second_moderator) {
     if(is.null(moderator2_var) || moderator2_var == "") {
       required_desc <- get_required_vars_description(model_num)
-      return(list(valid = FALSE, message = paste0("Please select Second Moderator (Z) variable. ", 
-                                                   "This model requires: ", paste(required_desc, collapse = ", "), ".")))
+      return(list(valid = FALSE, message = paste0("This model requires: ", paste(required_desc, collapse = ", "), ".")))
     }
   }
   
@@ -270,8 +267,7 @@ check_required_vars_for_assumptions <- function(model_num, predictor_var, outcom
   if(model_num >= 4 && model_num <= 92) {
     if(is.null(mediator_vars) || length(mediator_vars) == 0) {
       required_desc <- get_required_vars_description(model_num)
-      return(list(valid = FALSE, message = paste0("Please select at least one Mediator variable. ", 
-                                                   "This model requires: ", paste(required_desc, collapse = ", "), ".")))
+      return(list(valid = FALSE, message = paste0("This model requires: ", paste(required_desc, collapse = ", "), ".")))
     }
   }
   
