@@ -596,126 +596,130 @@ ui <- fluidPage(
             )
           ),
           
-          # Show a prompt until variables are selected
+          # Show validation message when required variables are missing
           conditionalPanel(
-            condition = "!output.outcome_is_selected",
-            div(style = "margin-bottom: 20px",
-              p("Select your outcome, predictor, and other variables to view assumption guidance and diagnostics.")
-            )
+            condition = "!output.all_vars_selected_for_assumptions",
+            htmlOutput("assumption_validation_message")
           ),
           
-          # Continuous outcome guidance
+          # Show all assumption check content only when all required variables are selected
           conditionalPanel(
-            condition = "output.outcome_is_selected && output.outcome_is_continuous === true",
-            div(style = "margin-bottom: 20px",
-              p(strong("Standardized Residual Outliers"), style = "font-weight: bold; font-size: 1.1em;"),
-              p("Standardized residuals (SR) represent how many standard deviations an observed value deviates from the model's prediction. Outliers can affect analyses in several ways:",
-                tags$ul(
-                  tags$li(strong("Impact on Results:"), " Outliers can inflate or deflate effects and influence statistical significance"),
-                  tags$li(strong("Threshold Guidelines:"), " Common cutoffs include:"),
-                  tags$ul(
-                    tags$li("|SR| > 2: Potentially influential cases"),
-                    tags$li("|SR| > 2.5: More stringent criterion"),
-                    tags$li("|SR| > 3: Very conservative criterion")
-                  ),
-                  tags$li(strong("Handling Outliers:"), " This program offers two approaches:"),
-                  tags$ul(
-                    tags$li("Run analysis with all cases to maintain complete data"),
-                    tags$li("Remove cases above the threshold to assess impact on results")
-                  )
-                )
-              )
-            )
-          ),
-          
-          # Binary outcome guidance
-          conditionalPanel(
-            condition = "output.outcome_is_selected && output.outcome_is_continuous === false",
-            div(style = "margin-bottom: 20px",
-              p(strong("Note:"), " For binary outcomes (0/1), the app uses logistic regression diagnostics. Normality and homoscedasticity assumptions do not apply.")
-            ),
-            div(style = "margin-bottom: 20px",
-              h5("Understanding Influential Cases (Cook's Distance)"),
-              p("Cook's distance measures the influence of each case on all parameter estimates. High values suggest influential cases:",
-                tags$ul(
-                  tags$li(strong("Impact on Results:"), " Influential cases can materially change coefficient estimates and significance"),
-                  tags$li(strong("Threshold Guidelines:"), " Common choices: 4/n (conservative), 1.0 (liberal), or a custom threshold"),
-                  tags$li(strong("Handling Influential Cases:"), " This program offers two approaches:"),
-                  tags$ul(
-                    tags$li("Run analysis with all cases to maintain sample size"),
-                    tags$li("Remove cases with Cook's D above the threshold to assess impact")
-                  )
-                )
-              )
-            )
-          ),
-          
-          htmlOutput("assumption_details"),
-          
-          conditionalPanel(
-            condition = "output.outcome_is_selected",
-            h4("Diagnostic Plots"),
-            conditionalPanel(
-              condition = "output.outcome_is_continuous === true",
-              div(style = "margin-bottom: 30px",
-                h5("Normal Q-Q Plot (Outcome Model)"),
-                p("This plot checks if residuals follow a normal distribution. Points should follow the diagonal line closely.",
-                  "Deviations at the ends are common and usually not problematic.",
-                  "When bootstrapping is used, normality is less crucial as bootstrap methods don't assume normality."),
-                plotOutput("qq_plot", height = "400px", width = "600px")
-              )
-            ),
-            
-            div(style = "margin-bottom: 30px",
-              h5("Residuals vs Fitted Plot (Outcome Model)"),
+            condition = "output.all_vars_selected_for_assumptions",
+            tagList(
+              # Blue and Yellow info boxes (appear at top, before Standardized Residual Outliers)
+              htmlOutput("assumption_info_boxes"),
+              
+              # Continuous outcome guidance
               conditionalPanel(
                 condition = "output.outcome_is_continuous === true",
-                p("This plot checks for linearity and homoscedasticity (constant variance).",
-                  "Look for:",
-                  tags$ul(
-                    tags$li("Random scatter around the horizontal line (linearity)"),
-                    tags$li("Even spread of points vertically (homoscedasticity)"),
-                    tags$li("No clear patterns or curves in the blue line")
-                  ),
-                  "With bootstrapping, minor violations of homoscedasticity are less concerning.")
+                div(style = "margin-bottom: 20px",
+                  p(strong("Standardized Residual Outliers"), style = "font-weight: bold; font-size: 1.1em;"),
+                  p("Standardized residuals (SR) represent how many standard deviations an observed value deviates from the model's prediction. Outliers can affect analyses in several ways:",
+                    tags$ul(
+                      tags$li(strong("Impact on Results:"), " Outliers can inflate or deflate effects and influence statistical significance"),
+                      tags$li(strong("Threshold Guidelines:"), " Common cutoffs include:"),
+                      tags$ul(
+                        tags$li("|SR| > 2: Potentially influential cases"),
+                        tags$li("|SR| > 2.5: More stringent criterion"),
+                        tags$li("|SR| > 3: Very conservative criterion")
+                      ),
+                      tags$li(strong("Handling Outliers:"), " This program offers two approaches:"),
+                      tags$ul(
+                        tags$li("Run analysis with all cases to maintain complete data"),
+                        tags$li("Remove cases above the threshold to assess impact on results")
+                      )
+                    )
+                  )
+                )
               ),
+              
+              # Binary outcome guidance
               conditionalPanel(
                 condition = "output.outcome_is_continuous === false",
-                p("For binary outcomes, this plot shows Pearson residuals from logistic regression.",
-                  "The patterns will differ from linear regression:",
-                  tags$ul(
-                    tags$li("Residuals form distinct bands (one for each outcome level)"),
-                    tags$li("Heteroscedasticity is expected and not a violation"),
-                    tags$li("Focus on identifying potential model misspecification or influential cases")
-                  ),
-                  "Note: Homoscedasticity is not an assumption of logistic regression.")
-              ),
-              plotOutput("residual_plot", height = "400px", width = "600px")
-            )
-          ),
-          
-          conditionalPanel(
-            condition = "output.outcome_is_continuous === true && output.outcome_is_selected",
-            div(style = "margin-bottom: 30px",
-              h5("Scale-Location Plot (Outcome Model)"),
-              p("This plot helps assess if the variance of residuals changes across the range of predicted values.",
-                "Look for:",
-                tags$ul(
-                  tags$li("Relatively horizontal blue line"),
-                  tags$li("Even spread of points around the line"),
-                  tags$li("No clear funnel or fan shapes")
+                div(style = "margin-bottom: 20px",
+                  p(strong("Note:"), " For binary outcomes (0/1), the app uses logistic regression diagnostics. Normality and homoscedasticity assumptions do not apply.")
                 ),
-                "When bootstrapping is used, this assumption is relaxed somewhat."),
-              plotOutput("scale_location_plot", height = "400px", width = "600px")
+                div(style = "margin-bottom: 20px",
+                  h5("Understanding Influential Cases (Cook's Distance)"),
+                  p("Cook's distance measures the influence of each case on all parameter estimates. High values suggest influential cases:",
+                    tags$ul(
+                      tags$li(strong("Impact on Results:"), " Influential cases can materially change coefficient estimates and significance"),
+                      tags$li(strong("Threshold Guidelines:"), " Common choices: 4/n (conservative), 1.0 (liberal), or a custom threshold"),
+                      tags$li(strong("Handling Influential Cases:"), " This program offers two approaches:"),
+                      tags$ul(
+                        tags$li("Run analysis with all cases to maintain sample size"),
+                        tags$li("Remove cases with Cook's D above the threshold to assess impact")
+                      )
+                    )
+                  )
+                )
+              ),
+              
+              htmlOutput("assumption_details"),
+              
+              h4("Diagnostic Plots"),
+              conditionalPanel(
+                condition = "output.outcome_is_continuous === true",
+                div(style = "margin-bottom: 30px",
+                  h5("Normal Q-Q Plot (Outcome Model)"),
+                  p("This plot checks if residuals follow a normal distribution. Points should follow the diagonal line closely.",
+                    "Deviations at the ends are common and usually not problematic.",
+                    "When bootstrapping is used, normality is less crucial as bootstrap methods don't assume normality."),
+                  plotOutput("qq_plot", height = "400px", width = "600px")
+                )
+              ),
+              
+              div(style = "margin-bottom: 30px",
+                h5("Residuals vs Fitted Plot (Outcome Model)"),
+                conditionalPanel(
+                  condition = "output.outcome_is_continuous === true",
+                  p("This plot checks for linearity and homoscedasticity (constant variance).",
+                    "Look for:",
+                    tags$ul(
+                      tags$li("Random scatter around the horizontal line (linearity)"),
+                      tags$li("Even spread of points vertically (homoscedasticity)"),
+                      tags$li("No clear patterns or curves in the blue line")
+                    ),
+                    "With bootstrapping, minor violations of homoscedasticity are less concerning.")
+                ),
+                conditionalPanel(
+                  condition = "output.outcome_is_continuous === false",
+                  p("For binary outcomes, this plot shows Pearson residuals from logistic regression.",
+                    "The patterns will differ from linear regression:",
+                    tags$ul(
+                      tags$li("Residuals form distinct bands (one for each outcome level)"),
+                      tags$li("Heteroscedasticity is expected and not a violation"),
+                      tags$li("Focus on identifying potential model misspecification or influential cases")
+                    ),
+                    "Note: Homoscedasticity is not an assumption of logistic regression.")
+                ),
+                plotOutput("residual_plot", height = "400px", width = "600px")
+              ),
+              
+              conditionalPanel(
+                condition = "output.outcome_is_continuous === true",
+                div(style = "margin-bottom: 30px",
+                  h5("Scale-Location Plot (Outcome Model)"),
+                  p("This plot helps assess if the variance of residuals changes across the range of predicted values.",
+                    "Look for:",
+                    tags$ul(
+                      tags$li("Relatively horizontal blue line"),
+                      tags$li("Even spread of points around the line"),
+                      tags$li("No clear funnel or fan shapes")
+                    ),
+                    "When bootstrapping is used, this assumption is relaxed somewhat."),
+                  plotOutput("scale_location_plot", height = "400px", width = "600px")
+                )
+              ),
+              
+              # Violin plots for continuous variables
+              conditionalPanel(
+                condition = "output.has_continuous_selected === true",
+                h4("Continuous Variable Distributions"),
+                p("Distributions are shown for the original dataset and, if cases were removed, the analysis dataset. Only continuous variables are included."),
+                plotOutput("violin_plot", height = "400px", width = "700px")
+              )
             )
-          ),
-          
-          # Violin plots for continuous variables
-          conditionalPanel(
-            condition = "output.has_continuous_selected === true && output.outcome_is_selected",
-            h4("Continuous Variable Distributions"),
-            p("Distributions are shown for the original dataset and, if cases were removed, the analysis dataset. Only continuous variables are included."),
-            plotOutput("violin_plot", height = "400px", width = "700px")
           )
         ),
         tabPanel("Analysis Results",
@@ -1394,6 +1398,22 @@ server <- function(input, output, session) {
   })
   outputOptions(output, "outcome_is_selected", suspendWhenHidden = FALSE)
   
+  # Output to track if all required variables are selected for assumption checks
+  output$all_vars_selected_for_assumptions <- reactive({
+    if(is.null(input$process_model) || input$process_model == "" || 
+       is.null(rv$original_dataset) || is.null(input$outcome_var) || is.null(input$predictor_var)) {
+      return(FALSE)
+    }
+    model_num <- as.numeric(input$process_model)
+    mediator_vars_current <- mediator_vars_collected()
+    validation <- check_required_vars_for_assumptions(
+      model_num, input$predictor_var, input$outcome_var,
+      input$moderator_var, input$moderator2_var, mediator_vars_current
+    )
+    validation$valid
+  })
+  outputOptions(output, "all_vars_selected_for_assumptions", suspendWhenHidden = FALSE)
+  
   # Output to track if any continuous variables are selected
   output$has_continuous_selected <- reactive({
     req(rv$original_dataset, input$outcome_var, input$predictor_var)
@@ -1610,6 +1630,63 @@ server <- function(input, output, session) {
     })
   })
   
+  # Validation message output (shown when required variables are missing)
+  output$assumption_validation_message <- renderUI({
+    if(is.null(input$process_model) || input$process_model == "" || 
+       is.null(rv$original_dataset) || is.null(input$outcome_var) || is.null(input$predictor_var)) {
+      return(HTML(""))
+    }
+    model_num <- as.numeric(input$process_model)
+    mediator_vars_current <- mediator_vars_collected()
+    validation <- check_required_vars_for_assumptions(
+      model_num, input$predictor_var, input$outcome_var,
+      input$moderator_var, input$moderator2_var, mediator_vars_current
+    )
+    
+    if(!validation$valid) {
+      return(HTML(paste(
+        "<div class='alert alert-info' style='font-family: Arial, sans-serif; margin-bottom: 20px;'>",
+        "<strong>Please select all required variables:</strong><br>",
+        validation$message,
+        "<br><br><em>Assumption checks will appear once all required variables for this model are selected.</em>",
+        "</div>"
+      )))
+    }
+    return(HTML(""))
+  })
+  
+  # Info boxes output (blue and yellow boxes) - shown when all variables are selected
+  output$assumption_info_boxes <- renderUI({
+    if(is.null(input$process_model) || input$process_model == "" || 
+       is.null(rv$original_dataset) || is.null(input$outcome_var) || is.null(input$predictor_var)) {
+      return(HTML(""))
+    }
+    model_num <- as.numeric(input$process_model)
+    mediator_vars_current <- mediator_vars_collected()
+    validation <- check_required_vars_for_assumptions(
+      model_num, input$predictor_var, input$outcome_var,
+      input$moderator_var, input$moderator2_var, mediator_vars_current
+    )
+    
+    if(!validation$valid) {
+      return(HTML(""))
+    }
+    
+    HTML(paste(
+      "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
+      "<strong>Note on Assumption Checks:</strong><br>",
+      "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
+      "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
+      "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
+      "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+      "</div>",
+      "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
+      "<strong>Example Reporting Format:</strong><br>",
+      "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
+      "</div>"
+    ))
+  })
+  
   # Assumption details output
   output$assumption_details <- renderUI({
     req(rv$original_dataset, input$outcome_var, input$predictor_var, input$process_model)
@@ -1624,13 +1701,7 @@ server <- function(input, output, session) {
       )
       
       if(!validation$valid) {
-        return(HTML(paste(
-          "<div class='alert alert-info' style='font-family: Arial, sans-serif;'>",
-          "<strong>Please select all required variables:</strong><br>",
-          validation$message,
-          "<br><br><em>Assumption checks will appear once all required variables for this model are selected.</em>",
-          "</div>"
-        )))
+        return(HTML(""))
       }
       
       # Build formula based on model type
@@ -1698,17 +1769,6 @@ server <- function(input, output, session) {
         
         output_text <- paste(
           "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
-          "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
-          "<strong>Note on Assumption Checks:</strong><br>",
-          "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
-          "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
-          "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
-          "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
-          "</div>",
-          "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
-          "<strong>Example Reporting Format:</strong><br>",
-          "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
-          "</div>",
           "<strong>Note: Binary Outcome Detected</strong><br>",
           "<em>Your outcome variable is binary (0/1). PROCESS will use logistic regression for this analysis.</em><br><br>",
           "<strong>Important:</strong> Standard regression assumptions (normality, homoscedasticity) do not apply to logistic regression.<br>",
@@ -1773,17 +1833,6 @@ server <- function(input, output, session) {
         # Create final output
         output_text <- paste(
           "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
-          "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
-          "<strong>Note on Assumption Checks:</strong><br>",
-          "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
-          "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
-          "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
-          "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
-          "</div>",
-          "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
-          "<strong>Example Reporting Format:</strong><br>",
-          "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
-          "</div>",
           if(length(na.omit(bin_counts)) > 0) {
             paste(
               "<strong>Binary Variable Counts (original dataset):</strong><br>",
