@@ -5074,55 +5074,100 @@ server <- function(input, output, session) {
       print(paste("DEBUG: plot_data has", nrow(plot_data), "rows and", ncol(plot_data), "columns"))
       print(paste("DEBUG: plot_data column names:", paste(names(plot_data), collapse=", ")))
     } else {
-      # Single moderation: X, W, predicted, se, LLCI, ULCI (6 columns)
-      if(ncol(plot_data_df) < 6) {
-        return()
-      }
-      plot_data <- data.frame(
-        Predictor = as.numeric(plot_data_df[, 1]),
-        Moderator = as.numeric(plot_data_df[, 2]),
-        Outcome = as.numeric(plot_data_df[, 3]),
-        LLCI = as.numeric(plot_data_df[, 5]),
-        ULCI = as.numeric(plot_data_df[, 6])
-      )
+      # Single moderation: Parse "Data for visualizing" table from text output
+      # This table contains exactly 9 rows (3 moderator levels × 3 X values) with 6 columns
       active_moderator <- input$moderator_var
+      plot_data <- NULL
       
-      # Remove any rows with NA values
-      plot_data <- plot_data[complete.cases(plot_data), ]
-      if(nrow(plot_data) == 0) {
+      tryCatch({
+        process_output <- results$output
+        viz_idx <- which(grepl("Data for visualizing the conditional effect of the focal predictor:", process_output, ignore.case = TRUE))
+        
+        if(length(viz_idx) > 0) {
+          # The data section should start 2 lines after this header (header line + column names line)
+          data_start <- viz_idx[1] + 2
+          data_end <- min(data_start + 15, length(process_output))  # Should be exactly 9 rows
+          potential_data_lines <- process_output[data_start:data_end]
+          
+          # Filter to lines that start with numbers (data rows)
+          potential_data_lines <- potential_data_lines[grepl("^\\s*-?\\d", potential_data_lines)]
+          
+          if(length(potential_data_lines) >= 9) {
+            # Parse as 6 columns: X, W, Y, se, LLCI, ULCI
+            parsed_viz <- tryCatch({
+              data_text <- paste(potential_data_lines, collapse = "\n")
+              parsed_viz <- read.table(text = data_text,
+                                      col.names = c("X", "W", "Y", "se", "LLCI", "ULCI"),
+                                      stringsAsFactors = FALSE, 
+                                      fill = TRUE, 
+                                      blank.lines.skip = TRUE,
+                                      na.strings = c("NA", ""))
+              
+              # Convert to numeric
+              for(col in 1:ncol(parsed_viz)) {
+                parsed_viz[, col] <- as.numeric(parsed_viz[, col])
+              }
+              
+              parsed_viz
+            }, error = function(e) {
+              print(paste("DEBUG: Error parsing visualization data from text:", e$message))
+              NULL
+            })
+            
+            if(!is.null(parsed_viz) && ncol(parsed_viz) == 6 && nrow(parsed_viz) >= 9) {
+              # Take first 9 rows (in case there are more)
+              parsed_viz <- parsed_viz[1:9, ]
+              
+              print(paste("DEBUG: Successfully parsed visualization data from text with", nrow(parsed_viz), "rows"))
+              
+              plot_data <- data.frame(
+                Predictor = parsed_viz$X,
+                Moderator = parsed_viz$W,
+                Outcome = parsed_viz$Y,
+                LLCI = parsed_viz$LLCI,
+                ULCI = parsed_viz$ULCI
+              )
+              
+              # Remove any rows with NA values
+              plot_data <- plot_data[complete.cases(plot_data), ]
+              
+              if(nrow(plot_data) == 0) {
+                plot.new()
+                text(0.5, 0.5, "Parsed visualization data contains invalid values.", cex = 1.2)
+                return()
+              }
+              
+              # Extract moderator levels directly from parsed data (should be exactly 3 unique values)
+              moderator_levels_raw <- sort(unique(plot_data$Moderator))
+              
+              if(length(moderator_levels_raw) == 0) {
+                plot.new()
+                text(0.5, 0.5, "Could not extract moderator levels from visualization data.", cex = 1.2)
+                return()
+              }
+              
+            } else {
+              print(paste("DEBUG: Parsed visualization data has wrong dimensions. Expected 9 rows × 6 columns, found", 
+                         ifelse(is.null(parsed_viz), "NULL", nrow(parsed_viz)), "rows ×", 
+                         ifelse(is.null(parsed_viz), "NULL", ncol(parsed_viz)), "columns."))
+            }
+          } else {
+            print(paste("DEBUG: Found only", length(potential_data_lines), "data lines, expected at least 9"))
+          }
+        } else {
+          print("DEBUG: Could not find 'Data for visualizing' section in PROCESS output")
+        }
+      }, error = function(e) {
+        print(paste("DEBUG: Error trying to parse visualization data from text:", e$message))
+      })
+      
+      if(is.null(plot_data) || nrow(plot_data) == 0) {
         plot.new()
-        text(0.5, 0.5, "No valid plot data after filtering.", cex = 1.2)
+        text(0.5, 0.5, "Could not parse visualization data from PROCESS text output.\nPlease check that the analysis completed successfully.", cex = 1.2)
         return()
       }
       
-      # Get the 3 percentile moderator levels that PROCESS should generate (16th, 50th, 84th)
-      # Calculate from the original data to ensure we get exactly 3 values
-      if(is_binary_variable(data_used, active_moderator)) {
-        # For binary moderators, use the actual unique values
-        moderator_levels_raw <- sort(unique(data_used[[active_moderator]][!is.na(data_used[[active_moderator]])]))
-      } else {
-        # For continuous moderators, use percentiles (what PROCESS uses)
-        moderator_levels_raw <- as.numeric(quantile(data_used[[active_moderator]], 
-                                                    probs = c(0.16, 0.50, 0.84), 
-                                                    na.rm = TRUE))
-      }
-      
-      # Filter plot_data to only include rows where Moderator is close to one of these 3 percentile values
-      # This handles floating point precision issues in PROCESS output
-      plot_data$Moderator_matched <- FALSE
-      for(mod_val in moderator_levels_raw) {
-        # Match values within 0.1% of the percentile value
-        tolerance <- abs(mod_val) * 0.001 + 0.01
-        plot_data$Moderator_matched[abs(plot_data$Moderator - mod_val) < tolerance] <- TRUE
-      }
-      plot_data <- plot_data[plot_data$Moderator_matched, ]
-      plot_data$Moderator_matched <- NULL  # Remove temporary column
-      
-      if(nrow(plot_data) == 0) {
-        return()
-      }
-      
-      # Now we should have exactly 3 moderator levels
+      # Round for display
       moderator_levels <- round(moderator_levels_raw, input$decimal_places)
     }
     
@@ -5760,28 +5805,93 @@ server <- function(input, output, session) {
           
           ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
         } else {
-          # Single moderation: Get the 3 percentile moderator levels
-          if(is_binary_variable(data_used, active_moderator)) {
-            moderator_levels_raw <- sort(unique(data_used[[active_moderator]][!is.na(data_used[[active_moderator]])]))
-          } else {
-            moderator_levels_raw <- as.numeric(quantile(data_used[[active_moderator]], 
-                                                        probs = c(0.16, 0.50, 0.84), 
-                                                        na.rm = TRUE))
+          # Single moderation: Parse "Data for visualizing" table from text output
+          # This table contains exactly 9 rows (3 moderator levels × 3 X values) with 6 columns
+          plot_data <- NULL
+          
+          tryCatch({
+            process_output <- results$output
+            viz_idx <- which(grepl("Data for visualizing the conditional effect of the focal predictor:", process_output, ignore.case = TRUE))
+            
+            if(length(viz_idx) > 0) {
+              # The data section should start 2 lines after this header (header line + column names line)
+              data_start <- viz_idx[1] + 2
+              data_end <- min(data_start + 15, length(process_output))  # Should be exactly 9 rows
+              potential_data_lines <- process_output[data_start:data_end]
+              
+              # Filter to lines that start with numbers (data rows)
+              potential_data_lines <- potential_data_lines[grepl("^\\s*-?\\d", potential_data_lines)]
+              
+              if(length(potential_data_lines) >= 9) {
+                # Parse as 6 columns: X, W, Y, se, LLCI, ULCI
+                parsed_viz <- tryCatch({
+                  data_text <- paste(potential_data_lines, collapse = "\n")
+                  parsed_viz <- read.table(text = data_text,
+                                          col.names = c("X", "W", "Y", "se", "LLCI", "ULCI"),
+                                          stringsAsFactors = FALSE, 
+                                          fill = TRUE, 
+                                          blank.lines.skip = TRUE,
+                                          na.strings = c("NA", ""))
+                  
+                  # Convert to numeric
+                  for(col in 1:ncol(parsed_viz)) {
+                    parsed_viz[, col] <- as.numeric(parsed_viz[, col])
+                  }
+                  
+                  parsed_viz
+                }, error = function(e) {
+                  print(paste("DEBUG: Error parsing visualization data from text:", e$message))
+                  NULL
+                })
+                
+                if(!is.null(parsed_viz) && ncol(parsed_viz) == 6 && nrow(parsed_viz) >= 9) {
+                  # Take first 9 rows (in case there are more)
+                  parsed_viz <- parsed_viz[1:9, ]
+                  
+                  print(paste("DEBUG: Successfully parsed visualization data from text with", nrow(parsed_viz), "rows"))
+                  
+                  plot_data <- data.frame(
+                    Predictor = parsed_viz$X,
+                    Moderator = parsed_viz$W,
+                    Outcome = parsed_viz$Y,
+                    LLCI = parsed_viz$LLCI,
+                    ULCI = parsed_viz$ULCI
+                  )
+                  
+                  # Remove any rows with NA values
+                  plot_data <- plot_data[complete.cases(plot_data), ]
+                  
+                  if(nrow(plot_data) == 0) {
+                    stop("Parsed visualization data contains invalid values.")
+                  }
+                  
+                  # Extract moderator levels directly from parsed data (should be exactly 3 unique values)
+                  moderator_levels_raw <- sort(unique(plot_data$Moderator))
+                  
+                  if(length(moderator_levels_raw) == 0) {
+                    stop("Could not extract moderator levels from visualization data.")
+                  }
+                  
+                } else {
+                  stop(paste("Parsed visualization data has wrong dimensions. Expected 9 rows × 6 columns, found", 
+                            ifelse(is.null(parsed_viz), "NULL", nrow(parsed_viz)), "rows ×", 
+                            ifelse(is.null(parsed_viz), "NULL", ncol(parsed_viz)), "columns."))
+                }
+              } else {
+                stop(paste("Found only", length(potential_data_lines), "data lines in visualization section, expected at least 9"))
+              }
+            } else {
+              stop("Could not find 'Data for visualizing' section in PROCESS output")
+            }
+          }, error = function(e) {
+            stop(paste("Error parsing visualization data from text:", e$message))
+          })
+          
+          if(is.null(plot_data) || nrow(plot_data) == 0) {
+            stop("Could not parse visualization data from PROCESS text output. Please check that the analysis completed successfully.")
           }
           
-          # Filter plot_data to only include rows where Moderator is close to one of these 3 percentile values
-          plot_data$Moderator_matched <- FALSE
-          for(mod_val in moderator_levels_raw) {
-            tolerance <- abs(mod_val) * 0.001 + 0.01
-            plot_data$Moderator_matched[abs(plot_data$Moderator - mod_val) < tolerance] <- TRUE
-          }
-          plot_data <- plot_data[plot_data$Moderator_matched, ]
-          plot_data$Moderator_matched <- NULL
-          
-          if(nrow(plot_data) == 0) {
-            stop("No valid plot data after filtering to percentile levels.")
-          }
-          
+          # Round for display
           moderator_levels <- round(moderator_levels_raw, input$decimal_places)
           predictor_range <- range(plot_data$Predictor, na.rm = TRUE)
           
