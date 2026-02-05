@@ -294,7 +294,7 @@ binary_count_lines <- function(data, var, label) {
 
 ui <- fluidPage(
   useShinyjs(),
-  tags$style(type="text/css", "body { max-width: 1400px; margin: auto; }"),
+  tags$style(type="text/css", "body { max-width: 1800px; margin: auto; }"),
   titlePanel("PROCESS V5 Analysis with Hayes PROCESS for R"),
   
   sidebarLayout(
@@ -2884,6 +2884,11 @@ server <- function(input, output, session) {
       # Run PROCESS with error handling
       tryCatch({
         print("DEBUG: About to call PROCESS function...")
+        # Set output width to match display area (main panel is ~75% of 1800px = ~1350px)
+        # With monospace font (~9px/char) and padding, ~110-120 characters fits well
+        # Setting narrower than display ensures PROCESS formats conservatively and avoids wrapping
+        old_width <- options("width")
+        options(width = 115)
         # Suppress R graphics pop-ups (plots are generated in Shiny UI instead)
         # NOTE: To enable R pop-up plots, comment out the pdf(NULL) and dev.off() lines
         pdf(NULL)
@@ -2891,6 +2896,8 @@ server <- function(input, output, session) {
           result <- do.call(process, process_args)
         })
         dev.off()  # Close the null device
+        # Restore original width setting
+        options(width = old_width$width)
         print(paste("DEBUG: PROCESS completed. Output lines:", length(process_output)))
         
         # Store results including bootstrap data and plot data if available
@@ -3574,9 +3581,16 @@ server <- function(input, output, session) {
       # Run PROCESS with error handling
       tryCatch({
         print("DEBUG: About to call PROCESS function (outliers removed)...")
+        # Set output width to match display area (main panel is ~75% of 1800px = ~1350px)
+        # With monospace font (~9px/char) and padding, ~110-120 characters fits well
+        # Setting narrower than display ensures PROCESS formats conservatively and avoids wrapping
+        old_width <- options("width")
+        options(width = 115)
         process_output <- capture.output({
           result <- do.call(process, process_args)
         })
+        # Restore original width setting
+        options(width = old_width$width)
         print(paste("DEBUG: PROCESS completed. Output lines:", length(process_output)))
         
         # Store results including bootstrap data if available
