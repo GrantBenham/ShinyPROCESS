@@ -11,7 +11,7 @@ This Shiny application provides a user-friendly interface for conducting moderat
 - **Assumption Checking**: Built-in diagnostic tools for regression assumptions
 - **Outlier Detection**: Automatic identification of outliers and influential cases
 - **Bootstrap Confidence Intervals**: Support for percentile and bias-corrected bootstrap methods
-- **Visualization**: Simple slopes plots and Johnson-Neyman plots for moderation models
+- **Visualization**: Simple slopes plots, conditional effect plots, and Johnson-Neyman plots for moderation models
 - **Export Options**: Download results as HTML files and filtered datasets
 
 ---
@@ -112,7 +112,8 @@ Expand and configure the following sections as needed:
    - Conditional effects (for moderation models)
    - Bootstrap confidence intervals (if enabled)
 2. Navigate to the **"Plots"** tab (for Models 1 and 3) to view:
-   - Simple slopes plots
+   - Simple slopes plots (Model 1)
+   - Conditional effect plots or stacked simple slopes plots (Model 3)
    - Johnson-Neyman plots (Model 1 only)
 
 ### Step 8: Download Results
@@ -401,9 +402,15 @@ This section allows you to configure how outliers and influential cases are iden
 
 **Available only for Models 1 and 3**
 
+**Plot Type for Model 3** (Model 3 only)
+- Choose which type of plot to display:
+  - **Conditional Effect Plot**: Shows how the conditional effect of X*W changes across levels of Z (second moderator)
+  - **Stacked Simple Slopes Plot**: Shows simple slopes of X on Y at different W levels, with separate plots for each Z level stacked vertically
+- Default: "Conditional Effect Plot"
+
 **Plot Title**
-- Custom title for the simple slopes plot
-- Default: "Simple Slopes Plot"
+- Custom title for the plot
+- Default: "Simple Slopes Plot" (for Model 1) or "Conditional Effect Plot" (for Model 3 conditional effect plot)
 
 **Use color for lines**
 - Uses different colors for different moderator levels
@@ -510,10 +517,12 @@ Displays the complete PROCESS analysis output including:
 
 **Available for Models 1 and 3 only**
 
-**Simple Slopes Plot**
-- Visualizes the relationship between X and Y at different levels of the moderator
-- Shows how the effect of X on Y changes across moderator values
-- Customizable titles, labels, and appearance
+**For Model 1:**
+- **Simple Slopes Plot**: Visualizes the relationship between X and Y at different levels of the moderator (W). Shows how the effect of X on Y changes across moderator values. Customizable titles, labels, and appearance.
+
+**For Model 3:**
+- **Conditional Effect Plot** (default): Shows how the conditional effect of the X*W interaction changes across levels of the second moderator (Z). The x-axis represents Z values, and the y-axis shows the conditional effect of X*W on Y. Useful for understanding how the interaction effect varies across Z.
+- **Stacked Simple Slopes Plot**: Shows simple slopes of X on Y at different W levels, with separate plots stacked vertically for each Z level. Each subplot displays the relationship between X and Y at a specific Z value, with different lines for different W levels. Useful for visualizing the three-way interaction pattern.
 
 **Johnson-Neyman Plot** (Model 1 only)
 - Shows regions of significance
@@ -522,6 +531,7 @@ Displays the complete PROCESS analysis output including:
 
 **Download Options**
 - Download plots as JPG image files
+- Download button label and filename automatically match the selected plot type
 
 ---
 
