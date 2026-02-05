@@ -6,3 +6,5 @@ Results/
 *pdf
 *.html
 .Rproj.user
+.Rhistory
+rsconnect/
