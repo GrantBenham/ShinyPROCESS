@@ -12,6 +12,7 @@ library(shinyjs)
 library(car)  # For VIF and ncvTest functions
 library(haven)  # For SPSS file support
 # Note: For sortable mediator lists, we'll use a custom implementation
+# Note: jsonlite is used via fully qualified names (jsonlite::) in modules_save_load.R
 
 # Increase file upload size to 50MB
 options(shiny.maxRequestSize = 50 * 1024^2)
@@ -304,6 +305,21 @@ ui <- fluidPage(
       div(
         id = "file_input_div",
         fileInput("data_file", "Choose CSV or SAV File", accept = c(".csv", ".sav"))
+      ),
+      
+      # Save/Load Analysis Settings
+      h4("Analysis Settings"),
+      div(
+        div(
+          fileInput("load_settings_file", "Load Analysis Settings", 
+                   accept = ".json",
+                   buttonLabel = "Choose JSON File",
+                   placeholder = "No file selected"),
+          style = "margin-bottom: 10px;"
+        ),
+        downloadButton("save_settings", "Save Analysis Settings", 
+                       class = "btn-info", 
+                       style = "width: 100%;")
       ),
       
       h4("Model Selection"),
@@ -823,11 +839,26 @@ server <- function(input, output, session) {
     validation_error = NULL,
     previous_model = NULL,  # Track previous model to detect model changes
     mediator_ui_initialized = FALSE,  # Track if mediator selectInput has been initialized
-    mediator_count_last_model = NULL  # Track last model to detect when to reset mediator_count
+    mediator_count_last_model = NULL,  # Track last model to detect when to reset mediator_count
+    # Add these for load settings:
+    load_settings_pending = FALSE,
+    settings_to_load = NULL,
+    restore_mediators_pending = FALSE,
+    mediator_vars_to_restore = NULL,
+    restore_labels_pending = FALSE,
+    labels_to_restore = NULL,
+    # Track previous variable values to detect when variables change
+    previous_predictor_var = NULL,
+    previous_outcome_var = NULL,
+    previous_moderator_var = NULL,
+    previous_moderator2_var = NULL
   )
   
   # Load PROCESS function
   source("process.R", local = TRUE)
+  
+  # Load save/load settings module
+  source("modules_save_load.R", local = TRUE)
   
   # DEBUG: Observer to track button clicks
   observeEvent(input$run_analysis, {
@@ -843,14 +874,21 @@ server <- function(input, output, session) {
   # Update dataset handling
   observeEvent(input$data_file, {
     req(input$data_file)
-    ext <- tools::file_ext(input$data_file$datapath)
+    ext <- tolower(tools::file_ext(input$data_file$datapath))
+    
+    # Only process CSV or SAV files - ignore other file types
+    if (!ext %in% c("csv", "sav")) {
+      showNotification("Please select a CSV or SAV file for data upload.", type = "warning", duration = 5)
+      return()
+    }
     
     if (ext == "sav") {
       data <- read_sav(input$data_file$datapath)
     } else if (ext == "csv") {
       data <- read.csv(input$data_file$datapath)
     } else {
-      stop("Invalid file type. Please upload a CSV or SAV file.")
+      showNotification("Invalid file type. Please upload a CSV or SAV file.", type = "error", duration = 5)
+      return()
     }
     
     # Set clearing flag to prevent observers from repopulating and validation from running
@@ -929,6 +967,29 @@ server <- function(input, output, session) {
       updateSelectInput(session, "mediator_count", selected = "")
       for(i in 1:10) {  # Clear up to 10 (max for Model 4)
         updateSelectInput(session, paste0("mediator_m", i), choices = c("Select variable" = "", vars), selected = "")
+      }
+      
+      # Clear plot labels when model changes (they will be auto-populated when new variables are selected)
+      # Only clear if we're NOT loading settings (settings loading will restore labels after model is set)
+      print(paste("DEBUG: load_settings_pending is:", rv$load_settings_pending))
+      if(!isTRUE(rv$load_settings_pending)) {
+        print(paste("DEBUG: Clearing plot labels - x_label was:", input$x_label))
+        print(paste("DEBUG: Clearing plot labels - y_label was:", input$y_label))
+        print(paste("DEBUG: Clearing plot labels - moderator_label was:", input$moderator_label))
+        # Clear labels immediately
+        updateTextInput(session, "x_label", value = "")
+        updateTextInput(session, "y_label", value = "")
+        updateTextInput(session, "moderator_label", value = "")
+        updateTextInput(session, "moderator2_label", value = "")
+        # Reset previous variable values so labels will be auto-populated when new variables are selected
+        # CRITICAL: Set these to NULL so auto-label observer knows variables changed
+        rv$previous_predictor_var <- NULL
+        rv$previous_outcome_var <- NULL
+        rv$previous_moderator_var <- NULL
+        rv$previous_moderator2_var <- NULL
+        print("DEBUG: Plot labels cleared (will be auto-populated when variables are selected)")
+      } else {
+        print("DEBUG: Plot labels NOT cleared (settings are being loaded, will restore labels)")
       }
       
       print("DEBUG: All variable inputs cleared via updateSelectInput (all inputs exist in DOM)")
@@ -2299,7 +2360,7 @@ server <- function(input, output, session) {
     print(paste("DEBUG: input$predictor_var:", input$predictor_var))
     print(paste("DEBUG: input$process_model:", input$process_model))
     
-    validate(
+    shiny::validate(
       need(rv$original_dataset, "Dataset not loaded"),
       need(input$outcome_var, "Outcome variable not selected"),
       need(input$predictor_var, "Predictor variable not selected"),
@@ -2321,7 +2382,7 @@ server <- function(input, output, session) {
       print(paste("DEBUG: input$moderator_var:", input$moderator_var))
       print(paste("DEBUG: moderator_var is NULL?", is.null(input$moderator_var)))
       print(paste("DEBUG: moderator_var is empty?", is.null(input$moderator_var) || input$moderator_var == ""))
-      validate(
+      shiny::validate(
         need(!is.null(input$moderator_var) && input$moderator_var != "", 
              "Moderator variable (W) is required for this model")
       )
@@ -2331,7 +2392,7 @@ server <- function(input, output, session) {
       if(model_num %in% models_with_second_moderator) {
         print("DEBUG: This model requires a second moderator (Z)")
         print(paste("DEBUG: input$moderator2_var:", input$moderator2_var))
-        validate(
+        shiny::validate(
           need(!is.null(input$moderator2_var) && input$moderator2_var != "", 
                "Second moderator variable (Z) is required for this model")
         )
@@ -2344,14 +2405,14 @@ server <- function(input, output, session) {
       print("DEBUG: This model requires mediator(s) - checking for mediator(s)")
       mediator_vars_current <- mediator_vars_collected()
       print(paste("DEBUG: mediator_vars_collected:", if(is.null(mediator_vars_current) || length(mediator_vars_current) == 0) "EMPTY" else paste(mediator_vars_current, collapse=", ")))
-      validate(
+      shiny::validate(
         need(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0, 
              "At least one mediator variable is required for this model")
       )
       
       # Model 4 allows up to 10 mediators
       if(model_num == 4) {
-        validate(
+        shiny::validate(
           need(length(mediator_vars_current) <= 10,
                "Model 4 allows up to 10 mediators")
         )
@@ -2359,7 +2420,7 @@ server <- function(input, output, session) {
       
       # Model 6 requires 2-6 mediators
       if(model_num == 6) {
-        validate(
+        shiny::validate(
           need(length(mediator_vars_current) >= 2 && length(mediator_vars_current) <= 6,
                "Model 6 requires between 2 and 6 mediators")
         )
@@ -2379,7 +2440,7 @@ server <- function(input, output, session) {
                                " mediator(s).")
           }
           showNotification(error_msg, type = "error", duration = 10)
-          validate(need(FALSE, error_msg))
+          shiny::validate(need(FALSE, error_msg))
         }
       }
       
@@ -2397,7 +2458,7 @@ server <- function(input, output, session) {
                                " mediator(s).")
           }
           showNotification(error_msg, type = "error", duration = 10)
-          validate(need(FALSE, error_msg))
+          shiny::validate(need(FALSE, error_msg))
         }
       }
       print("DEBUG: Mediator validation passed")
@@ -2406,7 +2467,7 @@ server <- function(input, output, session) {
     # Model 5: First and Second Stage Moderation (requires moderator W and mediator M)
     if(model_num == 5) {
       print("DEBUG: This is Model 5 - checking for moderator W")
-      validate(
+      shiny::validate(
         need(!is.null(input$moderator_var) && input$moderator_var != "", 
              "Model 5 requires moderator variable W")
       )
@@ -3027,7 +3088,7 @@ server <- function(input, output, session) {
     
     # Basic validation
     tryCatch({
-      validate(
+      shiny::validate(
         need(rv$original_dataset, "Dataset not loaded"),
         need(input$outcome_var, "Outcome variable not selected"),
         need(input$predictor_var, "Predictor variable not selected"),
@@ -3045,14 +3106,14 @@ server <- function(input, output, session) {
     # Models with one moderator: 1, 5, 14, 15, 58, 59, 74, 83-92
     # Models with two moderators: 2, 3
     if(model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74, 83:92)) {
-      validate(
+      shiny::validate(
         need(!is.null(input$moderator_var) && input$moderator_var != "", 
              "Moderator variable (W) is required for this model")
       )
       
       # Models with second moderator require it to be selected
       if(model_num %in% c(2, 3)) {
-        validate(
+        shiny::validate(
           need(!is.null(input$moderator2_var) && input$moderator2_var != "", 
                "Second moderator variable (Z) is required for this model")
         )
@@ -3061,14 +3122,14 @@ server <- function(input, output, session) {
     # Models 4-92: All require at least one mediator
     if(model_num >= 4 && model_num <= 92) {
       mediator_vars_current <- mediator_vars_collected()
-      validate(
+      shiny::validate(
         need(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0, 
              "At least one mediator variable is required for this model")
       )
       
       # Model 4 allows up to 10 mediators
       if(model_num == 4) {
-        validate(
+        shiny::validate(
           need(length(mediator_vars_current) <= 10,
                "Model 4 allows up to 10 mediators")
         )
@@ -3076,7 +3137,7 @@ server <- function(input, output, session) {
       
       # Model 6 requires 2-6 mediators
       if(model_num == 6) {
-        validate(
+        shiny::validate(
           need(length(mediator_vars_current) >= 2 && length(mediator_vars_current) <= 6,
                "Model 6 requires between 2 and 6 mediators")
         )
@@ -3096,7 +3157,7 @@ server <- function(input, output, session) {
                                " mediator(s).")
           }
           showNotification(error_msg, type = "error", duration = 10)
-          validate(need(FALSE, error_msg))
+          shiny::validate(need(FALSE, error_msg))
         }
       }
       
@@ -3114,7 +3175,7 @@ server <- function(input, output, session) {
                                " mediator(s).")
           }
           showNotification(error_msg, type = "error", duration = 10)
-          validate(need(FALSE, error_msg))
+          shiny::validate(need(FALSE, error_msg))
         }
       }
     }
@@ -3233,7 +3294,7 @@ server <- function(input, output, session) {
     
     # Model 5: First and Second Stage Moderation (requires moderator W and mediator M)
     if(model_num == 5) {
-      validate(
+      shiny::validate(
         need(!is.null(input$moderator_var) && input$moderator_var != "", 
              "Model 5 requires moderator variable W")
       )
@@ -3263,15 +3324,18 @@ server <- function(input, output, session) {
       if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
         all_vars <- c(all_vars, mediator_vars_current)
       }
-      if(!is.null(input$moderator_var)) {
+      if(!is.null(input$moderator_var) && input$moderator_var != "") {
         all_vars <- c(all_vars, input$moderator_var)
       }
-      if(!is.null(input$moderator2_var)) {
+      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
         all_vars <- c(all_vars, input$moderator2_var)
       }
       if(!is.null(input$covariates) && length(input$covariates) > 0) {
         all_vars <- c(all_vars, input$covariates)
       }
+      
+      # Filter out any empty strings that might have gotten in
+      all_vars <- all_vars[all_vars != ""]
       
       complete_cases <- complete.cases(reduced_data[all_vars])
       n_complete <- sum(complete_cases)
@@ -4457,7 +4521,7 @@ server <- function(input, output, session) {
       return()
     }
     
-    # Verify that the analysis results match the current model
+    # Verify that the analysis results match the current model AND variables
     results <- analysis_results()
     if(is.null(results) || is.null(results$settings)) {
       return()
@@ -4467,6 +4531,27 @@ server <- function(input, output, session) {
     current_model <- as.numeric(input$process_model)
     if(results$settings$model != current_model) {
       return()
+    }
+    
+    # CRITICAL: Check if variables match - if they don't, don't render plot
+    # This prevents showing plots with wrong labels when variables change but analysis hasn't been rerun
+    if(results$settings$predictor_var != input$predictor_var ||
+       results$settings$outcome_var != input$outcome_var ||
+       results$settings$moderator_var != input$moderator_var) {
+      plot.new()
+      text(0.5, 0.5, "Variables have changed.\nPlease run the analysis again.", cex = 1.2)
+      return()
+    }
+    
+    # For models with second moderator, also check moderator2_var
+    if(current_model %in% models_with_second_moderator) {
+      result_mod2 <- if(is.null(results$settings$moderator2_var)) "" else results$settings$moderator2_var
+      current_mod2 <- if(is.null(input$moderator2_var) || input$moderator2_var == "") "" else input$moderator2_var
+      if(result_mod2 != current_mod2) {
+        plot.new()
+        text(0.5, 0.5, "Variables have changed.\nPlease run the analysis again.", cex = 1.2)
+        return()
+      }
     }
     
     data_used <- results$data_used
@@ -4972,8 +5057,8 @@ server <- function(input, output, session) {
                       tryCatch({
                         z_range_debug <- range(cond_effect_data$Z, na.rm = TRUE)
                         effect_range_debug <- range(cond_effect_data$Effect, na.rm = TRUE)
-                        print("DEBUG: Z range:", z_range_debug)
-                        print("DEBUG: Effect range:", effect_range_debug)
+                        print(paste("DEBUG: Z range:", paste(z_range_debug, collapse=" to ")))
+                        print(paste("DEBUG: Effect range:", paste(effect_range_debug, collapse=" to ")))
                       }, error = function(e) {
                         print("DEBUG: Could not calculate ranges (non-fatal)")
                       })
@@ -5087,8 +5172,10 @@ server <- function(input, output, session) {
                     print(paste("DEBUG: Extracted conditional effect data from visualization section"))
                     print(paste("DEBUG: Using X =", x_median, "and W =", w_median))
                     print(paste("DEBUG: Found", nrow(cond_effect_data), "unique Z values"))
-                    print("DEBUG: Z range:", range(cond_effect_data$Z, na.rm = TRUE))
-                    print("DEBUG: Effect range:", range(cond_effect_data$Effect, na.rm = TRUE))
+                    z_range <- range(cond_effect_data$Z, na.rm = TRUE)
+                    effect_range <- range(cond_effect_data$Effect, na.rm = TRUE)
+                    print(paste("DEBUG: Z range:", paste(z_range, collapse=" to ")))
+                    print(paste("DEBUG: Effect range:", paste(effect_range, collapse=" to ")))
                   } else {
                     print("DEBUG: Not enough valid rows after filtering")
                     cond_effect_data <- NULL
@@ -5501,7 +5588,7 @@ server <- function(input, output, session) {
       return()
     }
     
-    # Verify that the analysis results match the current model
+    # Verify that the analysis results match the current model AND variables
     results <- analysis_results()
     if(is.null(results) || is.null(results$settings)) {
       return()
@@ -5510,6 +5597,16 @@ server <- function(input, output, session) {
     # Check if model matches
     current_model <- as.numeric(input$process_model)
     if(results$settings$model != current_model) {
+      return()
+    }
+    
+    # CRITICAL: Check if variables match - if they don't, don't render plot
+    # This prevents showing plots with wrong labels when variables change but analysis hasn't been rerun
+    if(results$settings$predictor_var != input$predictor_var ||
+       results$settings$outcome_var != input$outcome_var ||
+       results$settings$moderator_var != input$moderator_var) {
+      plot.new()
+      text(0.5, 0.5, "Variables have changed.\nPlease run the analysis again.", cex = 1.2)
       return()
     }
     
@@ -5608,13 +5705,18 @@ server <- function(input, output, session) {
       x_label_text <- if(input$moderator_label != "") input$moderator_label else input$moderator_var
       y_label_text <- if(input$x_label != "") paste("Effect of", input$x_label) else paste("Effect of", input$predictor_var)
       
+      # Ensure data is sorted by Moderator for proper ribbon rendering
+      # This prevents overlapping ribbons that might appear as the same color
+      jn_data <- jn_data[order(jn_data$Moderator), ]
+      
       p <- ggplot(jn_data, aes(x = Moderator, y = Effect)) +
         geom_ribbon(aes(ymin = LLCI, ymax = ULCI, fill = !significant), alpha = 0.4) +
         scale_fill_manual(values = if(input$use_color_lines) 
                           c(`TRUE` = "pink", `FALSE` = "lightblue") else 
                           c(`TRUE` = "grey70", `FALSE` = "grey50"),
                         labels = c(`TRUE` = "n.s.", `FALSE` = "p < .05"),
-                        name = "") +
+                        name = "",
+                        drop = FALSE) +
         geom_line(linewidth = 1, 
                  color = if(input$use_color_lines) "blue" else "black") +
         geom_hline(yintercept = 0, linetype = "dashed") +
@@ -6302,21 +6404,100 @@ server <- function(input, output, session) {
   # Auto-populate plot labels from selected variables (only for moderation models)
   # This automatically updates labels when variables are selected, matching the old app behavior
   # Users can then edit these labels if they want clearer/more descriptive text
+  # SKIP this observer when loading settings to prevent overwriting saved labels
   observe({
+    # Don't auto-update labels when loading settings or during clearing
+    if(isTRUE(rv$load_settings_pending) || isTRUE(rv$is_clearing) || isTRUE(rv$restore_labels_pending)) {
+      print("DEBUG: Auto-label observer SKIPPED - load_settings_pending, is_clearing, or restore_labels_pending is TRUE")
+      return()
+    }
+    
     if(!is.null(input$process_model) && input$process_model %in% c("1", "2", "3", "5", "14", "15", "58", "59", "74")) {
+      # CRITICAL: Don't update labels if variables are empty (e.g., during model change clearing)
+      # This prevents labels from being updated with old variable values before they're cleared
+      if(is.null(input$predictor_var) || input$predictor_var == "" ||
+         is.null(input$outcome_var) || input$outcome_var == "" ||
+         is.null(input$moderator_var) || input$moderator_var == "") {
+        print("DEBUG: Auto-label observer SKIPPED - variables are empty (likely during model change)")
+        return()
+      }
+      
       # Only update if all required variables are selected (matching old app req() behavior)
       if(!is.null(input$predictor_var) && input$predictor_var != "" &&
          !is.null(input$outcome_var) && input$outcome_var != "" &&
          !is.null(input$moderator_var) && input$moderator_var != "") {
-        updateTextInput(session, "x_label", value = input$predictor_var)
-        updateTextInput(session, "y_label", value = input$outcome_var)
-        updateTextInput(session, "moderator_label", value = input$moderator_var)
+        
+        # Check if variables have changed from their previous values
+        predictor_changed <- is.null(rv$previous_predictor_var) || rv$previous_predictor_var != input$predictor_var
+        outcome_changed <- is.null(rv$previous_outcome_var) || rv$previous_outcome_var != input$outcome_var
+        moderator_changed <- is.null(rv$previous_moderator_var) || rv$previous_moderator_var != input$moderator_var
+        
+        # Check if labels are empty
+        x_label_empty <- is.null(input$x_label) || input$x_label == ""
+        y_label_empty <- is.null(input$y_label) || input$y_label == ""
+        mod_label_empty <- is.null(input$moderator_label) || input$moderator_label == ""
+        
+        # Check if labels match current variables
+        x_label_matches_current <- !x_label_empty && input$x_label == input$predictor_var
+        y_label_matches_current <- !y_label_empty && input$y_label == input$outcome_var
+        mod_label_matches_current <- !mod_label_empty && input$moderator_label == input$moderator_var
+        
+        # CRITICAL: Only update labels if:
+        # 1. Label is empty (needs to be populated), OR
+        # 2. Variable changed (user selected new variable from dropdown - update label to match)
+        # If variable didn't change, DON'T update label (let customized labels stick)
+        should_update_x <- x_label_empty || predictor_changed
+        should_update_y <- y_label_empty || outcome_changed
+        should_update_mod <- mod_label_empty || moderator_changed
+        
+        # Debug output
+        print(paste("DEBUG: Auto-label observer - predictor_changed:", predictor_changed, 
+                    "x_label:", input$x_label, "predictor_var:", input$predictor_var,
+                    "should_update_x:", should_update_x))
+        print(paste("DEBUG: Auto-label observer - outcome_changed:", outcome_changed,
+                    "y_label:", input$y_label, "outcome_var:", input$outcome_var,
+                    "should_update_y:", should_update_y))
+        print(paste("DEBUG: Auto-label observer - moderator_changed:", moderator_changed,
+                    "moderator_label:", input$moderator_label, "moderator_var:", input$moderator_var,
+                    "should_update_mod:", should_update_mod))
+        
+        # Update labels that need updating
+        if(should_update_x) {
+          print(paste("DEBUG: Updating x_label from", input$x_label, "to", input$predictor_var))
+          updateTextInput(session, "x_label", value = input$predictor_var)
+        }
+        if(should_update_y) {
+          print(paste("DEBUG: Updating y_label from", input$y_label, "to", input$outcome_var))
+          updateTextInput(session, "y_label", value = input$outcome_var)
+        }
+        if(should_update_mod) {
+          print(paste("DEBUG: Updating moderator_label from", input$moderator_label, "to", input$moderator_var))
+          updateTextInput(session, "moderator_label", value = input$moderator_var)
+        }
+        
+        # Update previous variable values to track changes
+        rv$previous_predictor_var <- input$predictor_var
+        rv$previous_outcome_var <- input$outcome_var
+        rv$previous_moderator_var <- input$moderator_var
         
         # For models with second moderator, also auto-populate moderator2_label
         model_num <- as.numeric(input$process_model)
         if(model_num %in% models_with_second_moderator && 
            !is.null(input$moderator2_var) && input$moderator2_var != "") {
-          updateTextInput(session, "moderator2_label", value = input$moderator2_var)
+          mod2_changed <- is.null(rv$previous_moderator2_var) || rv$previous_moderator2_var != input$moderator2_var
+          mod2_label_empty <- is.null(input$moderator2_label) || input$moderator2_label == ""
+          mod2_label_matches_current <- !mod2_label_empty && input$moderator2_label == input$moderator2_var
+          # If moderator2 changed, always update the label
+          should_update_mod2 <- mod2_label_empty || mod2_changed || !mod2_label_matches_current
+          
+          if(should_update_mod2) {
+            print(paste("DEBUG: Updating moderator2_label from", input$moderator2_label, "to", input$moderator2_var))
+            updateTextInput(session, "moderator2_label", value = input$moderator2_var)
+          }
+          
+          rv$previous_moderator2_var <- input$moderator2_var
+        } else {
+          rv$previous_moderator2_var <- NULL
         }
       }
     }
