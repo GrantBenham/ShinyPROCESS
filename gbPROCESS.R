@@ -3787,6 +3787,276 @@ server <- function(input, output, session) {
   # PLOTS MODULE - Moderation Visualizations
   # ============================================================================
   
+  # ============================================================================
+  # PLOT GENERATION HELPER FUNCTIONS (Stage 1 Refactoring)
+  # ============================================================================
+  
+  # Helper function to generate Johnson-Neyman plot
+  # Returns ggplot object or NULL if plot cannot be generated
+  generate_jn_plot <- function(results, input, jn_available_func) {
+    # Validation checks
+    if(is.null(results) || is.null(results$settings)) {
+      return(NULL)
+    }
+    
+    model_num <- as.numeric(input$process_model)
+    
+    # Only allow plots for Model 1
+    if(!model_num %in% c(1, 3)) {
+      return(NULL)
+    }
+    
+    if(model_num != 1) {
+      return(NULL)
+    }
+    
+    if(!jn_available_func()) {
+      return(NULL)
+    }
+    
+    # Check if model matches
+    if(results$settings$model != model_num) {
+      return(NULL)
+    }
+    
+    # Check if variables match
+    if(results$settings$predictor_var != input$predictor_var ||
+       results$settings$outcome_var != input$outcome_var ||
+       results$settings$moderator_var != input$moderator_var) {
+      return(NULL)
+    }
+    
+    tryCatch({
+      process_output <- results$output
+      start_idx <- which(grepl("Conditional effect of focal predictor", process_output))
+      
+      if(length(start_idx) == 0) {
+        return(NULL)
+      }
+      
+      # Find the data section - skip header line
+      data_start <- start_idx + 2  # Skip "Conditional effect..." and header line
+      
+      # Find the end of the data section (blank line or next section)
+      end_idx <- which(grepl("^\\s*$|^Data for visualizing|^----------", process_output[data_start:length(process_output)]))[1]
+      if(!is.na(end_idx)) {
+        end_idx <- end_idx + data_start - 1
+      } else {
+        # If no clear end found, look for next major section
+        end_idx <- which(grepl("^-----------|^\\*+", process_output[data_start:length(process_output)]))[1]
+        if(!is.na(end_idx)) {
+          end_idx <- end_idx + data_start - 1
+        } else {
+          end_idx <- min(data_start + 50, length(process_output))  # Safety limit
+        }
+      }
+      
+      if(is.na(end_idx) || end_idx <= data_start) {
+        return(NULL)
+      }
+      
+      # Extract data lines and filter out header/non-data lines
+      data_lines <- process_output[data_start:end_idx]
+      
+      # Filter lines to only include those that look like data rows (start with number or negative number)
+      data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
+      
+      if(length(data_lines) == 0) {
+        return(NULL)
+      }
+      
+      # Parse the data with better error handling
+      jn_data <- tryCatch({
+        # Use fill=TRUE to handle lines with missing columns
+        parsed <- read.table(text = paste(data_lines, collapse = "\n"),
+                            col.names = c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI"),
+                            stringsAsFactors = FALSE,
+                            fill = TRUE,
+                            blank.lines.skip = TRUE)
+        
+        # Filter to only rows with exactly 7 columns (all numeric)
+        valid_rows <- apply(parsed, 1, function(row) {
+          # Check if all 7 columns are numeric (or can be coerced to numeric)
+          all(!is.na(suppressWarnings(as.numeric(row[1:7]))))
+        })
+        
+        if(sum(valid_rows) == 0) {
+          stop("No valid data rows with 7 numeric columns found")
+        }
+        
+        parsed[valid_rows, 1:7]
+      }, error = function(e) {
+        print(paste("Error parsing JN data:", e$message))
+        # Try alternative parsing method
+        tryCatch({
+          # Split each line and extract numeric values
+          parsed_lines <- lapply(data_lines, function(line) {
+            parts <- strsplit(trimws(line), "\\s+")[[1]]
+            # Extract first 7 numeric values
+            nums <- suppressWarnings(as.numeric(parts))
+            nums <- nums[!is.na(nums)]
+            if(length(nums) >= 7) {
+              return(nums[1:7])
+            }
+            return(NULL)
+          })
+          
+          # Filter out NULLs and convert to data frame
+          valid_data <- do.call(rbind, Filter(Negate(is.null), parsed_lines))
+          if(is.null(valid_data) || nrow(valid_data) == 0) {
+            stop("Could not parse any valid data rows")
+          }
+          
+          colnames(valid_data) <- c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI")
+          as.data.frame(valid_data)
+        }, error = function(e2) {
+          print(paste("Alternative parsing also failed:", e2$message))
+          stop(e2)
+        })
+      })
+      
+      jn_data$significant <- jn_data$p < 0.05
+      
+      # Check if there's an actual transition (both significant and non-significant regions exist)
+      has_transition <- any(jn_data$significant) && any(!jn_data$significant)
+      
+      # Only calculate transition point if there's an actual transition
+      transition_point <- NULL
+      if(has_transition) {
+        transition_point <- jn_data$Moderator[which.min(abs(jn_data$p - 0.05))]
+      }
+      
+      x_label_text <- if(input$moderator_label != "") input$moderator_label else input$moderator_var
+      y_label_text <- if(input$x_label != "") paste("Effect of", input$x_label) else paste("Effect of", input$predictor_var)
+      
+      # Ensure data is sorted by Moderator for proper ribbon rendering
+      # This prevents overlapping ribbons that might appear as the same color
+      jn_data <- jn_data[order(jn_data$Moderator), ]
+      
+      p <- ggplot(jn_data, aes(x = Moderator, y = Effect)) +
+        geom_ribbon(aes(ymin = LLCI, ymax = ULCI, fill = !significant), alpha = 0.4) +
+        scale_fill_manual(values = if(input$use_color_lines) 
+                          c(`TRUE` = "pink", `FALSE` = "lightblue") else 
+                          c(`TRUE` = "grey70", `FALSE` = "grey50"),
+                        labels = c(`TRUE` = "n.s.", `FALSE` = "p < .05"),
+                        name = "",
+                        drop = FALSE) +
+        geom_line(linewidth = 1, 
+                 color = if(input$use_color_lines) "blue" else "black") +
+        geom_hline(yintercept = 0, linetype = "dashed") +
+        theme_minimal() +
+        labs(title = "Johnson-Neyman Plot",
+             x = x_label_text,
+             y = y_label_text) +
+        theme(
+          text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          axis.text = element_text(size = 14),
+          plot.title = element_text(size = 18, hjust = 0.5),
+          legend.title = element_blank(),
+          legend.text = element_text(size = 14),
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(color = "black", linewidth = 0.5),
+          axis.ticks = element_line(color = "black", linewidth = 0.5)
+        )
+      
+      # Only add transition line if there's an actual transition
+      if(has_transition && !is.null(transition_point)) {
+        p <- p + geom_vline(xintercept = transition_point,
+                            linetype = "dashed", 
+                            color = if(input$use_color_lines) "cyan" else "grey40")
+      }
+      
+      return(p)
+    }, error = function(e) {
+      print(paste("Error in generate_jn_plot:", e$message))
+      return(NULL)
+    })
+  }
+  
+  # Helper function to generate conditional effect plot (Model 3)
+  # Returns ggplot object or NULL if plot cannot be generated
+  generate_conditional_effect_plot <- function(results, input) {
+    # Validation checks
+    if(is.null(results) || is.null(results$settings)) {
+      return(NULL)
+    }
+    
+    model_num <- as.numeric(input$process_model)
+    if(model_num != 3) {
+      return(NULL)
+    }
+    
+    # Check if model matches
+    if(results$settings$model != model_num) {
+      return(NULL)
+    }
+    
+    # Check if variables match
+    if(results$settings$predictor_var != input$predictor_var ||
+       results$settings$outcome_var != input$outcome_var ||
+       results$settings$moderator_var != input$moderator_var) {
+      return(NULL)
+    }
+    
+    # Check second moderator
+    if(!is.null(results$settings$moderator2_var) && results$settings$moderator2_var != input$moderator2_var) {
+      return(NULL)
+    }
+    
+    tryCatch({
+      plot_data_df <- results$plot_data
+      
+      if(is.null(plot_data_df) || !is.data.frame(plot_data_df) || nrow(plot_data_df) == 0) {
+        return(NULL)
+      }
+      
+      cond_effect_data <- extract_model3_conditional_effect(results$output)
+      
+      if(is.null(cond_effect_data) || nrow(cond_effect_data) == 0) {
+        return(NULL)
+      }
+      
+      plot_data <- cond_effect_data
+      
+      x_label_text <- if(!is.null(input$moderator2_label) && input$moderator2_label != "") input$moderator2_label else input$moderator2_var
+      y_label_text <- paste("Conditional effect of", if(input$x_label != "") input$x_label else input$predictor_var, 
+                           "*", if(input$moderator_label != "") input$moderator_label else input$moderator_var,
+                           "on", if(input$y_label != "") input$y_label else input$outcome_var)
+      plot_title <- "Conditional Effect Plot"
+      
+      z_range <- range(plot_data$Z, na.rm = TRUE)
+      y_range <- range(c(plot_data$Effect, plot_data$LLCI, plot_data$ULCI), na.rm = TRUE)
+      
+      p <- ggplot(plot_data, aes(x = Z, y = Effect)) +
+        {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI)) && !all(is.na(plot_data$ULCI))) 
+          geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, fill = if(input$use_color_lines) "red" else "grey50", show.legend = FALSE)} +
+        geom_hline(yintercept = 0, linetype = "dashed", color = if(input$use_color_lines) "red" else "black", linewidth = 0.8) +
+        geom_line(color = if(input$use_color_lines) "red" else "black", linewidth = 1.2) +
+        {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
+        {if(!input$custom_y_axis) coord_cartesian(xlim = z_range, ylim = y_range)} +
+        labs(
+          title = plot_title,
+          x = x_label_text,
+          y = y_label_text
+        ) +
+        theme_minimal() +
+        theme(
+          text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          axis.text = element_text(size = 14),
+          plot.title = element_text(size = 18, hjust = 0.5),
+          axis.line = element_line(color = "black", linewidth = 0.5),
+          axis.ticks = element_line(color = "black", linewidth = 0.5)
+        )
+      
+      return(p)
+    }, error = function(e) {
+      print(paste("Error in generate_conditional_effect_plot:", e$message))
+      return(NULL)
+    })
+  }
+  
   # Helper function to extract coefficients from PROCESS output for moderation models
   extract_coefficients <- function(process_output, predictor_var, moderator_var) {
     coef_data <- numeric(4)
@@ -5140,7 +5410,50 @@ server <- function(input, output, session) {
   })
   
   output$conditional_effect_plot <- renderPlot({
-    build_slopes_plot(plot_type_override = "conditional", model3_only = TRUE)
+    # Only allow plots for Models 1 and 3
+    req(input$process_model)
+    model_num <- as.numeric(input$process_model)
+    if(!model_num %in% c(1, 3)) {
+      plot.new()
+      text(0.5, 0.5, "Plots are only available for Models 1 and 3.", cex = 1.2)
+      return()
+    }
+    
+    # Check if we have valid analysis results
+    if(is.null(analysis_results())) {
+      return()
+    }
+    
+    req(input$moderator_var)
+    req(input$predictor_var)
+    
+    # Generate plot using helper function
+    results <- analysis_results()
+    p <- generate_conditional_effect_plot(results, input)
+    
+    if(is.null(p)) {
+      # Show appropriate message if plot couldn't be generated
+      if(is.null(results) || is.null(results$settings)) {
+        return()
+      }
+      model_num <- as.numeric(input$process_model)
+      if(model_num != 3) {
+        return()
+      }
+      if(results$settings$model != model_num) {
+        return()
+      }
+      if(results$settings$predictor_var != input$predictor_var ||
+         results$settings$outcome_var != input$outcome_var ||
+         results$settings$moderator_var != input$moderator_var) {
+        plot.new()
+        text(0.5, 0.5, "Variables have changed.\nPlease run the analysis again.", cex = 1.2)
+        return()
+      }
+      return()
+    }
+    
+    print(p)
   })
   
   # Johnson-Neyman Plot
@@ -5163,184 +5476,36 @@ server <- function(input, output, session) {
     
     req(input$moderator_var)
     
-    # JN plots are only appropriate for Model 1 (simple moderation with one moderator)
-    if(model_num != 1) {
-      return()
-    }
-    
-    if(!jn_available()) {
-      return()
-    }
-    
-    # Verify that the analysis results match the current model AND variables
+    # Generate plot using helper function
     results <- analysis_results()
-    if(is.null(results) || is.null(results$settings)) {
+    p <- generate_jn_plot(results, input, jn_available)
+    
+    if(is.null(p)) {
+      # Show appropriate message based on why plot couldn't be generated
+      if(is.null(results) || is.null(results$settings)) {
+        return()
+      }
+      model_num <- as.numeric(input$process_model)
+      if(model_num != 1) {
+        return()
+      }
+      if(!jn_available()) {
+        return()
+      }
+      if(results$settings$model != model_num) {
+        return()
+      }
+      if(results$settings$predictor_var != input$predictor_var ||
+         results$settings$outcome_var != input$outcome_var ||
+         results$settings$moderator_var != input$moderator_var) {
+        plot.new()
+        text(0.5, 0.5, "Variables have changed.\nPlease run the analysis again.", cex = 1.2)
+        return()
+      }
       return()
     }
     
-    # Check if model matches
-    current_model <- as.numeric(input$process_model)
-    if(results$settings$model != current_model) {
-      return()
-    }
-    
-    # CRITICAL: Check if variables match - if they don't, don't render plot
-    # This prevents showing plots with wrong labels when variables change but analysis hasn't been rerun
-    if(results$settings$predictor_var != input$predictor_var ||
-       results$settings$outcome_var != input$outcome_var ||
-       results$settings$moderator_var != input$moderator_var) {
-      plot.new()
-      text(0.5, 0.5, "Variables have changed.\nPlease run the analysis again.", cex = 1.2)
-      return()
-    }
-    
-    tryCatch({
-      process_output <- results$output
-      start_idx <- which(grepl("Conditional effect of focal predictor", process_output))
-      
-      if(length(start_idx) == 0) {
-        return()
-      }
-      
-      # Find the data section - skip header line
-      data_start <- start_idx + 2  # Skip "Conditional effect..." and header line
-      
-      # Find the end of the data section (blank line or next section)
-      end_idx <- which(grepl("^\\s*$|^Data for visualizing|^----------", process_output[data_start:length(process_output)]))[1]
-      if(!is.na(end_idx)) {
-        end_idx <- end_idx + data_start - 1
-      } else {
-        # If no clear end found, look for next major section
-        end_idx <- which(grepl("^-----------|^\\*+", process_output[data_start:length(process_output)]))[1]
-        if(!is.na(end_idx)) {
-          end_idx <- end_idx + data_start - 1
-        } else {
-          end_idx <- min(data_start + 50, length(process_output))  # Safety limit
-        }
-      }
-      
-      if(is.na(end_idx) || end_idx <= data_start) {
-        return()
-      }
-      
-      # Extract data lines and filter out header/non-data lines
-      data_lines <- process_output[data_start:end_idx]
-      
-      # Filter lines to only include those that look like data rows (start with number or negative number)
-      data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
-      
-      if(length(data_lines) == 0) {
-        return()
-      }
-      
-      # Parse the data with better error handling
-      jn_data <- tryCatch({
-        # Use fill=TRUE to handle lines with missing columns
-        parsed <- read.table(text = paste(data_lines, collapse = "\n"),
-                            col.names = c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI"),
-                            stringsAsFactors = FALSE,
-                            fill = TRUE,
-                            blank.lines.skip = TRUE)
-        
-        # Filter to only rows with exactly 7 columns (all numeric)
-        valid_rows <- apply(parsed, 1, function(row) {
-          # Check if all 7 columns are numeric (or can be coerced to numeric)
-          all(!is.na(suppressWarnings(as.numeric(row[1:7]))))
-        })
-        
-        if(sum(valid_rows) == 0) {
-          stop("No valid data rows with 7 numeric columns found")
-        }
-        
-        parsed[valid_rows, 1:7]
-      }, error = function(e) {
-        print(paste("Error parsing JN data:", e$message))
-        # Try alternative parsing method
-        tryCatch({
-          # Split each line and extract numeric values
-          parsed_lines <- lapply(data_lines, function(line) {
-            parts <- strsplit(trimws(line), "\\s+")[[1]]
-            # Extract first 7 numeric values
-            nums <- suppressWarnings(as.numeric(parts))
-            nums <- nums[!is.na(nums)]
-            if(length(nums) >= 7) {
-              return(nums[1:7])
-            }
-            return(NULL)
-          })
-          
-          # Filter out NULLs and convert to data frame
-          valid_data <- do.call(rbind, Filter(Negate(is.null), parsed_lines))
-          if(is.null(valid_data) || nrow(valid_data) == 0) {
-            stop("Could not parse any valid data rows")
-          }
-          
-          colnames(valid_data) <- c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI")
-          as.data.frame(valid_data)
-        }, error = function(e2) {
-          print(paste("Alternative parsing also failed:", e2$message))
-          stop(e2)
-        })
-      })
-      
-      jn_data$significant <- jn_data$p < 0.05
-      
-      # Check if there's an actual transition (both significant and non-significant regions exist)
-      has_transition <- any(jn_data$significant) && any(!jn_data$significant)
-      
-      # Only calculate transition point if there's an actual transition
-      transition_point <- NULL
-      if(has_transition) {
-        transition_point <- jn_data$Moderator[which.min(abs(jn_data$p - 0.05))]
-      }
-      
-      x_label_text <- if(input$moderator_label != "") input$moderator_label else input$moderator_var
-      y_label_text <- if(input$x_label != "") paste("Effect of", input$x_label) else paste("Effect of", input$predictor_var)
-      
-      # Ensure data is sorted by Moderator for proper ribbon rendering
-      # This prevents overlapping ribbons that might appear as the same color
-      jn_data <- jn_data[order(jn_data$Moderator), ]
-      
-      p <- ggplot(jn_data, aes(x = Moderator, y = Effect)) +
-        geom_ribbon(aes(ymin = LLCI, ymax = ULCI, fill = !significant), alpha = 0.4) +
-        scale_fill_manual(values = if(input$use_color_lines) 
-                          c(`TRUE` = "pink", `FALSE` = "lightblue") else 
-                          c(`TRUE` = "grey70", `FALSE` = "grey50"),
-                        labels = c(`TRUE` = "n.s.", `FALSE` = "p < .05"),
-                        name = "",
-                        drop = FALSE) +
-        geom_line(linewidth = 1, 
-                 color = if(input$use_color_lines) "blue" else "black") +
-        geom_hline(yintercept = 0, linetype = "dashed") +
-        theme_minimal() +
-        labs(title = "Johnson-Neyman Plot",
-             x = x_label_text,
-             y = y_label_text) +
-        theme(
-          text = element_text(size = 14),
-          axis.title = element_text(size = 16),
-          axis.text = element_text(size = 14),
-          plot.title = element_text(size = 18, hjust = 0.5),
-          legend.title = element_blank(),
-          legend.text = element_text(size = 14),
-          panel.grid.minor = element_blank(),
-          axis.line = element_line(color = "black", linewidth = 0.5),
-          axis.ticks = element_line(color = "black", linewidth = 0.5)
-        )
-      
-      # Only add transition line if there's an actual transition
-      if(has_transition && !is.null(transition_point)) {
-        p <- p + geom_vline(xintercept = transition_point,
-                            linetype = "dashed", 
-                            color = if(input$use_color_lines) "cyan" else "grey40")
-      }
-      
-      print(p)
-    }, error = function(e) {
-      # Return without showing error - UI will handle messaging
-      return()
-      print(paste("Error in JN plot:", e$message))
-    })
+    print(p)
   })
   
   # Observe JN availability to enable/disable download button
@@ -5370,6 +5535,7 @@ server <- function(input, output, session) {
     filename = function() {
       paste0("jn_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
     },
+    contentType = "image/jpeg",
     content = function(file) {
       tryCatch({
         # Only allow downloads for Models 1 and 3
@@ -5380,126 +5546,17 @@ server <- function(input, output, session) {
         }
         
         req(analysis_results())
-        process_output <- analysis_results()$output
+        req(input$moderator_var)
         
-        start_idx <- which(grepl("Conditional effect of focal predictor", process_output))
-        if(length(start_idx) > 0) {
-          # Find the data section - skip header line
-          data_start <- start_idx + 2
-          
-          # Find the end of the data section
-          end_idx <- which(grepl("^\\s*$|^Data for visualizing|^----------", process_output[data_start:length(process_output)]))[1]
-          if(!is.na(end_idx)) {
-            end_idx <- end_idx + data_start - 1
-          } else {
-            end_idx <- which(grepl("^-----------|^\\*+", process_output[data_start:length(process_output)]))[1]
-            if(!is.na(end_idx)) {
-              end_idx <- end_idx + data_start - 1
-            } else {
-              end_idx <- min(data_start + 50, length(process_output))
-            }
-          }
-          
-          if(!is.na(end_idx) && end_idx > data_start) {
-            # Extract data lines and filter to only data rows
-            data_lines <- process_output[data_start:end_idx]
-            data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
-            
-            if(length(data_lines) > 0) {
-              # Parse with improved error handling
-              jn_data <- tryCatch({
-                parsed <- read.table(text = paste(data_lines, collapse = "\n"),
-                                    col.names = c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI"),
-                                    stringsAsFactors = FALSE,
-                                    fill = TRUE,
-                                    blank.lines.skip = TRUE)
-                
-                # Filter to only rows with exactly 7 numeric columns
-                valid_rows <- apply(parsed, 1, function(row) {
-                  all(!is.na(suppressWarnings(as.numeric(row[1:7]))))
-                })
-                
-                if(sum(valid_rows) > 0) {
-                  parsed[valid_rows, 1:7]
-                } else {
-                  # Fallback: manual parsing
-                  parsed_lines <- lapply(data_lines, function(line) {
-                    parts <- strsplit(trimws(line), "\\s+")[[1]]
-                    nums <- suppressWarnings(as.numeric(parts))
-                    nums <- nums[!is.na(nums)]
-                    if(length(nums) >= 7) return(nums[1:7])
-                    return(NULL)
-                  })
-                  valid_data <- do.call(rbind, Filter(Negate(is.null), parsed_lines))
-                  if(!is.null(valid_data) && nrow(valid_data) > 0) {
-                    colnames(valid_data) <- c("Moderator", "Effect", "se", "t", "p", "LLCI", "ULCI")
-                    as.data.frame(valid_data)
-                  } else {
-                    stop("No valid data rows found")
-                  }
-                }
-              }, error = function(e) {
-                print(paste("Error parsing JN data in download:", e$message))
-                stop(e)
-              })
-            
-            jn_data$significant <- jn_data$p < 0.05
-            
-            # Check if there's an actual transition (both significant and non-significant regions exist)
-            has_transition <- any(jn_data$significant) && any(!jn_data$significant)
-            
-            # Only calculate transition point if there's an actual transition
-            transition_point <- NULL
-            if(has_transition) {
-              transition_point <- jn_data$Moderator[which.min(abs(jn_data$p - 0.05))]
-            }
-            
-            x_label_text <- if(input$moderator_label != "") input$moderator_label else input$moderator_var
-            y_label_text <- if(input$x_label != "") paste("Effect of", input$x_label) else paste("Effect of", input$predictor_var)
-            
-            p <- ggplot(jn_data, aes(x = Moderator, y = Effect)) +
-              geom_ribbon(aes(ymin = LLCI, ymax = ULCI, fill = !significant), alpha = 0.4) +
-              scale_fill_manual(values = if(input$use_color_lines) 
-                                c(`TRUE` = "pink", `FALSE` = "lightblue") else 
-                                c(`TRUE` = "grey70", `FALSE` = "grey50"),
-                              labels = c(`TRUE` = "n.s.", `FALSE` = "p < .05"),
-                              name = "") +
-              geom_line(linewidth = 1, 
-                       color = if(input$use_color_lines) "blue" else "black") +
-              geom_hline(yintercept = 0, linetype = "dashed") +
-              theme_minimal() +
-              labs(title = "Johnson-Neyman Plot",
-                   x = x_label_text,
-                   y = y_label_text) +
-              theme(
-                text = element_text(size = 14),
-                axis.title = element_text(size = 16),
-                axis.text = element_text(size = 14),
-                plot.title = element_text(size = 18, hjust = 0.5),
-                legend.title = element_blank(),
-                legend.text = element_text(size = 14),
-                panel.grid.minor = element_blank(),
-                axis.line = element_line(color = "black", linewidth = 0.5),
-                axis.ticks = element_line(color = "black", linewidth = 0.5)
-              )
-            
-            # Only add transition line if there's an actual transition
-            if(has_transition && !is.null(transition_point)) {
-              p <- p + geom_vline(xintercept = transition_point,
-                                  linetype = "dashed", 
-                                  color = if(input$use_color_lines) "cyan" else "grey40")
-            }
-            
-              ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
-            } else {
-              stop("No valid JN data found")
-            }
-          } else {
-            stop("Could not find JN data section boundaries")
-          }
-        } else {
-          stop("JN data section not found in PROCESS output")
+        # Generate plot using helper function
+        results <- analysis_results()
+        p <- generate_jn_plot(results, input, jn_available)
+        
+        if(is.null(p)) {
+          stop("Could not generate JN plot. Please ensure analysis has been run and JN technique is enabled.")
         }
+        
+        ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
       }, error = function(e) {
         print(paste("Error saving JN plot:", e$message))
         # Create an error message file instead
@@ -5929,51 +5986,13 @@ server <- function(input, output, session) {
         req(input$moderator_var)
         req(input$predictor_var)
         
+        # Generate plot using helper function
         results <- analysis_results()
-        plot_data_df <- results$plot_data
+        p <- generate_conditional_effect_plot(results, input)
         
-        if(is.null(plot_data_df) || !is.data.frame(plot_data_df) || nrow(plot_data_df) == 0) {
-          stop("Plot data not available. Please run the analysis first.")
+        if(is.null(p)) {
+          stop("Could not generate conditional effect plot. Please ensure analysis has been run for Model 3.")
         }
-        
-        cond_effect_data <- extract_model3_conditional_effect(results$output)
-        
-        if(is.null(cond_effect_data) || nrow(cond_effect_data) == 0) {
-          stop("Could not extract conditional effect data from PROCESS output.")
-        }
-        
-        plot_data <- cond_effect_data
-        
-        x_label_text <- if(!is.null(input$moderator2_label) && input$moderator2_label != "") input$moderator2_label else input$moderator2_var
-        y_label_text <- paste("Conditional effect of", if(input$x_label != "") input$x_label else input$predictor_var, 
-                             "*", if(input$moderator_label != "") input$moderator_label else input$moderator_var,
-                             "on", if(input$y_label != "") input$y_label else input$outcome_var)
-        plot_title <- "Conditional Effect Plot"
-        
-        z_range <- range(plot_data$Z, na.rm = TRUE)
-        y_range <- range(c(plot_data$Effect, plot_data$LLCI, plot_data$ULCI), na.rm = TRUE)
-        
-        p <- ggplot(plot_data, aes(x = Z, y = Effect)) +
-          {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI)) && !all(is.na(plot_data$ULCI))) 
-            geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, fill = if(input$use_color_lines) "red" else "grey50", show.legend = FALSE)} +
-          geom_hline(yintercept = 0, linetype = "dashed", color = if(input$use_color_lines) "red" else "black", linewidth = 0.8) +
-          geom_line(color = if(input$use_color_lines) "red" else "black", linewidth = 1.2) +
-          {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
-          {if(!input$custom_y_axis) coord_cartesian(xlim = z_range, ylim = y_range)} +
-          labs(
-            title = plot_title,
-            x = x_label_text,
-            y = y_label_text
-          ) +
-          theme_minimal() +
-          theme(
-            text = element_text(size = 14),
-            axis.title = element_text(size = 16),
-            axis.text = element_text(size = 14),
-            plot.title = element_text(size = 18, hjust = 0.5),
-            axis.line = element_line(color = "black", linewidth = 0.5),
-            axis.ticks = element_line(color = "black", linewidth = 0.5)
-          )
         
         ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
       }, error = function(e) {
