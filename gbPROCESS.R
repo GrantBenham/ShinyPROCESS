@@ -3720,38 +3720,49 @@ server <- function(input, output, session) {
   # PLOT GENERATION HELPER FUNCTIONS (Stage 1 Refactoring)
   # ============================================================================
   
-  # Helper function to generate Johnson-Neyman plot
-  # Returns ggplot object or NULL if plot cannot be generated
-  generate_jn_plot <- function(results, input, jn_available_func) {
-    # Validation checks
+  # Helper function to validate plot requirements (Stage 5 Refactoring)
+  # Consolidates validation logic used across all plot generation functions
+  validate_plot_requirements <- function(results, input, required_model_num, check_moderator2 = FALSE) {
+    # Check if results exist
     if(is.null(results) || is.null(results$settings)) {
-      return(NULL)
+      return(FALSE)
     }
     
+    # Check model number
     model_num <- as.numeric(input$process_model)
-    
-    # Only allow plots for Model 1
-    if(!model_num %in% c(1, 3)) {
-      return(NULL)
-    }
-    
-    if(model_num != 1) {
-      return(NULL)
-    }
-    
-    if(!jn_available_func()) {
-      return(NULL)
+    if(model_num != required_model_num) {
+      return(FALSE)
     }
     
     # Check if model matches
     if(results$settings$model != model_num) {
-      return(NULL)
+      return(FALSE)
     }
     
     # Check if variables match
     if(results$settings$predictor_var != input$predictor_var ||
        results$settings$outcome_var != input$outcome_var ||
        results$settings$moderator_var != input$moderator_var) {
+      return(FALSE)
+    }
+    
+    # Check second moderator if required (for Model 3)
+    if(check_moderator2) {
+      if(!is.null(results$settings$moderator2_var) && results$settings$moderator2_var != input$moderator2_var) {
+        return(FALSE)
+      }
+    }
+    
+    return(TRUE)
+  }
+  
+  generate_jn_plot <- function(results, input, jn_available_func) {
+    # Validation checks
+    if(!validate_plot_requirements(results, input, required_model_num = 1)) {
+      return(NULL)
+    }
+    
+    if(!jn_available_func()) {
       return(NULL)
     }
     
@@ -3907,29 +3918,7 @@ server <- function(input, output, session) {
   # Returns ggplot object or NULL if plot cannot be generated
   generate_conditional_effect_plot <- function(results, input) {
     # Validation checks
-    if(is.null(results) || is.null(results$settings)) {
-      return(NULL)
-    }
-    
-    model_num <- as.numeric(input$process_model)
-    if(model_num != 3) {
-      return(NULL)
-    }
-    
-    # Check if model matches
-    if(results$settings$model != model_num) {
-      return(NULL)
-    }
-    
-    # Check if variables match
-    if(results$settings$predictor_var != input$predictor_var ||
-       results$settings$outcome_var != input$outcome_var ||
-       results$settings$moderator_var != input$moderator_var) {
-      return(NULL)
-    }
-    
-    # Check second moderator
-    if(!is.null(results$settings$moderator2_var) && results$settings$moderator2_var != input$moderator2_var) {
+    if(!validate_plot_requirements(results, input, required_model_num = 3, check_moderator2 = TRUE)) {
       return(NULL)
     }
     
@@ -3990,24 +3979,7 @@ server <- function(input, output, session) {
   # Returns ggplot object or NULL if plot cannot be generated
   generate_simple_slopes_plot <- function(results, input) {
     # Validation checks
-    if(is.null(results) || is.null(results$settings)) {
-      return(NULL)
-    }
-    
-    model_num <- as.numeric(input$process_model)
-    if(model_num != 1) {
-      return(NULL)
-    }
-    
-    # Check if model matches
-    if(results$settings$model != model_num) {
-      return(NULL)
-    }
-    
-    # Check if variables match
-    if(results$settings$predictor_var != input$predictor_var ||
-       results$settings$outcome_var != input$outcome_var ||
-       results$settings$moderator_var != input$moderator_var) {
+    if(!validate_plot_requirements(results, input, required_model_num = 1)) {
       return(NULL)
     }
     
@@ -4135,29 +4107,7 @@ server <- function(input, output, session) {
   # Returns grob (grid object) or NULL if plot cannot be generated
   generate_stacked_slopes_plot <- function(results, input) {
     # Validation checks
-    if(is.null(results) || is.null(results$settings)) {
-      return(NULL)
-    }
-    
-    model_num <- as.numeric(input$process_model)
-    if(model_num != 3) {
-      return(NULL)
-    }
-    
-    # Check if model matches
-    if(results$settings$model != model_num) {
-      return(NULL)
-    }
-    
-    # Check if variables match
-    if(results$settings$predictor_var != input$predictor_var ||
-       results$settings$outcome_var != input$outcome_var ||
-       results$settings$moderator_var != input$moderator_var) {
-      return(NULL)
-    }
-    
-    # Check second moderator
-    if(!is.null(results$settings$moderator2_var) && results$settings$moderator2_var != input$moderator2_var) {
+    if(!validate_plot_requirements(results, input, required_model_num = 3, check_moderator2 = TRUE)) {
       return(NULL)
     }
     
