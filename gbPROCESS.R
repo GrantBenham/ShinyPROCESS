@@ -758,7 +758,13 @@ ui <- fluidPage(
                 condition = "output.has_continuous_selected === true",
                 h4("Continuous Variable Distributions"),
                 p("Distributions are shown for the original dataset and, if cases were removed, the analysis dataset. Only continuous variables are included."),
-                plotOutput("violin_plot", height = "400px", width = "700px")
+                uiOutput("violin_plot_ui"),
+                conditionalPanel(
+                  condition = "output.has_continuous_covariates === true",
+                  br(),
+                  h4("Covariate Distributions"),
+                  uiOutput("violin_plot_covariates_ui")
+                )
               )
             )
           )
@@ -1544,6 +1550,14 @@ server <- function(input, output, session) {
   })
   outputOptions(output, "has_continuous_selected", suspendWhenHidden = FALSE)
   
+  # Output to track if any continuous covariates are selected
+  output$has_continuous_covariates <- reactive({
+    req(rv$original_dataset)
+    if(is.null(input$covariates) || length(input$covariates) == 0) return(FALSE)
+    any(vapply(input$covariates, function(v) is_continuous_variable(rv$original_dataset, v), logical(1)))
+  })
+  outputOptions(output, "has_continuous_covariates", suspendWhenHidden = FALSE)
+  
   # Output to track if analysis results exist
   output$analysis_ready <- reactive({
     result <- !is.null(rv$analysis_results)
@@ -2243,6 +2257,7 @@ server <- function(input, output, session) {
       mediator_vars_current <- mediator_vars_collected()
       if(!is.null(mediator_vars_current)) selected_vars <- c(selected_vars, mediator_vars_current)
       if(!is.null(input$moderator_var)) selected_vars <- c(selected_vars, input$moderator_var)
+      if(!is.null(input$moderator2_var) && input$moderator2_var != "") selected_vars <- c(selected_vars, input$moderator2_var)
       
       cont_vars <- selected_vars[vapply(selected_vars, function(v) is_continuous_variable(rv$original_dataset, v), logical(1))]
       
@@ -2311,6 +2326,104 @@ server <- function(input, output, session) {
       plot.new()
       text(0.5, 0.5, paste("Error generating violin plot:\n", e$message), cex = 1.1)
     })
+  })
+  
+  # Violin plot for covariates
+  output$violin_plot_covariates <- renderPlot({
+    req(rv$original_dataset)
+    
+    tryCatch({
+      if(is.null(input$covariates) || length(input$covariates) == 0) {
+        return(NULL)
+      }
+      
+      cont_covariates <- input$covariates[vapply(input$covariates, function(v) is_continuous_variable(rv$original_dataset, v), logical(1))]
+      
+      if(length(cont_covariates) == 0) {
+        return(NULL)
+      }
+      
+      # Build data for original dataset
+      orig_long <- do.call(rbind, lapply(cont_covariates, function(v) {
+        data.frame(
+          variable = v,
+          value = rv$original_dataset[[v]],
+          dataset = "Original",
+          stringsAsFactors = FALSE
+        )
+      }))
+      
+      # Build analysis dataset by removing identified outliers
+      outliers <- tryCatch(identify_outliers(), error = function(e) NULL)
+      filtered_data <- rv$original_dataset
+      if(!is.null(outliers) && length(outliers$cases) > 0) {
+        filtered_data <- rv$original_dataset[-outliers$cases, ]
+      }
+      
+      analysis_long <- do.call(rbind, lapply(cont_covariates, function(v) {
+        data.frame(
+          variable = v,
+          value = filtered_data[[v]],
+          dataset = "After removal",
+          stringsAsFactors = FALSE
+        )
+      }))
+      
+      plot_data <- rbind(orig_long, analysis_long)
+      plot_data <- plot_data[!is.na(plot_data$value), ]
+      plot_data$value <- suppressWarnings(as.numeric(plot_data$value))
+      plot_data$variable <- factor(plot_data$variable, levels = cont_covariates)
+      plot_data$dataset <- factor(plot_data$dataset, levels = c("Original", "After removal"))
+      
+      if(nrow(plot_data) == 0) {
+        return(NULL)
+      }
+      
+      ggplot(plot_data, aes(x = dataset, y = value, fill = dataset)) +
+        geom_violin(trim = FALSE, alpha = 0.5, color = NA) +
+        geom_boxplot(width = 0.12, outlier.shape = NA, alpha = 0.6) +
+        facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+        labs(title = "Covariate Distributions",
+             x = "Dataset (Original vs After removal)",
+             y = "Value",
+             fill = "Dataset") +
+        theme_minimal() +
+        theme(
+          text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          axis.text = element_text(size = 14),
+          plot.title = element_text(size = 18, hjust = 0.5),
+          legend.position = "right",
+          strip.text = element_text(size = 14)
+        )
+    }, error = function(e) {
+      plot.new()
+      text(0.5, 0.5, paste("Error generating covariates violin plot:\n", e$message), cex = 1.1)
+    })
+  })
+  
+  # UI renderers for adaptive plot heights
+  output$violin_plot_ui <- renderUI({
+    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    selected_vars <- c(input$outcome_var, input$predictor_var)
+    mediator_vars_current <- mediator_vars_collected()
+    if(!is.null(mediator_vars_current)) selected_vars <- c(selected_vars, mediator_vars_current)
+    if(!is.null(input$moderator_var)) selected_vars <- c(selected_vars, input$moderator_var)
+    if(!is.null(input$moderator2_var) && input$moderator2_var != "") selected_vars <- c(selected_vars, input$moderator2_var)
+    cont_vars <- selected_vars[vapply(selected_vars, function(v) is_continuous_variable(rv$original_dataset, v), logical(1))]
+    n_vars <- length(cont_vars)
+    height_px <- max(200 * n_vars, 300)
+    plotOutput("violin_plot", height = paste0(height_px, "px"), width = "700px")
+  })
+  
+  output$violin_plot_covariates_ui <- renderUI({
+    req(rv$original_dataset)
+    if(is.null(input$covariates) || length(input$covariates) == 0) return(NULL)
+    cont_covariates <- input$covariates[vapply(input$covariates, function(v) is_continuous_variable(rv$original_dataset, v), logical(1))]
+    n_vars <- length(cont_covariates)
+    if(n_vars == 0) return(NULL)
+    height_px <- max(200 * n_vars, 300)
+    plotOutput("violin_plot_covariates", height = paste0(height_px, "px"), width = "700px")
   })
   
   # UI output for outlier removal button
