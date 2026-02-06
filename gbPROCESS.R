@@ -2475,66 +2475,47 @@ server <- function(input, output, session) {
                 disabled = !button_enabled)
   })
   
-  # Analysis execution - generic function for all PROCESS models
-  original_analysis <- eventReactive(input$run_analysis, {
+  # ============================================================================
+  # HELPER FUNCTION: Run PROCESS Analysis (Shared by both original and outliers-removed)
+  # ============================================================================
+  run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outliers_info = NULL) {
     # Clear any previous validation errors at the start
     rv$validation_error <- NULL
     
-    print("DEBUG: ===== original_analysis eventReactive STARTED =====")
-    print(paste("DEBUG: rv$is_clearing is TRUE?", isTRUE(rv$is_clearing)))
+    print(paste("DEBUG: ===== run_process_analysis STARTED (outliers_removed =", remove_outliers, ") ====="))
     
-    # Basic validation with detailed debug
-    print("DEBUG: Checking basic validation...")
-    print(paste("DEBUG: rv$original_dataset is NULL?", is.null(rv$original_dataset)))
-    print(paste("DEBUG: input$outcome_var:", input$outcome_var))
-    print(paste("DEBUG: input$predictor_var:", input$predictor_var))
-    print(paste("DEBUG: input$process_model:", input$process_model))
-    
+    # Basic validation
     shiny::validate(
-      need(rv$original_dataset, "Dataset not loaded"),
+      need(!is.null(analysis_dataset), "Dataset not available"),
       need(input$outcome_var, "Outcome variable not selected"),
       need(input$predictor_var, "Predictor variable not selected"),
       need(input$process_model, "PROCESS model not selected"),
       need(input$outcome_var != input$predictor_var, 
            "Outcome and predictor must be different variables")
     )
-    print("DEBUG: Basic validation passed")
     
     # Model-specific validation
     model_num <- as.numeric(input$process_model)
-    print(paste("DEBUG: Model number:", model_num))
     
-    # Moderation models require moderator (Model 5 handled separately)
-    # Models with one moderator: 1, 5, 14, 15, 58, 59, 74, 83-92
-    # Models with two moderators: 2, 3
+    # Moderation models require moderator
     if(model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74, 83:92)) {
-      print("DEBUG: This is a moderation model - checking for moderator")
-      print(paste("DEBUG: input$moderator_var:", input$moderator_var))
-      print(paste("DEBUG: moderator_var is NULL?", is.null(input$moderator_var)))
-      print(paste("DEBUG: moderator_var is empty?", is.null(input$moderator_var) || input$moderator_var == ""))
       shiny::validate(
         need(!is.null(input$moderator_var) && input$moderator_var != "", 
              "Moderator variable (W) is required for this model")
       )
-      print("DEBUG: Moderator validation passed")
       
       # Models with second moderator require it to be selected
       if(model_num %in% models_with_second_moderator) {
-        print("DEBUG: This model requires a second moderator (Z)")
-        print(paste("DEBUG: input$moderator2_var:", input$moderator2_var))
         shiny::validate(
           need(!is.null(input$moderator2_var) && input$moderator2_var != "", 
                "Second moderator variable (Z) is required for this model")
         )
-        print("DEBUG: Second moderator validation passed")
       }
     }
     
     # Models 4-92: All require at least one mediator
     if(model_num >= 4 && model_num <= 92) {
-      print("DEBUG: This model requires mediator(s) - checking for mediator(s)")
       mediator_vars_current <- mediator_vars_collected()
-      print(paste("DEBUG: mediator_vars_collected:", if(is.null(mediator_vars_current) || length(mediator_vars_current) == 0) "EMPTY" else paste(mediator_vars_current, collapse=", ")))
       shiny::validate(
         need(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0, 
              "At least one mediator variable is required for this model")
@@ -2591,17 +2572,14 @@ server <- function(input, output, session) {
           shiny::validate(need(FALSE, error_msg))
         }
       }
-      print("DEBUG: Mediator validation passed")
     }
     
-    # Model 5: First and Second Stage Moderation (requires moderator W and mediator M)
+    # Model 5: First and Second Stage Moderation
     if(model_num == 5) {
-      print("DEBUG: This is Model 5 - checking for moderator W")
       shiny::validate(
         need(!is.null(input$moderator_var) && input$moderator_var != "", 
              "Model 5 requires moderator variable W")
       )
-      print("DEBUG: Model 5 validation passed")
     }
     
     # Check for validation errors (set by real-time validation observer)
@@ -2614,147 +2592,105 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
-    # Simple duplicate check: collect all selected variables and check for duplicates
-    # IMPORTANT: Only check inputs that are relevant to the current model
-    # This prevents old values from previous models from causing false duplicate errors
-    print("DEBUG: ===== Analysis duplicate check STARTED (original_analysis) =====")
-    print(paste("DEBUG: Current model:", model_num))
-    print(paste("DEBUG: predictor_var:", if(is.null(input$predictor_var) || input$predictor_var == "") "EMPTY" else input$predictor_var))
-    print(paste("DEBUG: outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
-    print(paste("DEBUG: moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
-    print(paste("DEBUG: moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
-    mediator_vars_current <- mediator_vars_collected()
-    print(paste("DEBUG: mediator_count:", if(is.null(input$mediator_count) || input$mediator_count == "") "EMPTY" else input$mediator_count))
-    print(paste("DEBUG: mediator_vars_collected:", if(is.null(mediator_vars_current) || length(mediator_vars_current) == 0) "EMPTY" else paste(mediator_vars_current, collapse=", ")))
-    print(paste("DEBUG: covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
-    
-    # Determine which inputs are actually used by the current model
+    # Duplicate check: collect all selected variables and check for duplicates
+    print("DEBUG: ===== Analysis duplicate check STARTED =====")
     models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
     models_with_second_moderator <- c(2, 3)
     models_with_moderators_disabled <- c(4, 6, 80:82)
     
     all_vars <- character(0)
-    # Always include predictor and outcome
     if(!is.null(input$predictor_var) && input$predictor_var != "") {
       all_vars <- c(all_vars, input$predictor_var)
     }
     if(!is.null(input$outcome_var) && input$outcome_var != "") {
       all_vars <- c(all_vars, input$outcome_var)
     }
-    # Only include moderator_var if current model uses moderators (and moderators aren't disabled)
     if((model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) &&
        !(model_num %in% models_with_moderators_disabled)) {
       if(!is.null(input$moderator_var) && input$moderator_var != "") {
         all_vars <- c(all_vars, input$moderator_var)
-        print("DEBUG: Including moderator_var (model uses moderators)")
       }
-    } else {
-      print("DEBUG: Ignoring moderator_var (current model doesn't use moderators or moderators are disabled)")
     }
-    # Only include moderator2_var if current model uses second moderator
     if(model_num %in% models_with_second_moderator) {
       if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
         all_vars <- c(all_vars, input$moderator2_var)
-        print("DEBUG: Including moderator2_var (model uses second moderator)")
       }
-    } else {
-      print("DEBUG: Ignoring moderator2_var (current model doesn't use second moderator)")
     }
-    # Only include mediators if current model uses mediators (models 4-92)
     if(model_num >= 4 && model_num <= 92) {
       current_mediators <- mediator_vars_collected()
       if(!is.null(current_mediators) && length(current_mediators) > 0) {
         all_vars <- c(all_vars, current_mediators)
-        print("DEBUG: Including mediator_vars (model uses mediators)")
       }
-    } else {
-      print("DEBUG: Ignoring mediator_vars (current model doesn't use mediators or mediators are disabled)")
     }
-    # Always include covariates
     if(!is.null(input$covariates) && length(input$covariates) > 0) {
       all_vars <- c(all_vars, input$covariates)
     }
-    
-    print(paste("DEBUG: All collected variables:", paste(all_vars, collapse=", ")))
-    print(paste("DEBUG: Unique variables:", paste(unique(all_vars), collapse=", ")))
-    print(paste("DEBUG: Length all_vars:", length(all_vars), "Length unique:", length(unique(all_vars))))
     
     # Final duplicate check (with exception for Model 74 where X and W can be the same)
     if(length(all_vars) > 0 && length(all_vars) != length(unique(all_vars))) {
       duplicate_vars <- all_vars[duplicated(all_vars)]
       
-      # Exception: For Model 74, allow predictor_var and moderator_var to be the same
       if(model_num == 74) {
-        # Check if the only duplicate is X=W (which is allowed for Model 74)
         if(length(duplicate_vars) == 1 && 
            !is.null(input$predictor_var) && input$predictor_var != "" &&
            !is.null(input$moderator_var) && input$moderator_var != "" &&
            input$predictor_var == input$moderator_var &&
            duplicate_vars[1] == input$predictor_var) {
-          # This is the expected X=W for Model 74, so allow it
           print("DEBUG: Model 74 - X=W is allowed, proceeding with analysis")
         } else {
-          # There are other duplicates beyond X=W
-          print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
           error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
-                              paste(unique(duplicate_vars), collapse = "', '"), 
-                              "' is/are used in more than one role.")
+                            paste(unique(duplicate_vars), collapse = "', '"), 
+                            "' is/are used in more than one role.")
           showNotification(error_msg, type = "error", duration = 10)
           rv$validation_error <- error_msg
           return(NULL)
         }
       } else {
-        # Not Model 74, so duplicates are not allowed
-        print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
         error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
-                            paste(unique(duplicate_vars), collapse = "', '"), 
-                            "' is/are used in more than one role.")
+                          paste(unique(duplicate_vars), collapse = "', '"), 
+                          "' is/are used in more than one role.")
         showNotification(error_msg, type = "error", duration = 10)
         rv$validation_error <- error_msg
         return(NULL)
       }
     }
-    print("DEBUG: ===== Analysis duplicate check PASSED (original_analysis) =====")
+    print("DEBUG: ===== Analysis duplicate check PASSED =====")
     
-    print("DEBUG: All validation passed, proceeding with req()")
-    req(rv$original_dataset, input$outcome_var, input$predictor_var, input$process_model)
-    print("DEBUG: req() passed, entering withProgress")
+    req(analysis_dataset, input$outcome_var, input$predictor_var, input$process_model)
     
     withProgress(message = 'Running analysis...', value = 0, {
-      print("DEBUG: Inside withProgress - Running analysis with original dataset")
-      rv$outliers_info <- NULL
+      # Set outliers_info
+      if(remove_outliers) {
+        rv$outliers_info <- outliers_info
+      } else {
+        rv$outliers_info <- NULL
+      }
       
       # Build variable list for complete cases check
-      print("DEBUG: Building variable list for complete cases check")
-      all_vars_orig <- c(input$outcome_var, input$predictor_var)
+      all_vars_for_complete <- c(input$outcome_var, input$predictor_var)
       mediator_vars_current <- mediator_vars_collected()
       if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
-        all_vars_orig <- c(all_vars_orig, mediator_vars_current)
+        all_vars_for_complete <- c(all_vars_for_complete, mediator_vars_current)
       }
       if(!is.null(input$moderator_var) && input$moderator_var != "") {
-        all_vars_orig <- c(all_vars_orig, input$moderator_var)
+        all_vars_for_complete <- c(all_vars_for_complete, input$moderator_var)
       }
       if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
-        all_vars_orig <- c(all_vars_orig, input$moderator2_var)
+        all_vars_for_complete <- c(all_vars_for_complete, input$moderator2_var)
       }
       if(!is.null(input$covariates) && length(input$covariates) > 0) {
-        all_vars_orig <- c(all_vars_orig, input$covariates)
+        all_vars_for_complete <- c(all_vars_for_complete, input$covariates)
       }
-      print(paste("DEBUG: Variables for complete cases:", paste(all_vars_orig, collapse=", ")))
       
       # Check complete cases
-      print("DEBUG: Checking complete cases...")
-      complete_cases_orig <- complete.cases(rv$original_dataset[all_vars_orig])
-      n_complete_orig <- sum(complete_cases_orig)
-      print(paste("DEBUG: Complete cases:", n_complete_orig, "out of", nrow(rv$original_dataset)))
+      complete_cases <- complete.cases(analysis_dataset[all_vars_for_complete])
+      n_complete <- sum(complete_cases)
       
-      if(n_complete_orig < 3) {
-        print("DEBUG: ERROR - Insufficient complete cases")
-        stop(sprintf("Only %d complete cases available. This is insufficient for analysis.", n_complete_orig))
+      if(n_complete < 3) {
+        stop(sprintf("Only %d complete cases available. This is insufficient for analysis.", n_complete))
       }
       
-      process_data_orig <- rv$original_dataset[complete_cases_orig, ]
-      print(paste("DEBUG: Process data prepared with", nrow(process_data_orig), "rows"))
+      process_data <- analysis_dataset[complete_cases, ]
       
       # Store settings
       analysis_settings <- list(
@@ -2766,17 +2702,25 @@ server <- function(input, output, session) {
         conf_level = input$conf_level,
         dataset_name = tools::file_path_sans_ext(basename(input$data_file$name)),
         original_n = nrow(rv$original_dataset),
-        outliers_removed = FALSE,
-        outliers_count = 0,
-        outliers_threshold = if(is_binary_variable(rv$original_dataset, input$outcome_var)) {
-          cooks_threshold_value()
+        outliers_removed = remove_outliers,
+        outliers_count = if(remove_outliers && !is.null(outliers_info)) outliers_info$count else 0,
+        outliers_threshold = if(remove_outliers && !is.null(outliers_info)) {
+          outliers_info$threshold
         } else {
-          input$residual_threshold
+          if(is_binary_variable(rv$original_dataset, input$outcome_var)) {
+            cooks_threshold_value()
+          } else {
+            input$residual_threshold
+          }
         },
-        outliers_method = if(is_binary_variable(rv$original_dataset, input$outcome_var)) {
-          "Cook's Distance"
+        outliers_method = if(remove_outliers && !is.null(outliers_info)) {
+          outliers_info$method
         } else {
-          "Standardized Residuals"
+          if(is_binary_variable(rv$original_dataset, input$outcome_var)) {
+            "Cook's Distance"
+          } else {
+            "Standardized Residuals"
+          }
         },
         predictor_var = input$predictor_var,
         outcome_var = input$outcome_var,
@@ -2787,7 +2731,6 @@ server <- function(input, output, session) {
       )
       
       # Early validation check for W and Z same variable
-      model_num <- as.numeric(input$process_model)
       if(model_num %in% models_with_second_moderator) {
         if(!is.null(input$moderator_var) && !is.null(input$moderator2_var) && 
            input$moderator_var != "" && input$moderator2_var != "" &&
@@ -2800,25 +2743,20 @@ server <- function(input, output, session) {
           rv$validation_error <- "W and Z moderators must be different variables."
           return(NULL)
         } else {
-          # Clear validation error if variables are different
           rv$validation_error <- NULL
         }
       } else {
-        # Clear validation error for models without second moderator
         rv$validation_error <- NULL
       }
       
       # Build PROCESS arguments
-      print("DEBUG: Building PROCESS arguments...")
-      
-      # Handle xmint option for Model 4 - center must be 0 when xmint is used
       center_value <- as.numeric(input$centering)
       if(model_num == 4 && input$xmint) {
-        center_value <- 0  # xmint requires center = 0
+        center_value <- 0
       }
       
       process_args <- list(
-        data = process_data_orig,
+        data = process_data,
         y = input$outcome_var,
         x = input$predictor_var,
         model = model_num,
@@ -2828,18 +2766,13 @@ server <- function(input, output, session) {
         boot = if(input$use_bootstrap) input$boot_samples else 0,
         bc = if(input$use_bootstrap) as.numeric(input$bootstrap_ci_method) else 0,
         hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
-        # NOTE: robustse removed - cluster-robust option requires clustering variable (see comment above)
         covcoeff = if(input$covcoeff) 1 else 0,
         cov = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else "xxxxx"
       )
       
       # Add model-specific variables
-      # Models 4-92: Mediation models (with mediators)
-      # Note: model_num was already defined above
       if(model_num >= 4 && model_num <= 92) {
-        # Get mediators from collected reactive (M1, M2, M3... in order)
         current_mediators <- mediator_vars_collected()
-        
         if(!is.null(current_mediators) && length(current_mediators) > 0) {
           mediator_arg <- if(length(current_mediators) == 1) {
             current_mediators[1]
@@ -2847,31 +2780,23 @@ server <- function(input, output, session) {
             current_mediators
           }
           process_args$m <- mediator_arg
-          print(paste("DEBUG: Added mediator(s) to process_args$m:", paste(mediator_arg, collapse=", ")))
           
-          # Add contrast for mediation models (Model 4 and 6 with multiple mediators)
           if(model_num %in% c(4, 6) && input$pairwise_contrasts && length(current_mediators) > 1) {
             process_args$contrast <- 1
           }
         }
       }
       
-      # Add moderators ONLY for models that require them
-      # Models 1, 5, 14, 15, 58, 59, 74, 83-92 have one moderator (W)
-      # Models 2, 3 have two moderators (W and Z)
+      # Add moderators
       if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74, 83:92)) {
         if(!is.null(input$moderator_var) && input$moderator_var != "") {
           process_args$w <- input$moderator_var
-          # Always generate JN data for moderation models (for plotting), regardless of checkbox
-          # The checkbox only controls whether it appears in the output text
           process_args$jn <- 1
           if(isTRUE(input$probe_interactions) && !is.null(input$conditioning_values) && length(input$conditioning_values) > 0) {
             process_args$moments <- ifelse(input$conditioning_values == "0", 1, 0)
           }
         }
         
-        # Only add Z if model requires it AND moderator2_var is set
-        model_num <- as.numeric(input$process_model)
         if(model_num %in% models_with_second_moderator) {
           if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
             process_args$z <- input$moderator2_var
@@ -2880,27 +2805,16 @@ server <- function(input, output, session) {
       }
       
       # Add other options
-      print("DEBUG: Adding optional PROCESS arguments...")
       if(isTRUE(input$effsize)) process_args$effsize <- 1
       if(isTRUE(input$stand)) process_args$stand <- 1
       if(isTRUE(input$normal)) process_args$normal <- 1
       if(isTRUE(input$matrices)) process_args$matrices <- 1
       if(isTRUE(input$covcoeff)) process_args$covcoeff <- 1
       if(isTRUE(input$covmy)) {
-        # When covmy==1, PROCESS excludes covariates from the outcome equation
-        # For Model 1 (simple moderation with only one equation), PROCESS has a bug:
-        # If covariates are excluded from the only equation, PROCESS incorrectly flags them
-        # as appearing in "all equations" as moderators, triggering error 51.
-        # Workaround: For Model 1, when covmy=1, do not pass covariates to PROCESS.
-        # The output is still valid - covariates are simply excluded from the Y equation.
         if(model_num == 1) {
-          # Silently work around PROCESS bug by not passing covariates
-          # This produces valid output (covariates excluded from Y equation)
           process_args$cov <- "xxxxx"
         } else {
-          # For other models, check for variable name overlaps
           if(!is.null(input$covariates) && length(input$covariates) > 0) {
-            # Check if any covariate is also X (predictor)
             if(input$predictor_var %in% input$covariates) {
               showNotification(
                 sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the predictor (X). Please remove it from one of these roles.", input$predictor_var),
@@ -2910,7 +2824,6 @@ server <- function(input, output, session) {
               rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and the predictor (X).", input$predictor_var)
               return(NULL)
             }
-            # Check if any covariate is also Y (outcome)
             if(input$outcome_var %in% input$covariates) {
               showNotification(
                 sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the outcome (Y). Please remove it from one of these roles.", input$outcome_var),
@@ -2920,7 +2833,6 @@ server <- function(input, output, session) {
               rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and the outcome (Y).", input$outcome_var)
               return(NULL)
             }
-            # Check if any covariate is also a moderator (W)
             if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$covariates) {
               showNotification(
                 sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (W). Please remove it from one of these roles.", input$moderator_var),
@@ -2930,7 +2842,6 @@ server <- function(input, output, session) {
               rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and a moderator (W).", input$moderator_var)
               return(NULL)
             }
-            # Check if any covariate is also a second moderator (Z)
             if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$covariates) {
               showNotification(
                 sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (Z). Please remove it from one of these roles.", input$moderator2_var),
@@ -2940,7 +2851,6 @@ server <- function(input, output, session) {
               rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and a moderator (Z).", input$moderator2_var)
               return(NULL)
             }
-            # Check if any covariate is also a mediator (for models that have mediators)
             mediator_vars_current <- mediator_vars_collected()
             if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
               overlapping_mediators <- intersect(input$covariates, mediator_vars_current)
@@ -2963,63 +2873,51 @@ server <- function(input, output, session) {
       if(input$diagnose) process_args$diagnose <- 1
       if(isTRUE(input$ssquares)) process_args$ssquares <- 1
       if(isTRUE(input$modelres)) process_args$modelres <- 1
-      # xmint only for Model 4 - explicitly set to 0 if not used
-      # When xmint=1 for Model 4, PROCESS automatically:
-      #   - Converts to Model 74 internally (line 807-816)
-      #   - Sets w<-x and model<-74 (line 809)
-      #   - Automatically generates X*M interaction terms (line 2115-2119)
-      #   - Handles interaction term creation - no manual calculation needed
-      # However, for continuous X, PROCESS requires xrefval != 999 (line 1507-1508)
-      # For dichotomous X, PROCESS automatically sets xrefval to [xmn, xmx] if xrefval=999 (line 1509-1510)
-      # xmint and xmtest are mutually exclusive: when xmint is enabled, model becomes 74 and xmtest won't run
+      
+      # xmint handling
       if(model_num == 4 && input$xmint) {
-        # Validate that xmtest is not also enabled (they are mutually exclusive)
         if(input$xmtest) {
           stop("Error: 'Allow X by M interaction' and 'Test for X by M interaction' cannot both be enabled. When 'Allow X by M interaction' is enabled, Model 4 is converted to Model 74, which makes the test option unavailable. Please disable one of these options.")
         }
         process_args$xmint <- 1
-        # When xmint is used, center must be 0 (already set above, line 814-815)
-        # Check if X is dichotomous (binary)
-        x_is_dichotomous <- is_binary_variable(process_data_orig, input$predictor_var)
-        if(x_is_dichotomous) {
-          # For dichotomous X, don't pass xrefval - PROCESS will handle it automatically (line 1509-1510)
-          # It will set xrefval to [min, max] automatically
-        } else {
-          # For continuous X, PROCESS requires xrefval to be set (not 999)
-          # Use mean as default - PROCESS will add xrefval+1 to create a range for probing (line 1515)
-          x_mean <- mean(process_data_orig[[input$predictor_var]], na.rm = TRUE)
+        x_is_dichotomous <- is_binary_variable(process_data, input$predictor_var)
+        if(!x_is_dichotomous) {
+          x_mean <- mean(process_data[[input$predictor_var]], na.rm = TRUE)
           process_args$xrefval <- x_mean
         }
       } else {
-        # Explicitly set xmint to 0 when not used to prevent any default behavior
         process_args$xmint <- 0
       }
-      # xmtest: Test for X by M interaction (available for mediation models including Model 4, but not Model 74)
-      # Note: xmtest is mutually exclusive with xmint for Model 4 (when xmint is enabled, model becomes 74 and xmtest won't run)
+      
       if(isTRUE(input$xmtest)) {
         process_args$xmtest <- 1
       } else {
         process_args$xmtest <- 0
       }
       if(isTRUE(input$total)) process_args$total <- 1
-      # Capture bootstrap results for download when bootstrapping is enabled
-      # Set save=1 to get bootstrap results in return value (but don't save to file)
-      if(isTRUE(input$use_bootstrap)) {
-        process_args$save <- 1  # This makes PROCESS return bootstrap results
-      }
-      # Only enable plot if user explicitly wants it (with warning)
-      if(isTRUE(input$plot)) {
-        process_args$plot <- 1
-        showNotification("Note: This will open R graphics device windows that cannot be easily saved or customized.", type = "warning", duration = 5)
+      
+      # Check if this is a moderation model
+      is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
+      
+      # For moderation models, set plot=2 and save=2 to get plot data
+      if(is_mod_model) {
+        process_args$plot <- 2
+        process_args$save <- 2
       } else {
-        # Explicitly set plot to 0 to prevent any default plotting
-        process_args$plot <- 0
+        if(isTRUE(input$use_bootstrap)) {
+          process_args$save <- 1
+        }
+        if(isTRUE(input$plot)) {
+          process_args$plot <- 1
+          showNotification("Note: This will open R graphics device windows that cannot be easily saved or customized.", type = "warning", duration = 5)
+        } else {
+          process_args$plot <- 0
+        }
       }
+      
       if(isTRUE(input$probe_interactions)) {
-        # Parse probe threshold (e.g., "p < .10" -> 0.10)
         probe_text <- input$probe_threshold
         probe_val <- tryCatch({
-          # Extract number from "p < .10" or "p < 0.10"
           num_match <- regmatches(probe_text, regexpr("0?\\.?\\d+", probe_text))
           if(length(num_match) > 0) {
             as.numeric(num_match[1])
@@ -3030,92 +2928,25 @@ server <- function(input, output, session) {
         process_args$intprobe <- probe_val
       }
       if(!is.na(input$seed) && !is.null(input$seed) && input$seed >= 1) process_args$seed <- input$seed
-      # PROCESS expects decimals in format "9.4" (9 digits before decimal, 4 after)
-      # Convert user's decimal places (e.g., 2) to format PROCESS expects (e.g., "9.2")
       if(input$decimals != 4) process_args$decimals <- paste0("9.", input$decimals)
       
-      # Check if this is a moderation model
-      model_num <- as.numeric(input$process_model)
-      is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
-      
-      # For moderation models, set plot=2 and save=2 to get plot data in result object
-      # NOTE: plot=2 generates data with SE and CI. R pop-up plots are suppressed via graphics device
-      # To enable R pop-up plots, remove the pdf(NULL) call in the PROCESS execution
-      if(is_mod_model) {
-        process_args$plot <- 2  # Generate estimates + SE + CI for visualization
-        process_args$save <- 2  # Return plot data in result object
-      } else {
-        # For non-moderation models, handle bootstrap and plot options as before
-        # Capture bootstrap results for download when bootstrapping is enabled
-        # Set save=1 to get bootstrap results in return value (but don't save to file)
-        if(isTRUE(input$use_bootstrap)) {
-          process_args$save <- 1  # This makes PROCESS return bootstrap results
-        }
-        # Only enable plot if user explicitly wants it (with warning)
-        if(isTRUE(input$plot)) {
-          process_args$plot <- 1
-          showNotification("Note: This will open R graphics device windows that cannot be easily saved or customized.", type = "warning", duration = 5)
-        } else {
-          # Explicitly set plot to 0 to prevent any default plotting
-          process_args$plot <- 0
-        }
-      }
-      print("DEBUG: All PROCESS arguments prepared")
-      
-      # DEBUG: Print process arguments
-      print("=== DEBUG: PROCESS Arguments ===")
-      print(paste("Model:", process_args$model))
-      print(paste("Y:", process_args$y))
-      print(paste("X:", process_args$x))
-      if("w" %in% names(process_args)) print(paste("W:", process_args$w))
-      if("m" %in% names(process_args)) print(paste("M:", paste(process_args$m, collapse=", ")))
-      print(paste("Data rows:", nrow(process_args$data)))
-      print("=================================")
-      
-      # Run PROCESS with error handling
+      # Run PROCESS
       tryCatch({
-        print("DEBUG: About to call PROCESS function...")
-        # Set output width to match display area (main panel is ~75% of 1800px = ~1350px)
-        # With monospace font (~9px/char) and padding, ~110-120 characters fits well
-        # Setting narrower than display ensures PROCESS formats conservatively and avoids wrapping
         old_width <- options("width")
         options(width = 115)
-        # Suppress R graphics pop-ups (plots are generated in Shiny UI instead)
-        # NOTE: To enable R pop-up plots, comment out the pdf(NULL) and dev.off() lines
         pdf(NULL)
         process_output <- capture.output({
           result <- do.call(process, process_args)
         })
-        dev.off()  # Close the null device
-        # Restore original width setting
+        dev.off()
         options(width = old_width$width)
-        print(paste("DEBUG: PROCESS completed. Output lines:", length(process_output)))
         
         # Store results including bootstrap data and plot data if available
         bootstrap_data <- NULL
         plot_data <- NULL
         
-        # Check if this is a moderation model
-        model_num <- as.numeric(input$process_model)
-        is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
-        
         if(is_mod_model && !is.null(result)) {
-          # For moderation models with save=2, result contains plot data in resultm
-          print("========================================")
-          print("DEBUG: CAPTURING RESULT OBJECT FOR MODERATION MODEL")
-          print("========================================")
-          print(paste("Result type:", class(result)))
-          print(paste("Result typeof:", typeof(result)))
-          
-          # Store the FULL result object for later inspection
-          # This is critical - we need to see everything PROCESS returns
           if(is.list(result)) {
-            print(paste("Result is list with", length(result), "elements"))
-            if(!is.null(names(result))) {
-              print("Named elements in result:")
-              print(names(result))
-            }
-            # Store the full result for Model 3 conditional effect extraction
             rv$full_result <- result
           } else {
             rv$full_result <- list(result)
@@ -3123,778 +2954,107 @@ server <- function(input, output, session) {
           
           if(is.data.frame(result)) {
             plot_data <- result
-            print(paste("DEBUG: Plot data captured (data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
           } else if(is.matrix(result)) {
-            # PROCESS returns resultm as a matrix when save=2
             plot_data <- as.data.frame(result)
-            # Remove rows with all NA or 99999 (PROCESS uses 99999 as placeholder)
             plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
-            print(paste("DEBUG: Plot data captured (matrix->data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
           } else if(is.list(result) && length(result) > 0) {
-            print(paste("DEBUG: Result is list with", length(result), "elements"))
-            # For save=2, result is resultm (plot data)
-            # For save=3, result is list(boots, resultm) where resultm is plot data
             if(length(result) == 2) {
-              # Second element is plot data when save=3
               if(is.data.frame(result[[2]])) {
                 plot_data <- result[[2]]
               } else if(is.matrix(result[[2]])) {
                 plot_data <- as.data.frame(result[[2]])
                 plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
               }
-              # First element is bootstrap when save=3
               if(is.data.frame(result[[1]])) {
                 bootstrap_data <- result[[1]]
               } else if(is.matrix(result[[1]])) {
                 bootstrap_data <- as.data.frame(result[[1]])
               }
-              print(paste("DEBUG: Plot data captured (list[[2]]), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
             } else if(is.data.frame(result[[1]])) {
-              plot_data <- result[[1]]  # First element is plot data when save=2
-              print(paste("DEBUG: Plot data captured (list[[1]]), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
+              plot_data <- result[[1]]
             } else if(is.matrix(result[[1]])) {
               plot_data <- as.data.frame(result[[1]])
               plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
-              print(paste("DEBUG: Plot data captured (list[[1]] matrix->data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
             }
           }
         } else if(input$use_bootstrap && !is.null(result)) {
-          # For non-moderation models, handle bootstrap as before
-          # PROCESS returns bootstrap results when save=1 and bootstrapping is enabled
-          print(paste("DEBUG: Bootstrap enabled, result type:", class(result)))
           if(is.data.frame(result)) {
             bootstrap_data <- result
-            print(paste("DEBUG: Bootstrap data captured (data.frame), rows:", nrow(bootstrap_data)))
           } else if(is.list(result) && length(result) > 0) {
-            print(paste("DEBUG: Result is list with", length(result), "elements"))
             if(is.data.frame(result[[1]])) {
-              bootstrap_data <- result[[1]]  # First element is bootstrap results
-              print(paste("DEBUG: Bootstrap data captured (list[[1]]), rows:", nrow(bootstrap_data)))
+              bootstrap_data <- result[[1]]
             }
           }
-        } else {
-          print(paste("DEBUG: No special data to capture. is_mod_model:", is_mod_model, "use_bootstrap:", input$use_bootstrap, "result is null:", is.null(result)))
         }
         
         # Clear validation error on successful run
         rv$validation_error <- NULL
         
-        rv$analysis_results <- list(
-          output = process_output,
-          data_used = process_data_orig,
-          original_data = rv$original_dataset,
-          settings = analysis_settings,
-          bootstrap_data = bootstrap_data,
-          plot_data = plot_data,
-          result = result  # Store the full result object
-        )
-        # Track which model these results are for
-        if(!is.null(input$process_model) && input$process_model != "") {
-          rv$results_model <- as.numeric(input$process_model)
-        }
-        print("DEBUG: Results stored in rv$analysis_results")
-        print(paste("DEBUG: rv$analysis_results is NULL?", is.null(rv$analysis_results)))
-        print(paste("DEBUG: Number of output lines:", length(rv$analysis_results$output)))
-        print(paste("DEBUG: rv$results_model set to", rv$results_model))
-      }, error = function(e) {
-        print(paste("DEBUG: ERROR in PROCESS execution:", e$message))
-        print(paste("DEBUG: Error class:", class(e)))
-        showNotification(paste("Error running PROCESS analysis:", e$message), type = "error", duration = 10)
-        rv$analysis_results <- NULL
-        rv$validation_error <- conditionMessage(e)
-        return(NULL)
-      })
-      
-      print("DEBUG: ===== original_analysis eventReactive COMPLETED =====")
-      print(paste("DEBUG: Returning results. Is NULL?", is.null(rv$analysis_results)))
-      rv$analysis_results
-    })
-  })
-  
-  # Analysis with outliers removed
-  outliers_analysis <- eventReactive(input$run_analysis_no_outliers, {
-    # Clear any previous validation errors
-    rv$validation_error <- NULL
-    
-    # Basic validation
-    tryCatch({
-      shiny::validate(
-        need(rv$original_dataset, "Dataset not loaded"),
-        need(input$outcome_var, "Outcome variable not selected"),
-        need(input$predictor_var, "Predictor variable not selected"),
-        need(input$process_model, "PROCESS model not selected"),
-        need(input$outcome_var != input$predictor_var, 
-             "Outcome and predictor must be different variables")
-      )
-    }, error = function(e) {
-      rv$validation_error <- conditionMessage(e)
-      stop(e)
-    })
-    
-    # Model-specific validation
-    model_num <- as.numeric(input$process_model)
-    # Models with one moderator: 1, 5, 14, 15, 58, 59, 74, 83-92
-    # Models with two moderators: 2, 3
-    if(model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74, 83:92)) {
-      shiny::validate(
-        need(!is.null(input$moderator_var) && input$moderator_var != "", 
-             "Moderator variable (W) is required for this model")
-      )
-      
-      # Models with second moderator require it to be selected
-      if(model_num %in% c(2, 3)) {
-        shiny::validate(
-          need(!is.null(input$moderator2_var) && input$moderator2_var != "", 
-               "Second moderator variable (Z) is required for this model")
-        )
-      }
-    }
-    # Models 4-92: All require at least one mediator
-    if(model_num >= 4 && model_num <= 92) {
-      mediator_vars_current <- mediator_vars_collected()
-      shiny::validate(
-        need(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0, 
-             "At least one mediator variable is required for this model")
-      )
-      
-      # Model 4 allows up to 10 mediators
-      if(model_num == 4) {
-        shiny::validate(
-          need(length(mediator_vars_current) <= 10,
-               "Model 4 allows up to 10 mediators")
-        )
-      }
-      
-      # Model 6 requires 2-6 mediators
-      if(model_num == 6) {
-        shiny::validate(
-          need(length(mediator_vars_current) >= 2 && length(mediator_vars_current) <= 6,
-               "Model 6 requires between 2 and 6 mediators")
-        )
-      }
-      
-      # Model 82 requires exactly 4 mediators
-      if(model_num == 82) {
-        mediator_count <- length(mediator_vars_current)
-        if(mediator_count != 4) {
-          if(mediator_count < 4) {
-            error_msg <- paste0("Model 82 requires exactly 4 mediators. You have selected ", 
-                               mediator_count, " mediator(s). Please select ", (4 - mediator_count), 
-                               " more mediator(s).")
-          } else {
-            error_msg <- paste0("Model 82 requires exactly 4 mediators. You have selected ", 
-                               mediator_count, " mediators. Please remove ", (mediator_count - 4), 
-                               " mediator(s).")
-          }
-          showNotification(error_msg, type = "error", duration = 10)
-          shiny::validate(need(FALSE, error_msg))
-        }
-      }
-      
-      # Models 83-92 require exactly 2 mediators
-      if(model_num >= 83 && model_num <= 92) {
-        mediator_count <- length(mediator_vars_current)
-        if(mediator_count != 2) {
-          if(mediator_count < 2) {
-            error_msg <- paste0("Model ", model_num, " requires exactly 2 mediators. You have selected ", 
-                               mediator_count, " mediator(s). Please select ", (2 - mediator_count), 
-                               " more mediator(s).")
-          } else {
-            error_msg <- paste0("Model ", model_num, " requires exactly 2 mediators. You have selected ", 
-                               mediator_count, " mediators. Please remove ", (mediator_count - 2), 
-                               " mediator(s).")
-          }
-          showNotification(error_msg, type = "error", duration = 10)
-          shiny::validate(need(FALSE, error_msg))
-        }
-      }
-    }
-    
-    # Check for validation errors (set by real-time validation observer)
-    if(!is.null(rv$validation_error)) {
-      showNotification(
-        rv$validation_error,
-        type = "error",
-        duration = 10
-      )
-      return(NULL)
-    }
-    
-    # Simple duplicate check: collect all selected variables and check for duplicates
-    # IMPORTANT: Only check inputs that are relevant to the current model
-    # This prevents old values from previous models from causing false duplicate errors
-    print("DEBUG: ===== Analysis duplicate check STARTED (outliers_analysis) =====")
-    print(paste("DEBUG: Current model:", model_num))
-    print(paste("DEBUG: predictor_var:", if(is.null(input$predictor_var) || input$predictor_var == "") "EMPTY" else input$predictor_var))
-    print(paste("DEBUG: outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
-    print(paste("DEBUG: moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
-    print(paste("DEBUG: moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
-    mediator_vars_current <- mediator_vars_collected()
-    print(paste("DEBUG: mediator_count:", if(is.null(input$mediator_count) || input$mediator_count == "") "EMPTY" else input$mediator_count))
-    print(paste("DEBUG: mediator_vars_collected:", if(is.null(mediator_vars_current) || length(mediator_vars_current) == 0) "EMPTY" else paste(mediator_vars_current, collapse=", ")))
-    print(paste("DEBUG: covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
-    
-    # Determine which inputs are actually used by the current model
-    models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
-    models_with_second_moderator <- c(2, 3)
-    models_with_moderators_disabled <- c(4, 6, 80:82)
-    
-    all_vars <- character(0)
-    # Always include predictor and outcome
-    if(!is.null(input$predictor_var) && input$predictor_var != "") {
-      all_vars <- c(all_vars, input$predictor_var)
-    }
-    if(!is.null(input$outcome_var) && input$outcome_var != "") {
-      all_vars <- c(all_vars, input$outcome_var)
-    }
-    # Only include moderator_var if current model uses moderators (and moderators aren't disabled)
-    if((model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) &&
-       !(model_num %in% models_with_moderators_disabled)) {
-      if(!is.null(input$moderator_var) && input$moderator_var != "") {
-        all_vars <- c(all_vars, input$moderator_var)
-        print("DEBUG: Including moderator_var (model uses moderators)")
-      }
-    } else {
-      print("DEBUG: Ignoring moderator_var (current model doesn't use moderators or moderators are disabled)")
-    }
-    # Only include moderator2_var if current model uses second moderator
-    if(model_num %in% models_with_second_moderator) {
-      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
-        all_vars <- c(all_vars, input$moderator2_var)
-        print("DEBUG: Including moderator2_var (model uses second moderator)")
-      }
-    } else {
-      print("DEBUG: Ignoring moderator2_var (current model doesn't use second moderator)")
-    }
-    # Only include mediators if current model uses mediators (models 4-92)
-    if(model_num >= 4 && model_num <= 92) {
-      current_mediators <- mediator_vars_collected()
-      if(!is.null(current_mediators) && length(current_mediators) > 0) {
-        all_vars <- c(all_vars, current_mediators)
-        print("DEBUG: Including mediator_vars (model uses mediators)")
-      }
-    } else {
-      print("DEBUG: Ignoring mediator_vars (current model doesn't use mediators or mediators are disabled)")
-    }
-    # Always include covariates
-    if(!is.null(input$covariates) && length(input$covariates) > 0) {
-      all_vars <- c(all_vars, input$covariates)
-    }
-    
-    print(paste("DEBUG: All collected variables:", paste(all_vars, collapse=", ")))
-    print(paste("DEBUG: Unique variables:", paste(unique(all_vars), collapse=", ")))
-    print(paste("DEBUG: Length all_vars:", length(all_vars), "Length unique:", length(unique(all_vars))))
-    
-    # Final duplicate check (with exception for Model 74 where X and W can be the same)
-    if(length(all_vars) > 0 && length(all_vars) != length(unique(all_vars))) {
-      duplicate_vars <- all_vars[duplicated(all_vars)]
-      
-      # Exception: For Model 74, allow predictor_var and moderator_var to be the same
-      if(model_num == 74) {
-        # Check if the only duplicate is X=W (which is allowed for Model 74)
-        if(length(duplicate_vars) == 1 && 
-           !is.null(input$predictor_var) && input$predictor_var != "" &&
-           !is.null(input$moderator_var) && input$moderator_var != "" &&
-           input$predictor_var == input$moderator_var &&
-           duplicate_vars[1] == input$predictor_var) {
-          # This is the expected X=W for Model 74, so allow it
-          print("DEBUG: Model 74 - X=W is allowed, proceeding with analysis")
-        } else {
-          # There are other duplicates beyond X=W
-          print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
-          error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
-                              paste(unique(duplicate_vars), collapse = "', '"), 
-                              "' is/are used in more than one role.")
-          showNotification(error_msg, type = "error", duration = 10)
-          rv$validation_error <- error_msg
-          return(NULL)
-        }
-      } else {
-        # Not Model 74, so duplicates are not allowed
-        print(paste("DEBUG: DUPLICATES FOUND IN ANALYSIS:", paste(unique(duplicate_vars), collapse=", ")))
-        error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
-                            paste(unique(duplicate_vars), collapse = "', '"), 
-                            "' is/are used in more than one role.")
-        showNotification(error_msg, type = "error", duration = 10)
-        rv$validation_error <- error_msg
-        return(NULL)
-      }
-    }
-    print("DEBUG: ===== Analysis duplicate check PASSED (outliers_analysis) =====")
-    
-    # Model 5: First and Second Stage Moderation (requires moderator W and mediator M)
-    if(model_num == 5) {
-      shiny::validate(
-        need(!is.null(input$moderator_var) && input$moderator_var != "", 
-             "Model 5 requires moderator variable W")
-      )
-    }
-    
-    req(rv$original_dataset, input$outcome_var, input$predictor_var, input$process_model)
-    
-    withProgress(message = 'Running analysis...', value = 0, {
-      print("Running analysis with outliers removed")
-      outliers <- identify_outliers()
-      
-      # Check if outliers were found
-      if(is.null(outliers) || is.null(outliers$cases) || length(outliers$cases) == 0) {
-        stop("No outliers found to remove. Please check your outlier detection settings.")
-      }
-      
-      rv$outliers_info <- list(
-        count = outliers$count,
-        threshold = outliers$threshold
-      )
-      
-      reduced_data <- rv$original_dataset[-outliers$cases, ]
-      
-      # Build variable list
-      all_vars <- c(input$outcome_var, input$predictor_var)
-      mediator_vars_current <- mediator_vars_collected()
-      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
-        all_vars <- c(all_vars, mediator_vars_current)
-      }
-      if(!is.null(input$moderator_var) && input$moderator_var != "") {
-        all_vars <- c(all_vars, input$moderator_var)
-      }
-      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
-        all_vars <- c(all_vars, input$moderator2_var)
-      }
-      if(!is.null(input$covariates) && length(input$covariates) > 0) {
-        all_vars <- c(all_vars, input$covariates)
-      }
-      
-      # Filter out any empty strings that might have gotten in
-      all_vars <- all_vars[all_vars != ""]
-      
-      complete_cases <- complete.cases(reduced_data[all_vars])
-      n_complete <- sum(complete_cases)
-      
-      if(n_complete < 3) {
-        stop(sprintf("After removing outliers, only %d complete cases remain. This is insufficient for analysis.", n_complete))
-      }
-      
-      process_data <- reduced_data[complete_cases, ]
-      
-      # Store settings
-      analysis_settings <- list(
-        model = as.numeric(input$process_model),
-        centering = input$centering,
-        use_bootstrap = input$use_bootstrap,
-        boot_samples = if(input$use_bootstrap) input$boot_samples else NULL,
-        bootstrap_ci_method = if(input$use_bootstrap) input$bootstrap_ci_method else NULL,
-        seed = if(!is.na(input$seed) && !is.null(input$seed) && input$seed >= 1) input$seed else NULL,
-        hc_method = input$hc_method,
-        conf_level = input$conf_level,
-        stand = input$stand,
-        normal = input$normal,
-        pairwise_contrasts = input$pairwise_contrasts,
-        xmint = input$xmint,
-        xmtest = input$xmtest,
-        total = input$total,
-        probe_interactions = input$probe_interactions,
-        probe_threshold = if(input$probe_interactions) input$probe_threshold else NULL,
-        conditioning_values = if(input$probe_interactions) input$conditioning_values else NULL,
-        jn = input$jn,
-        dataset_name = tools::file_path_sans_ext(basename(input$data_file$name)),
-        original_n = nrow(rv$original_dataset),
-        outliers_removed = TRUE,
-        outliers_count = outliers$count,
-        outliers_threshold = outliers$threshold,
-        outliers_method = outliers$method,
-        predictor_var = input$predictor_var,
-        outcome_var = input$outcome_var,
-        mediator_vars = mediator_vars_collected(),
-        moderator_var = input$moderator_var,
-        moderator2_var = if(!is.null(input$moderator2_var) && input$moderator2_var != "") input$moderator2_var else NULL,
-        covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
-      )
-      
-      # Early validation check for W and Z same variable
-      model_num <- as.numeric(input$process_model)
-      if(model_num %in% models_with_second_moderator) {
-        if(!is.null(input$moderator_var) && !is.null(input$moderator2_var) && 
-           input$moderator_var != "" && input$moderator2_var != "" &&
-           input$moderator_var == input$moderator2_var) {
-          showNotification(
-            "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
-            type = "error",
-            duration = 10
-          )
-          rv$validation_error <- "W and Z moderators must be different variables."
-          return(NULL)
-        } else {
-          # Clear validation error if variables are different
-          rv$validation_error <- NULL
-        }
-      } else {
-        # Clear validation error for models without second moderator
-        rv$validation_error <- NULL
-      }
-      
-      # Build PROCESS arguments (same as original_analysis)
-      
-      # Handle xmint option for Model 4 - center must be 0 when xmint is used
-      center_value <- as.numeric(input$centering)
-      if(model_num == 4 && input$xmint) {
-        center_value <- 0  # xmint requires center = 0
-      }
-      
-      process_args <- list(
-        data = process_data,
-        y = input$outcome_var,
-        x = input$predictor_var,
-        model = model_num,
-        center = center_value,
-        conf = input$conf_level,
-        modelbt = if(input$use_bootstrap) 1 else 0,
-        boot = if(input$use_bootstrap) input$boot_samples else 0,
-        bc = if(input$use_bootstrap) as.numeric(input$bootstrap_ci_method) else 0,
-        hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
-        # NOTE: robustse removed - cluster-robust option requires clustering variable (see comment above)
-        covcoeff = if(input$covcoeff) 1 else 0,
-        cov = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else "xxxxx"
-      )
-      
-      # Add model-specific variables
-      # Models 4-92: Mediation models (with mediators)
-      if(model_num >= 4 && model_num <= 92) {
-        # Get mediators from collected reactive (M1, M2, M3... in order)
-        current_mediators <- mediator_vars_collected()
-        
-        if(!is.null(current_mediators) && length(current_mediators) > 0) {
-          # Check for duplicate mediators within the mediator list itself
-          if(length(current_mediators) != length(unique(current_mediators))) {
-            showNotification(
-              "Error: The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator). Please ensure each variable is used in only one role.",
-              type = "error",
-              duration = 10
-            )
-            rv$validation_error <- "The same variable cannot be used for multiple roles (predictor, outcome, moderator, or mediator)."
-            return(NULL)
-          }
-          
-          mediator_arg <- if(length(current_mediators) == 1) {
-            current_mediators[1]
-          } else {
-            current_mediators
-          }
-          process_args$m <- mediator_arg
-          print(paste("DEBUG: Added mediator(s) to process_args$m (outliers analysis):", paste(mediator_arg, collapse=", ")))
-          
-          # Add contrast for mediation models (Model 4 and 6 with multiple mediators)
-          if(model_num %in% c(4, 6) && input$pairwise_contrasts && length(current_mediators) > 1) {
-            process_args$contrast <- 1
-          }
-        }
-      }
-      
-      # Add moderators ONLY for models that require them
-      # Models 1, 5, 14, 15, 58, 59, 74, 83-92 have one moderator (W)
-      # Models 2, 3 have two moderators (W and Z)
-      if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74, 83:92)) {
-        if(!is.null(input$moderator_var) && input$moderator_var != "") {
-          process_args$w <- input$moderator_var
-          # Always generate JN data for moderation models (for plotting), regardless of checkbox
-          # The checkbox only controls whether it appears in the output text
-          process_args$jn <- 1
-          if(isTRUE(input$probe_interactions) && !is.null(input$conditioning_values) && length(input$conditioning_values) > 0) {
-            process_args$moments <- ifelse(input$conditioning_values == "0", 1, 0)
-          }
-        }
-        
-        # Only add Z if model requires it AND moderator2_var is set
-        model_num <- as.numeric(input$process_model)
-        if(model_num %in% models_with_second_moderator) {
-          if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
-            process_args$z <- input$moderator2_var
-          }
-        }
-      }
-      
-      if(input$effsize) process_args$effsize <- 1
-      if(input$stand) process_args$stand <- 1
-      if(input$normal) process_args$normal <- 1
-      if(input$matrices) process_args$matrices <- 1
-      if(input$covcoeff) process_args$covcoeff <- 1
-      if(input$covmy) {
-        # When covmy==1, PROCESS excludes covariates from the outcome equation
-        # For Model 1 (simple moderation with only one equation), PROCESS has a bug:
-        # If covariates are excluded from the only equation, PROCESS incorrectly flags them
-        # as appearing in "all equations" as moderators, triggering error 51.
-        # Workaround: For Model 1, when covmy=1, do not pass covariates to PROCESS.
-        # The output is still valid - covariates are simply excluded from the Y equation.
-        if(model_num == 1) {
-          # Silently work around PROCESS bug by not passing covariates
-          # This produces valid output (covariates excluded from Y equation)
-          process_args$cov <- "xxxxx"
-        } else {
-          # For other models, check for variable name overlaps
-          if(!is.null(input$covariates) && length(input$covariates) > 0) {
-            # Check if any covariate is also X (predictor)
-            if(input$predictor_var %in% input$covariates) {
-              showNotification(
-                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the predictor (X). Please remove it from one of these roles.", input$predictor_var),
-                type = "error",
-                duration = 10
-              )
-              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and the predictor (X).", input$predictor_var)
-              return(NULL)
-            }
-            # Check if any covariate is also Y (outcome)
-            if(input$outcome_var %in% input$covariates) {
-              showNotification(
-                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and the outcome (Y). Please remove it from one of these roles.", input$outcome_var),
-                type = "error",
-                duration = 10
-              )
-              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and the outcome (Y).", input$outcome_var)
-              return(NULL)
-            }
-            # Check if any covariate is also a moderator (W)
-            if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$covariates) {
-              showNotification(
-                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (W). Please remove it from one of these roles.", input$moderator_var),
-                type = "error",
-                duration = 10
-              )
-              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and a moderator (W).", input$moderator_var)
-              return(NULL)
-            }
-            # Check if any covariate is also a second moderator (Z)
-            if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$covariates) {
-              showNotification(
-                sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (Z). Please remove it from one of these roles.", input$moderator2_var),
-                type = "error",
-                duration = 10
-              )
-              rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and a moderator (Z).", input$moderator2_var)
-              return(NULL)
-            }
-            # Check if any covariate is also a mediator (for models that have mediators)
-            mediator_vars_current <- mediator_vars_collected()
-            if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
-              overlapping_mediators <- intersect(input$covariates, mediator_vars_current)
-              if(length(overlapping_mediators) > 0) {
-                showNotification(
-                  sprintf("Error: When 'Covariance matrix for Y' is checked, variable(s) '%s' cannot be used as both a covariate and a mediator. Please remove from one of these roles.", paste(overlapping_mediators, collapse="', '")),
-                  type = "error",
-                  duration = 10
-                )
-                rv$validation_error <- sprintf("Variable(s) '%s' cannot be used as both a covariate and a mediator.", paste(overlapping_mediators, collapse="', '"))
-                return(NULL)
-              }
-            }
-          }
-        }
-        process_args$covmy <- 1
-      }
-      if(input$describe) process_args$describe <- 1
-      if(isTRUE(input$listmiss)) process_args$listmiss <- 1
-      if(isTRUE(input$diagnose)) process_args$diagnose <- 1
-      if(isTRUE(input$ssquares)) process_args$ssquares <- 1
-      if(input$modelres) process_args$modelres <- 1
-      # xmint only for Model 4
-      # When xmint=1 for Model 4, PROCESS automatically:
-      #   - Converts to Model 74 internally (line 807-816)
-      #   - Sets w<-x and model<-74 (line 809)
-      #   - Automatically generates X*M interaction terms (line 2115-2119)
-      #   - Handles interaction term creation - no manual calculation needed
-      # However, for continuous X, PROCESS requires xrefval != 999 (line 1507-1508)
-      # For dichotomous X, PROCESS automatically sets xrefval to [xmn, xmx] if xrefval=999 (line 1509-1510)
-      # xmint and xmtest are mutually exclusive: when xmint is enabled, model becomes 74 and xmtest won't run
-      if(model_num == 4 && input$xmint) {
-        # Validate that xmtest is not also enabled (they are mutually exclusive)
-        if(input$xmtest) {
-          stop("Error: 'Allow X by M interaction' and 'Test for X by M interaction' cannot both be enabled. When 'Allow X by M interaction' is enabled, Model 4 is converted to Model 74, which makes the test option unavailable. Please disable one of these options.")
-        }
-        process_args$xmint <- 1
-        # When xmint is used, center must be 0 (already set above, line 814-815)
-        # Check if X is dichotomous (binary)
-        x_is_dichotomous <- is_binary_variable(process_data, input$predictor_var)
-        if(x_is_dichotomous) {
-          # For dichotomous X, don't pass xrefval - PROCESS will handle it automatically (line 1509-1510)
-          # It will set xrefval to [min, max] automatically
-        } else {
-          # For continuous X, PROCESS requires xrefval to be set (not 999)
-          # Use mean as default - PROCESS will add xrefval+1 to create a range for probing (line 1515)
-          x_mean <- mean(process_data[[input$predictor_var]], na.rm = TRUE)
-          process_args$xrefval <- x_mean
-        }
-      } else {
-        # Explicitly set xmint to 0 when not used to prevent any default behavior
-        process_args$xmint <- 0
-      }
-      # xmtest: Test for X by M interaction (available for mediation models including Model 4, but not Model 74)
-      # Note: xmtest is mutually exclusive with xmint for Model 4 (when xmint is enabled, model becomes 74 and xmtest won't run)
-      if(input$xmtest) {
-        process_args$xmtest <- 1
-      } else {
-        process_args$xmtest <- 0
-      }
-      if(isTRUE(input$total)) process_args$total <- 1
-      
-      # Check if this is a moderation model
-      model_num <- as.numeric(input$process_model)
-      is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
-      
-      # For moderation models, set plot=2 and save=2 to get plot data in result object
-      # NOTE: plot=2 generates data with SE and CI. R pop-up plots are suppressed via graphics device
-      # To enable R pop-up plots, remove the pdf(NULL) call in the PROCESS execution
-      if(is_mod_model) {
-        process_args$plot <- 2  # Generate estimates + SE + CI for visualization
-        process_args$save <- 2  # Return plot data in result object
-      } else {
-        # For non-moderation models, handle bootstrap and plot options as before
-        # Capture bootstrap results for download when bootstrapping is enabled
-        # Set save=1 to get bootstrap results in return value (but don't save to file)
-        if(isTRUE(input$use_bootstrap)) {
-          process_args$save <- 1  # This makes PROCESS return bootstrap results
-        }
-        # Only enable plot if user explicitly wants it (with warning)
-        if(isTRUE(input$plot)) {
-          process_args$plot <- 1
-          showNotification("Note: This will open R graphics device windows that cannot be easily saved or customized.", type = "warning", duration = 5)
-        } else {
-          # Explicitly set plot to 0 to prevent any default plotting
-          process_args$plot <- 0
-        }
-      }
-      if(isTRUE(input$probe_interactions)) {
-        # Parse probe threshold (e.g., "p < .10" -> 0.10)
-        probe_text <- input$probe_threshold
-        probe_val <- tryCatch({
-          # Extract number from "p < .10" or "p < 0.10"
-          num_match <- regmatches(probe_text, regexpr("0?\\.?\\d+", probe_text))
-          if(length(num_match) > 0) {
-            as.numeric(num_match[1])
-          } else {
-            0.1
-          }
-        }, error = function(e) 0.1)
-        process_args$intprobe <- probe_val
-      }
-      if(!is.na(input$seed) && !is.null(input$seed) && input$seed >= 1) process_args$seed <- input$seed
-      # PROCESS expects decimals in format "9.4" (9 digits before decimal, 4 after)
-      # Convert user's decimal places (e.g., 2) to format PROCESS expects (e.g., "9.2")
-      if(input$decimals != 4) process_args$decimals <- paste0("9.", input$decimals)
-      
-      # DEBUG: Print process arguments
-      print("=== DEBUG: PROCESS Arguments (Outliers Removed) ===")
-      print(paste("Model:", process_args$model))
-      print(paste("Y:", process_args$y))
-      print(paste("X:", process_args$x))
-      if("w" %in% names(process_args)) print(paste("W:", process_args$w))
-      if("m" %in% names(process_args)) print(paste("M:", paste(process_args$m, collapse=", ")))
-      print(paste("Data rows:", nrow(process_args$data)))
-      print("=================================")
-      
-      # Run PROCESS with error handling
-      tryCatch({
-        print("DEBUG: About to call PROCESS function (outliers removed)...")
-        # Set output width to match display area (main panel is ~75% of 1800px = ~1350px)
-        # With monospace font (~9px/char) and padding, ~110-120 characters fits well
-        # Setting narrower than display ensures PROCESS formats conservatively and avoids wrapping
-        old_width <- options("width")
-        options(width = 115)
-        process_output <- capture.output({
-          result <- do.call(process, process_args)
-        })
-        # Restore original width setting
-        options(width = old_width$width)
-        print(paste("DEBUG: PROCESS completed. Output lines:", length(process_output)))
-        
-        # Store results including bootstrap data and plot data if available
-        # Use same logic as original_analysis
-        bootstrap_data <- NULL
-        plot_data <- NULL
-        
-        # Check if this is a moderation model that needs plot data
-        is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
-        
-        if(is_mod_model && !is.null(result)) {
-          # For moderation models, we need plot data for visualization
-          if(is.data.frame(result)) {
-            plot_data <- result
-            print(paste("DEBUG: Plot data captured (data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
-          } else if(is.matrix(result)) {
-            # PROCESS returns resultm as a matrix when save=2
-            plot_data <- as.data.frame(result)
-            # Remove rows with all NA or 99999 (PROCESS uses 99999 as placeholder)
-            plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
-            print(paste("DEBUG: Plot data captured (matrix->data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
-          } else if(is.list(result) && length(result) > 0) {
-            print(paste("DEBUG: Result is list with", length(result), "elements"))
-            # For save=2, result is resultm (plot data)
-            # For save=3, result is list(boots, resultm) where resultm is plot data
-            if(length(result) == 2) {
-              # Second element is plot data when save=3
-              if(is.data.frame(result[[2]])) {
-                plot_data <- result[[2]]
-              } else if(is.matrix(result[[2]])) {
-                plot_data <- as.data.frame(result[[2]])
-                plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
-              }
-              # First element is bootstrap when save=3
-              if(is.data.frame(result[[1]])) {
-                bootstrap_data <- result[[1]]
-              } else if(is.matrix(result[[1]])) {
-                bootstrap_data <- as.data.frame(result[[1]])
-              }
-              print(paste("DEBUG: Plot data captured (list[[2]]), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
-            } else if(is.data.frame(result[[1]])) {
-              plot_data <- result[[1]]  # First element is plot data when save=2
-              print(paste("DEBUG: Plot data captured (list[[1]]), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
-            } else if(is.matrix(result[[1]])) {
-              plot_data <- as.data.frame(result[[1]])
-              plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
-              print(paste("DEBUG: Plot data captured (list[[1]] matrix->data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
-            }
-          }
-        } else if(input$use_bootstrap && !is.null(result)) {
-          # For non-moderation models, handle bootstrap as before
-          # PROCESS returns bootstrap results when save=1 and bootstrapping is enabled
-          print(paste("DEBUG: Bootstrap enabled, result type:", class(result)))
-          if(is.data.frame(result)) {
-            bootstrap_data <- result
-            print(paste("DEBUG: Bootstrap data captured (data.frame), rows:", nrow(bootstrap_data)))
-          } else if(is.list(result) && length(result) > 0) {
-            print(paste("DEBUG: Result is list with", length(result), "elements"))
-            if(is.data.frame(result[[1]])) {
-              bootstrap_data <- result[[1]]  # First element is bootstrap results
-              print(paste("DEBUG: Bootstrap data captured (list[[1]]), rows:", nrow(bootstrap_data)))
-            }
-          }
-        } else {
-          print(paste("DEBUG: No special data to capture. is_mod_model:", is_mod_model, "use_bootstrap:", input$use_bootstrap, "result is null:", is.null(result)))
-        }
-        
-        rv$analysis_results <- list(
+        results_list <- list(
           output = process_output,
           data_used = process_data,
           original_data = rv$original_dataset,
           settings = analysis_settings,
           bootstrap_data = bootstrap_data,
           plot_data = plot_data,
-          result = result  # Store the full result object
+          result = result
         )
+        
         # Track which model these results are for
         if(!is.null(input$process_model) && input$process_model != "") {
           rv$results_model <- as.numeric(input$process_model)
         }
-        # Clear validation error on successful run
-        rv$validation_error <- NULL
-        print("DEBUG: Results stored in rv$analysis_results (outliers removed)")
-        print(paste("DEBUG: rv$results_model set to", rv$results_model))
+        
+        return(results_list)
       }, error = function(e) {
-        print(paste("DEBUG: ERROR in PROCESS execution (outliers removed):", e$message))
-        showNotification(paste("Error running PROCESS analysis:", e$message), type = "error")
+        print(paste("DEBUG: ERROR in PROCESS execution:", e$message))
+        showNotification(paste("Error running PROCESS analysis:", e$message), type = "error", duration = 10)
         rv$analysis_results <- NULL
-        stop(e)
+        rv$validation_error <- conditionMessage(e)
+        return(NULL)
       })
-      
-      rv$analysis_results
     })
+  }
+  
+  # ============================================================================
+  # ANALYSIS EXECUTION - Original Dataset
+  # ============================================================================
+  original_analysis <- eventReactive(input$run_analysis, {
+    req(rv$original_dataset)
+    result <- run_process_analysis(rv$original_dataset, remove_outliers = FALSE, outliers_info = NULL)
+    if(!is.null(result)) {
+      rv$analysis_results <- result
+    }
+    result
+  })
+  
+  # Analysis with outliers removed
+  outliers_analysis <- eventReactive(input$run_analysis_no_outliers, {
+    req(rv$original_dataset)
+    
+    # Identify outliers
+    outliers <- identify_outliers()
+    
+    # Check if outliers were found
+    if(is.null(outliers) || is.null(outliers$cases) || length(outliers$cases) == 0) {
+      stop("No outliers found to remove. Please check your outlier detection settings.")
+    }
+    
+    # Remove outliers
+    reduced_data <- rv$original_dataset[-outliers$cases, ]
+    
+    # Run analysis with reduced dataset
+    outliers_info <- list(
+      count = outliers$count,
+      threshold = outliers$threshold,
+      method = outliers$method
+    )
+    
+    result <- run_process_analysis(reduced_data, remove_outliers = TRUE, outliers_info = outliers_info)
+    if(!is.null(result)) {
+      rv$analysis_results <- result
+    }
+    result
   }, ignoreNULL = TRUE)
   
   # Observer to trigger when original_analysis completes
@@ -6124,7 +5284,15 @@ server <- function(input, output, session) {
       })
       
       jn_data$significant <- jn_data$p < 0.05
-      transition_point <- jn_data$Moderator[which.min(abs(jn_data$p - 0.05))]
+      
+      # Check if there's an actual transition (both significant and non-significant regions exist)
+      has_transition <- any(jn_data$significant) && any(!jn_data$significant)
+      
+      # Only calculate transition point if there's an actual transition
+      transition_point <- NULL
+      if(has_transition) {
+        transition_point <- jn_data$Moderator[which.min(abs(jn_data$p - 0.05))]
+      }
       
       x_label_text <- if(input$moderator_label != "") input$moderator_label else input$moderator_var
       y_label_text <- if(input$x_label != "") paste("Effect of", input$x_label) else paste("Effect of", input$predictor_var)
@@ -6144,9 +5312,6 @@ server <- function(input, output, session) {
         geom_line(linewidth = 1, 
                  color = if(input$use_color_lines) "blue" else "black") +
         geom_hline(yintercept = 0, linetype = "dashed") +
-        geom_vline(xintercept = transition_point,
-                  linetype = "dashed", 
-                  color = if(input$use_color_lines) "cyan" else "grey40") +
         theme_minimal() +
         labs(title = "Johnson-Neyman Plot",
              x = x_label_text,
@@ -6162,6 +5327,13 @@ server <- function(input, output, session) {
           axis.line = element_line(color = "black", linewidth = 0.5),
           axis.ticks = element_line(color = "black", linewidth = 0.5)
         )
+      
+      # Only add transition line if there's an actual transition
+      if(has_transition && !is.null(transition_point)) {
+        p <- p + geom_vline(xintercept = transition_point,
+                            linetype = "dashed", 
+                            color = if(input$use_color_lines) "cyan" else "grey40")
+      }
       
       print(p)
     }, error = function(e) {
@@ -6272,7 +5444,15 @@ server <- function(input, output, session) {
               })
             
             jn_data$significant <- jn_data$p < 0.05
-            transition_point <- jn_data$Moderator[which.min(abs(jn_data$p - 0.05))]
+            
+            # Check if there's an actual transition (both significant and non-significant regions exist)
+            has_transition <- any(jn_data$significant) && any(!jn_data$significant)
+            
+            # Only calculate transition point if there's an actual transition
+            transition_point <- NULL
+            if(has_transition) {
+              transition_point <- jn_data$Moderator[which.min(abs(jn_data$p - 0.05))]
+            }
             
             x_label_text <- if(input$moderator_label != "") input$moderator_label else input$moderator_var
             y_label_text <- if(input$x_label != "") paste("Effect of", input$x_label) else paste("Effect of", input$predictor_var)
@@ -6287,9 +5467,6 @@ server <- function(input, output, session) {
               geom_line(linewidth = 1, 
                        color = if(input$use_color_lines) "blue" else "black") +
               geom_hline(yintercept = 0, linetype = "dashed") +
-              geom_vline(xintercept = transition_point,
-                        linetype = "dashed", 
-                        color = if(input$use_color_lines) "cyan" else "grey40") +
               theme_minimal() +
               labs(title = "Johnson-Neyman Plot",
                    x = x_label_text,
@@ -6305,6 +5482,13 @@ server <- function(input, output, session) {
                 axis.line = element_line(color = "black", linewidth = 0.5),
                 axis.ticks = element_line(color = "black", linewidth = 0.5)
               )
+            
+            # Only add transition line if there's an actual transition
+            if(has_transition && !is.null(transition_point)) {
+              p <- p + geom_vline(xintercept = transition_point,
+                                  linetype = "dashed", 
+                                  color = if(input$use_color_lines) "cyan" else "grey40")
+            }
             
               ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
             } else {
