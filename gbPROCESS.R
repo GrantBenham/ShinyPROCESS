@@ -4057,6 +4057,309 @@ server <- function(input, output, session) {
     })
   }
   
+  # Helper function to generate simple slopes plot (Model 1)
+  # Returns ggplot object or NULL if plot cannot be generated
+  generate_simple_slopes_plot <- function(results, input) {
+    # Validation checks
+    if(is.null(results) || is.null(results$settings)) {
+      return(NULL)
+    }
+    
+    model_num <- as.numeric(input$process_model)
+    if(model_num != 1) {
+      return(NULL)
+    }
+    
+    # Check if model matches
+    if(results$settings$model != model_num) {
+      return(NULL)
+    }
+    
+    # Check if variables match
+    if(results$settings$predictor_var != input$predictor_var ||
+       results$settings$outcome_var != input$outcome_var ||
+       results$settings$moderator_var != input$moderator_var) {
+      return(NULL)
+    }
+    
+    tryCatch({
+      data_used <- results$data_used
+      outcome_is_binary <- is_binary_variable(data_used, input$outcome_var)
+      
+      # Parse "Data for visualizing" table from text output
+      process_output <- results$output
+      viz_idx <- which(grepl("Data for visualizing the conditional effect of the focal predictor:", process_output, ignore.case = TRUE))
+      
+      if(length(viz_idx) == 0) {
+        return(NULL)
+      }
+      
+      data_start <- viz_idx[1] + 2
+      data_end <- min(data_start + 15, length(process_output))
+      potential_data_lines <- process_output[data_start:data_end]
+      potential_data_lines <- potential_data_lines[grepl("^\\s*-?\\d", potential_data_lines)]
+      
+      if(length(potential_data_lines) < 9) {
+        return(NULL)
+      }
+      
+      # Parse as 6 columns: X, W, Y, se, LLCI, ULCI
+      parsed_viz <- tryCatch({
+        data_text <- paste(potential_data_lines, collapse = "\n")
+        parsed_viz <- read.table(text = data_text,
+                                col.names = c("X", "W", "Y", "se", "LLCI", "ULCI"),
+                                stringsAsFactors = FALSE, 
+                                fill = TRUE, 
+                                blank.lines.skip = TRUE,
+                                na.strings = c("NA", ""))
+        
+        for(col in 1:ncol(parsed_viz)) {
+          parsed_viz[, col] <- as.numeric(parsed_viz[, col])
+        }
+        parsed_viz[1:9, ]  # Take first 9 rows
+      }, error = function(e) {
+        return(NULL)
+      })
+      
+      if(is.null(parsed_viz) || ncol(parsed_viz) != 6 || nrow(parsed_viz) < 9) {
+        return(NULL)
+      }
+      
+      plot_data <- data.frame(
+        Predictor = parsed_viz$X,
+        Moderator = parsed_viz$W,
+        Outcome = parsed_viz$Y,
+        LLCI = parsed_viz$LLCI,
+        ULCI = parsed_viz$ULCI
+      )
+      
+      plot_data <- plot_data[complete.cases(plot_data), ]
+      if(nrow(plot_data) == 0) {
+        return(NULL)
+      }
+      
+      moderator_levels_raw <- sort(unique(plot_data$Moderator))
+      if(length(moderator_levels_raw) == 0) {
+        return(NULL)
+      }
+      
+      moderator_levels <- round(moderator_levels_raw, input$decimal_places)
+      predictor_range <- range(plot_data$Predictor, na.rm = TRUE)
+      
+      y_label_text <- if(outcome_is_binary) {
+        if(input$y_label != "") paste(input$y_label, "(Probability)") else "Predicted Probability"
+      } else {
+        if(input$y_label != "") input$y_label else input$outcome_var
+      }
+      
+      x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
+      mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(input$moderator_var, " Levels")
+      plot_title <- "Simple Slopes Plot"
+      
+      plot_data$Moderator_factor <- factor(plot_data$Moderator, levels = moderator_levels_raw, labels = format(moderator_levels, nsmall = input$decimal_places))
+      
+      p <- ggplot(plot_data, aes(
+        x = Predictor, 
+        y = Outcome,
+        color = if(input$use_color_lines) Moderator_factor else NULL,
+        linetype = if(!input$use_color_lines) Moderator_factor else NULL,
+        fill = if(input$show_confidence_intervals && input$use_color_lines) Moderator_factor else NULL
+      )) +
+        {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI))) 
+          geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, color = NA)} +
+        geom_line(linewidth = 1) +
+        {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
+        {if(!input$custom_y_axis && outcome_is_binary) coord_cartesian(ylim = c(0, 1))} +
+        {if(!input$custom_y_axis && !outcome_is_binary) coord_cartesian(xlim = predictor_range)} +
+        labs(
+          title = plot_title,
+          x = x_label_text,
+          y = y_label_text,
+          color = if(input$use_color_lines) mod_label_text else NULL,
+          linetype = if(!input$use_color_lines) mod_label_text else NULL,
+          fill = if(input$show_confidence_intervals && input$use_color_lines) mod_label_text else NULL
+        ) +
+        theme_minimal() +
+        theme(
+          text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          axis.text = element_text(size = 14),
+          plot.title = element_text(size = 18, hjust = 0.5),
+          legend.title = element_text(size = 14),
+          legend.text = element_text(size = 14),
+          axis.line = element_line(color = "black", linewidth = 0.5),
+          axis.ticks = element_line(color = "black", linewidth = 0.5)
+        )
+      
+      if(!input$show_confidence_intervals || !input$use_color_lines) {
+        p <- p + guides(fill = "none")
+      }
+      
+      return(p)
+    }, error = function(e) {
+      print(paste("Error in generate_simple_slopes_plot:", e$message))
+      return(NULL)
+    })
+  }
+  
+  # Helper function to generate stacked simple slopes plot (Model 3)
+  # Returns grob (grid object) or NULL if plot cannot be generated
+  generate_stacked_slopes_plot <- function(results, input) {
+    # Validation checks
+    if(is.null(results) || is.null(results$settings)) {
+      return(NULL)
+    }
+    
+    model_num <- as.numeric(input$process_model)
+    if(model_num != 3) {
+      return(NULL)
+    }
+    
+    # Check if model matches
+    if(results$settings$model != model_num) {
+      return(NULL)
+    }
+    
+    # Check if variables match
+    if(results$settings$predictor_var != input$predictor_var ||
+       results$settings$outcome_var != input$outcome_var ||
+       results$settings$moderator_var != input$moderator_var) {
+      return(NULL)
+    }
+    
+    # Check second moderator
+    if(!is.null(results$settings$moderator2_var) && results$settings$moderator2_var != input$moderator2_var) {
+      return(NULL)
+    }
+    
+    tryCatch({
+      process_output <- results$output
+      viz_idx <- which(grepl("Data for visualizing the conditional effect of the focal predictor:", process_output, ignore.case = TRUE))
+      
+      if(length(viz_idx) == 0) {
+        return(NULL)
+      }
+      
+      data_start <- viz_idx[1] + 2
+      data_end <- min(data_start + 30, length(process_output))
+      potential_data_lines <- process_output[data_start:data_end]
+      potential_data_lines <- potential_data_lines[grepl("^\\s*-?\\d", potential_data_lines)]
+      
+      if(length(potential_data_lines) == 0) {
+        return(NULL)
+      }
+      
+      # Parse as 7 columns: X, W, Z, Y, se, LLCI, ULCI
+      parsed_viz <- tryCatch({
+        data_text <- paste(potential_data_lines, collapse = "\n")
+        parsed_viz <- read.table(text = data_text,
+                                col.names = c("X", "W", "Z", "Y", "se", "LLCI", "ULCI"),
+                                stringsAsFactors = FALSE, 
+                                fill = TRUE, 
+                                blank.lines.skip = TRUE,
+                                row.names = NULL,
+                                na.strings = c("NA", ""))
+        
+        for(col in 1:ncol(parsed_viz)) {
+          parsed_viz[, col] <- as.numeric(parsed_viz[, col])
+        }
+        parsed_viz
+      }, error = function(e) {
+        return(NULL)
+      })
+      
+      if(is.null(parsed_viz) || ncol(parsed_viz) != 7 || nrow(parsed_viz) == 0) {
+        return(NULL)
+      }
+      
+      stacked_data <- data.frame(
+        Predictor = parsed_viz$X,
+        Moderator = parsed_viz$W,
+        Z = parsed_viz$Z,
+        Outcome = parsed_viz$Y,
+        LLCI = parsed_viz$LLCI,
+        ULCI = parsed_viz$ULCI
+      )
+      stacked_data <- stacked_data[complete.cases(stacked_data), ]
+      
+      if(nrow(stacked_data) == 0) {
+        return(NULL)
+      }
+      
+      unique_z <- sort(unique(stacked_data$Z))
+      if(length(unique_z) == 0) {
+        return(NULL)
+      }
+      
+      unique_w <- sort(unique(stacked_data$Moderator))
+      moderator_levels_raw <- unique_w
+      
+      plot_list <- list()
+      z_label_text <- if(!is.null(input$moderator2_label) && input$moderator2_label != "") input$moderator2_label else input$moderator2_var
+      x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
+      y_label_text <- if(input$y_label != "") input$y_label else input$outcome_var
+      mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(input$moderator_var, " Levels")
+      
+      for(i in 1:length(unique_z)) {
+        z_val <- unique_z[i]
+        z_subset <- stacked_data[stacked_data$Z == z_val, ]
+        
+        if(nrow(z_subset) == 0) next
+        
+        z_display <- round(z_val, input$decimal_places)
+        z_subset$Moderator_factor <- factor(z_subset$Moderator, levels = moderator_levels_raw, 
+                                           labels = format(round(moderator_levels_raw, input$decimal_places), nsmall = input$decimal_places))
+        
+        p_sub <- ggplot(z_subset, aes(
+          x = Predictor,
+          y = Outcome,
+          color = if(input$use_color_lines) Moderator_factor else NULL,
+          linetype = if(!input$use_color_lines) Moderator_factor else NULL,
+          fill = if(input$show_confidence_intervals && input$use_color_lines) Moderator_factor else NULL
+        )) +
+          {if(input$show_confidence_intervals && !all(is.na(z_subset$LLCI))) 
+            geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, color = NA)} +
+          geom_line(linewidth = 1) +
+          {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
+          labs(
+            title = paste0("Simple Slopes at ", z_label_text, " = ", z_display),
+            x = x_label_text,
+            y = y_label_text,
+            color = if(input$use_color_lines) mod_label_text else NULL,
+            linetype = if(!input$use_color_lines) mod_label_text else NULL,
+            fill = if(input$show_confidence_intervals && input$use_color_lines) mod_label_text else NULL
+          ) +
+          theme_minimal() +
+          theme(
+            text = element_text(size = 12),
+            axis.title = element_text(size = 14),
+            axis.text = element_text(size = 12),
+            plot.title = element_text(size = 14, hjust = 0.5),
+            legend.title = element_text(size = 12),
+            legend.text = element_text(size = 12),
+            axis.line = element_line(color = "black", linewidth = 0.5),
+            axis.ticks = element_line(color = "black", linewidth = 0.5)
+          )
+        
+        if(!input$show_confidence_intervals || !input$use_color_lines) {
+          p_sub <- p_sub + guides(fill = "none")
+        }
+        
+        plot_list[[i]] <- p_sub
+      }
+      
+      if(length(plot_list) > 0) {
+        p <- do.call(gridExtra::arrangeGrob, c(plot_list, ncol = 1))
+        return(p)
+      } else {
+        return(NULL)
+      }
+    }, error = function(e) {
+      print(paste("Error in generate_stacked_slopes_plot:", e$message))
+      return(NULL)
+    })
+  }
+  
   # Helper function to extract coefficients from PROCESS output for moderation models
   extract_coefficients <- function(process_output, predictor_var, moderator_var) {
     coef_data <- numeric(4)
@@ -5402,11 +5705,72 @@ server <- function(input, output, session) {
   }
   
   output$slopes_plot <- renderPlot({
-    build_slopes_plot(plot_type_override = "stacked")
+    # Only allow plots for Models 1 and 3
+    req(input$process_model)
+    model_num <- as.numeric(input$process_model)
+    if(!model_num %in% c(1, 3)) {
+      plot.new()
+      text(0.5, 0.5, "Plots are only available for Models 1 and 3.", cex = 1.2)
+      return()
+    }
+    
+    # Check if we have valid analysis results
+    if(is.null(analysis_results())) {
+      return()
+    }
+    
+    req(input$moderator_var)
+    req(input$predictor_var)
+    
+    results <- analysis_results()
+    
+    # For Model 1, use simple slopes plot
+    if(model_num == 1) {
+      p <- generate_simple_slopes_plot(results, input)
+      if(is.null(p)) {
+        plot.new()
+        text(0.5, 0.5, "Could not generate simple slopes plot.\nPlease run the analysis again.", cex = 1.2)
+        return()
+      }
+      print(p)
+    } else if(model_num == 3) {
+      # For Model 3, use stacked slopes plot
+      p <- generate_stacked_slopes_plot(results, input)
+      if(is.null(p)) {
+        plot.new()
+        text(0.5, 0.5, "Could not generate stacked slopes plot.\nPlease run the analysis again.", cex = 1.2)
+        return()
+      }
+      grid::grid.draw(p)
+    }
   })
   
   output$stacked_slopes_plot <- renderPlot({
-    build_slopes_plot(plot_type_override = "stacked", model3_only = TRUE)
+    # Only allow plots for Model 3
+    req(input$process_model)
+    model_num <- as.numeric(input$process_model)
+    if(model_num != 3) {
+      return()
+    }
+    
+    # Check if we have valid analysis results
+    if(is.null(analysis_results())) {
+      return()
+    }
+    
+    req(input$moderator_var)
+    req(input$predictor_var)
+    
+    results <- analysis_results()
+    p <- generate_stacked_slopes_plot(results, input)
+    
+    if(is.null(p)) {
+      plot.new()
+      text(0.5, 0.5, "Could not generate stacked slopes plot.\nPlease run the analysis again.", cex = 1.2)
+      return()
+    }
+    
+    grid::grid.draw(p)
   })
   
   output$conditional_effect_plot <- renderPlot({
@@ -5591,346 +5955,53 @@ server <- function(input, output, session) {
         req(input$predictor_var)
         
         results <- analysis_results()
-        data_used <- results$data_used
-        outcome_is_binary <- is_binary_variable(data_used, input$outcome_var)
         
         # Determine model type
         has_second_mod <- model_num %in% models_with_second_moderator
         
-        # Use plot data from PROCESS directly (plot=2, save=2) - always uses percentiles
-        plot_data_df <- results$plot_data
-        
-        if(is.null(plot_data_df) || !is.data.frame(plot_data_df) || nrow(plot_data_df) == 0) {
-          stop("Plot data not available. Please run the analysis first.")
-        }
-        
-        # For Model 3, use same logic as output$slopes_plot
+        # For Model 3, use stacked slopes plot helper
         if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
-          plot_type <- "stacked"
+          p <- generate_stacked_slopes_plot(results, input)
           
-          if(plot_type == "stacked") {
-            # Stacked Simple Slopes Plot: Parse "Data for visualizing" table and create 3 plots (one per Z level)
-            stacked_data <- NULL
-            
-            tryCatch({
-              process_output <- results$output
-              viz_idx <- which(grepl("Data for visualizing the conditional effect of the focal predictor:", process_output, ignore.case = TRUE))
-              
-              if(length(viz_idx) > 0) {
-                data_start <- viz_idx[1] + 2
-                data_end <- min(data_start + 30, length(process_output))  # Model 3 has more rows (18 for 3 X × 3 W × 2 Z)
-                potential_data_lines <- process_output[data_start:data_end]
-                potential_data_lines <- potential_data_lines[grepl("^\\s*-?\\d", potential_data_lines)]
-                
-                if(length(potential_data_lines) > 0) {
-                  # Parse as 7 columns: X, W, Z, Y, se, LLCI, ULCI
-                  parsed_viz <- tryCatch({
-                    data_text <- paste(potential_data_lines, collapse = "\n")
-                    parsed_viz <- read.table(text = data_text,
-                                            col.names = c("X", "W", "Z", "Y", "se", "LLCI", "ULCI"),
-                                            stringsAsFactors = FALSE, 
-                                            fill = TRUE, 
-                                            blank.lines.skip = TRUE,
-                                            row.names = NULL,
-                                            na.strings = c("NA", ""))
-                    
-                    for(col in 1:ncol(parsed_viz)) {
-                      parsed_viz[, col] <- as.numeric(parsed_viz[, col])
-                    }
-                    parsed_viz
-                  }, error = function(e) {
-                    print(paste("DEBUG: Error parsing stacked plot data:", e$message))
-                    NULL
-                  })
-                  
-                  if(!is.null(parsed_viz) && ncol(parsed_viz) == 7 && nrow(parsed_viz) > 0) {
-                    stacked_data <- data.frame(
-                      Predictor = parsed_viz$X,
-                      Moderator = parsed_viz$W,
-                      Z = parsed_viz$Z,
-                      Outcome = parsed_viz$Y,
-                      LLCI = parsed_viz$LLCI,
-                      ULCI = parsed_viz$ULCI
-                    )
-                    stacked_data <- stacked_data[complete.cases(stacked_data), ]
-                  }
-                }
-              }
-            }, error = function(e) {
-              print(paste("DEBUG: Error parsing stacked plot data:", e$message))
-            })
-            
-            if(is.null(stacked_data) || nrow(stacked_data) == 0) {
-              stop("Could not parse visualization data for stacked plot.")
-            }
-            
-            # Get unique Z values
-            unique_z <- sort(unique(stacked_data$Z))
-            if(length(unique_z) == 0) {
-              stop("No Z values found in visualization data.")
-            }
-            
-            # Get unique W values for each Z
-            unique_w <- sort(unique(stacked_data$Moderator))
-            moderator_levels_raw <- unique_w
-            
-            # Create plots for each Z level
-            plot_list <- list()
-            z_label_text <- if(!is.null(input$moderator2_label) && input$moderator2_label != "") input$moderator2_label else input$moderator2_var
-            x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
-            y_label_text <- if(input$y_label != "") input$y_label else input$outcome_var
-            mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(input$moderator_var, " Levels")
-            
-            for(i in 1:length(unique_z)) {
-              z_val <- unique_z[i]
-              z_subset <- stacked_data[stacked_data$Z == z_val, ]
-              
-              if(nrow(z_subset) == 0) next
-              
-              # Round Z value for display
-              z_display <- round(z_val, input$decimal_places)
-              
-              # Map moderator values to factors
-              z_subset$Moderator_factor <- factor(z_subset$Moderator, levels = moderator_levels_raw, 
-                                                 labels = format(round(moderator_levels_raw, input$decimal_places), nsmall = input$decimal_places))
-              
-              p_sub <- ggplot(z_subset, aes(
-                x = Predictor,
-                y = Outcome,
-                color = if(input$use_color_lines) Moderator_factor else NULL,
-                linetype = if(!input$use_color_lines) Moderator_factor else NULL,
-                fill = if(input$show_confidence_intervals && input$use_color_lines) Moderator_factor else NULL
-              )) +
-                {if(input$show_confidence_intervals && !all(is.na(z_subset$LLCI))) 
-                  geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, color = NA)} +
-                geom_line(linewidth = 1) +
-                {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
-                labs(
-                  title = paste0("Simple Slopes at ", z_label_text, " = ", z_display),
-                  x = x_label_text,
-                  y = y_label_text,
-                  color = if(input$use_color_lines) mod_label_text else NULL,
-                  linetype = if(!input$use_color_lines) mod_label_text else NULL,
-                  fill = if(input$show_confidence_intervals && input$use_color_lines) mod_label_text else NULL
-                ) +
-                theme_minimal() +
-                theme(
-                  text = element_text(size = 12),
-                  axis.title = element_text(size = 14),
-                  axis.text = element_text(size = 12),
-                  plot.title = element_text(size = 14, hjust = 0.5),
-                  legend.title = element_text(size = 12),
-                  legend.text = element_text(size = 12),
-                  axis.line = element_line(color = "black", linewidth = 0.5),
-                  axis.ticks = element_line(color = "black", linewidth = 0.5)
-                )
-              
-              if(!input$show_confidence_intervals || !input$use_color_lines) {
-                p_sub <- p_sub + guides(fill = "none")
-              }
-              
-              plot_list[[i]] <- p_sub
-            }
-            
-            # Arrange plots vertically without drawing to a device
-            if(length(plot_list) > 0) {
-              p <- do.call(gridExtra::arrangeGrob, c(plot_list, ncol = 1))
-              # Use an explicit device to avoid ggsave + grob issues in downloads
-              grDevices::jpeg(file, width = 10, height = 8 * length(plot_list), units = "in", res = 600)
-              on.exit(grDevices::dev.off(), add = TRUE)
-              grid::grid.draw(p)
-            } else {
-              stop("No plots generated for stacked view.")
-            }
-            
-          } else {
-            # Conditional effect plot (default)
-            cond_effect_data <- extract_model3_conditional_effect(results$output)
-            
-            if(is.null(cond_effect_data) || nrow(cond_effect_data) == 0) {
-              stop("Could not extract conditional effect data from PROCESS output.")
-            }
-            
-            plot_data <- cond_effect_data
-            
-            # Create the conditional effect plot
-            # X-axis should be Z (second moderator), not W (first moderator)
-            x_label_text <- if(!is.null(input$moderator2_label) && input$moderator2_label != "") input$moderator2_label else input$moderator2_var
-            y_label_text <- paste("Conditional effect of", if(input$x_label != "") input$x_label else input$predictor_var, 
-                                 "*", if(input$moderator_label != "") input$moderator_label else input$moderator_var,
-                                 "on", if(input$y_label != "") input$y_label else input$outcome_var)
-            plot_title <- "Conditional Effect Plot"
-            
-            z_range <- range(plot_data$Z, na.rm = TRUE)
-            y_range <- range(c(plot_data$Effect, plot_data$LLCI, plot_data$ULCI), na.rm = TRUE)
-            
-            # Create the conditional effect plot
-            p <- ggplot(plot_data, aes(x = Z, y = Effect)) +
-              {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI)) && !all(is.na(plot_data$ULCI))) 
-                geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, fill = if(input$use_color_lines) "red" else "grey50", show.legend = FALSE)} +
-              geom_hline(yintercept = 0, linetype = "dashed", color = if(input$use_color_lines) "red" else "black", linewidth = 0.8) +
-              geom_line(color = if(input$use_color_lines) "red" else "black", linewidth = 1.2) +
-              {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
-              {if(!input$custom_y_axis) coord_cartesian(xlim = z_range, ylim = y_range)} +
-              labs(
-                title = plot_title,
-                x = x_label_text,
-                y = y_label_text
-              ) +
-              theme_minimal() +
-              theme(
-                text = element_text(size = 14),
-                axis.title = element_text(size = 16),
-                axis.text = element_text(size = 14),
-                plot.title = element_text(size = 18, hjust = 0.5),
-                axis.line = element_line(color = "black", linewidth = 0.5),
-                axis.ticks = element_line(color = "black", linewidth = 0.5)
-              )
-            
-            ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
+          if(is.null(p)) {
+            stop("Could not generate stacked slopes plot. Please ensure analysis has been run for Model 3.")
           }
+          
+          # Calculate height based on number of Z levels
+          process_output <- results$output
+          viz_idx <- which(grepl("Data for visualizing the conditional effect of the focal predictor:", process_output, ignore.case = TRUE))
+          plot_height <- 8
+          if(length(viz_idx) > 0) {
+            data_start <- viz_idx[1] + 2
+            data_end <- min(data_start + 30, length(process_output))
+            potential_data_lines <- process_output[data_start:data_end]
+            potential_data_lines <- potential_data_lines[grepl("^\\s*-?\\d", potential_data_lines)]
+            if(length(potential_data_lines) > 0) {
+              parsed_viz <- tryCatch({
+                data_text <- paste(potential_data_lines, collapse = "\n")
+                parsed_viz <- read.table(text = data_text,
+                                        col.names = c("X", "W", "Z", "Y", "se", "LLCI", "ULCI"),
+                                        stringsAsFactors = FALSE, fill = TRUE, blank.lines.skip = TRUE,
+                                        row.names = NULL, na.strings = c("NA", ""))
+                for(col in 1:ncol(parsed_viz)) parsed_viz[, col] <- as.numeric(parsed_viz[, col])
+                parsed_viz
+              }, error = function(e) NULL)
+              if(!is.null(parsed_viz) && ncol(parsed_viz) == 7 && nrow(parsed_viz) > 0) {
+                unique_z <- sort(unique(parsed_viz$Z))
+                plot_height <- 8 * length(unique_z)
+              }
+            }
+          }
+          
+          grDevices::jpeg(file, width = 10, height = plot_height, units = "in", res = 600)
+          on.exit(grDevices::dev.off(), add = TRUE)
+          grid::grid.draw(p)
         } else {
-          # Single moderation (Model 1): Parse "Data for visualizing" table from text output
-          # This table contains exactly 9 rows (3 moderator levels × 3 X values) with 6 columns
-          plot_data <- NULL
+          # Single moderation (Model 1): Use helper function
+          p <- generate_simple_slopes_plot(results, input)
           
-          tryCatch({
-            process_output <- results$output
-            viz_idx <- which(grepl("Data for visualizing the conditional effect of the focal predictor:", process_output, ignore.case = TRUE))
-            
-            if(length(viz_idx) > 0) {
-              # The data section should start 2 lines after this header (header line + column names line)
-              data_start <- viz_idx[1] + 2
-              data_end <- min(data_start + 15, length(process_output))  # Should be exactly 9 rows
-              potential_data_lines <- process_output[data_start:data_end]
-              
-              # Filter to lines that start with numbers (data rows)
-              potential_data_lines <- potential_data_lines[grepl("^\\s*-?\\d", potential_data_lines)]
-              
-              if(length(potential_data_lines) >= 9) {
-                # Parse as 6 columns: X, W, Y, se, LLCI, ULCI
-                parsed_viz <- tryCatch({
-                  data_text <- paste(potential_data_lines, collapse = "\n")
-                  parsed_viz <- read.table(text = data_text,
-                                          col.names = c("X", "W", "Y", "se", "LLCI", "ULCI"),
-                                          stringsAsFactors = FALSE, 
-                                          fill = TRUE, 
-                                          blank.lines.skip = TRUE,
-                                          na.strings = c("NA", ""))
-                  
-                  # Convert to numeric
-                  for(col in 1:ncol(parsed_viz)) {
-                    parsed_viz[, col] <- as.numeric(parsed_viz[, col])
-                  }
-                  
-                  parsed_viz
-                }, error = function(e) {
-                  print(paste("DEBUG: Error parsing visualization data from text:", e$message))
-                  NULL
-                })
-                
-                if(!is.null(parsed_viz) && ncol(parsed_viz) == 6 && nrow(parsed_viz) >= 9) {
-                  # Take first 9 rows (in case there are more)
-                  parsed_viz <- parsed_viz[1:9, ]
-                  
-                  print(paste("DEBUG: Successfully parsed visualization data from text with", nrow(parsed_viz), "rows"))
-                  
-                  plot_data <- data.frame(
-                    Predictor = parsed_viz$X,
-                    Moderator = parsed_viz$W,
-                    Outcome = parsed_viz$Y,
-                    LLCI = parsed_viz$LLCI,
-                    ULCI = parsed_viz$ULCI
-                  )
-                  
-                  # Remove any rows with NA values
-                  plot_data <- plot_data[complete.cases(plot_data), ]
-                  
-                  if(nrow(plot_data) == 0) {
-                    stop("Parsed visualization data contains invalid values.")
-                  }
-                  
-                  # Extract moderator levels directly from parsed data (should be exactly 3 unique values)
-                  moderator_levels_raw <- sort(unique(plot_data$Moderator))
-                  
-                  if(length(moderator_levels_raw) == 0) {
-                    stop("Could not extract moderator levels from visualization data.")
-                  }
-                  
-                } else {
-                  stop(paste("Parsed visualization data has wrong dimensions. Expected 9 rows × 6 columns, found", 
-                            ifelse(is.null(parsed_viz), "NULL", nrow(parsed_viz)), "rows ×", 
-                            ifelse(is.null(parsed_viz), "NULL", ncol(parsed_viz)), "columns."))
-                }
-              } else {
-                stop(paste("Found only", length(potential_data_lines), "data lines in visualization section, expected at least 9"))
-              }
-            } else {
-              stop("Could not find 'Data for visualizing' section in PROCESS output")
-            }
-          }, error = function(e) {
-            stop(paste("Error parsing visualization data from text:", e$message))
-          })
-          
-          if(is.null(plot_data) || nrow(plot_data) == 0) {
-            stop("Could not parse visualization data from PROCESS text output. Please check that the analysis completed successfully.")
-          }
-          
-          # Round for display
-          moderator_levels <- round(moderator_levels_raw, input$decimal_places)
-          predictor_range <- range(plot_data$Predictor, na.rm = TRUE)
-          
-          # Create plot labels
-          y_label_text <- if(outcome_is_binary) {
-            if(input$y_label != "") paste(input$y_label, "(Probability)") else "Predicted Probability"
-          } else {
-            if(input$y_label != "") input$y_label else input$outcome_var
-          }
-          
-          x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
-          mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(active_moderator, " Levels")
-          
-          plot_title <- "Simple Slopes Plot"
-          
-          # Single moderation: single plot with 3 lines
-          plot_data$Moderator_factor <- factor(plot_data$Moderator, levels = moderator_levels_raw, labels = format(moderator_levels, nsmall = input$decimal_places))
-          
-          p <- ggplot(plot_data, aes(
-            x = Predictor, 
-            y = Outcome,
-            color = if(input$use_color_lines) Moderator_factor else NULL,
-            linetype = if(!input$use_color_lines) Moderator_factor else NULL,
-            fill = if(input$show_confidence_intervals && input$use_color_lines) Moderator_factor else NULL
-          )) +
-            {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI))) 
-              geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, color = NA)} +
-            geom_line(linewidth = 1) +
-            {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
-            {if(!input$custom_y_axis && outcome_is_binary) coord_cartesian(ylim = c(0, 1))} +
-            {if(!input$custom_y_axis && !outcome_is_binary) coord_cartesian(xlim = predictor_range)} +
-            labs(
-              title = plot_title,
-              x = x_label_text,
-              y = y_label_text,
-              color = if(input$use_color_lines) mod_label_text else NULL,
-              linetype = if(!input$use_color_lines) mod_label_text else NULL,
-              fill = if(input$show_confidence_intervals && input$use_color_lines) mod_label_text else NULL
-            ) +
-            theme_minimal() +
-            theme(
-              text = element_text(size = 14),
-              axis.title = element_text(size = 16),
-              axis.text = element_text(size = 14),
-              plot.title = element_text(size = 18, hjust = 0.5),
-              legend.title = element_text(size = 14),
-              legend.text = element_text(size = 14),
-              axis.line = element_line(color = "black", linewidth = 0.5),
-              axis.ticks = element_line(color = "black", linewidth = 0.5)
-            )
-          
-          # Suppress fill legend if not using color lines or not showing CIs
-          if(!input$show_confidence_intervals || !input$use_color_lines) {
-            p <- p + guides(fill = "none")
+          if(is.null(p)) {
+            stop("Could not generate simple slopes plot. Please ensure analysis has been run for Model 1.")
           }
           
           ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
@@ -5961,7 +6032,46 @@ server <- function(input, output, session) {
         req(input$predictor_var)
         
         results <- analysis_results()
-        save_stacked_slopes_plot(file, results)
+        p <- generate_stacked_slopes_plot(results, input)
+        
+        if(is.null(p)) {
+          stop("Could not generate stacked slopes plot. Please ensure analysis has been run for Model 3.")
+        }
+        
+        # Calculate height based on number of Z levels
+        process_output <- results$output
+        viz_idx <- which(grepl("Data for visualizing the conditional effect of the focal predictor:", process_output, ignore.case = TRUE))
+        if(length(viz_idx) > 0) {
+          data_start <- viz_idx[1] + 2
+          data_end <- min(data_start + 30, length(process_output))
+          potential_data_lines <- process_output[data_start:data_end]
+          potential_data_lines <- potential_data_lines[grepl("^\\s*-?\\d", potential_data_lines)]
+          if(length(potential_data_lines) > 0) {
+            parsed_viz <- tryCatch({
+              data_text <- paste(potential_data_lines, collapse = "\n")
+              parsed_viz <- read.table(text = data_text,
+                                      col.names = c("X", "W", "Z", "Y", "se", "LLCI", "ULCI"),
+                                      stringsAsFactors = FALSE, fill = TRUE, blank.lines.skip = TRUE,
+                                      row.names = NULL, na.strings = c("NA", ""))
+              for(col in 1:ncol(parsed_viz)) parsed_viz[, col] <- as.numeric(parsed_viz[, col])
+              parsed_viz
+            }, error = function(e) NULL)
+            if(!is.null(parsed_viz) && ncol(parsed_viz) == 7 && nrow(parsed_viz) > 0) {
+              unique_z <- sort(unique(parsed_viz$Z))
+              plot_height <- 8 * length(unique_z)
+            } else {
+              plot_height <- 8
+            }
+          } else {
+            plot_height <- 8
+          }
+        } else {
+          plot_height <- 8
+        }
+        
+        grDevices::jpeg(file, width = 10, height = plot_height, units = "in", res = 600)
+        on.exit(grDevices::dev.off(), add = TRUE)
+        grid::grid.draw(p)
       }, error = function(e) {
         print(paste("Error saving stacked slopes plot:", e$message))
         writeLines(paste("Error generating plot:", e$message), file)
