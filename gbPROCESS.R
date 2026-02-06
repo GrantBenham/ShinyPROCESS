@@ -3499,6 +3499,26 @@ server <- function(input, output, session) {
     )
   }
   
+  # Helper function to wrap results content in complete HTML document
+  # Used by download handler to create standalone HTML file
+  wrap_results_html <- function(content) {
+    sprintf('
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Courier, monospace; white-space: pre-wrap; padding: 20px; }
+          table { border-collapse: collapse; }
+          th, td { border: 1px solid #dee2e6; padding: 8px; }
+        </style>
+      </head>
+      <body>
+        %s
+      </body>
+      </html>
+    ', content)
+  }
+  
   # Display analysis results
   output$analysis_output <- renderUI({
     print("DEBUG: analysis_output renderUI called")
@@ -3713,22 +3733,7 @@ server <- function(input, output, session) {
     content = function(file) {
       req(analysis_results())
       output_content <- create_formatted_output(analysis_results())
-      
-      writeLines(sprintf('
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style>
-            body { font-family: Courier, monospace; white-space: pre-wrap; padding: 20px; }
-            table { border-collapse: collapse; }
-            th, td { border: 1px solid #dee2e6; padding: 8px; }
-          </style>
-        </head>
-        <body>
-          %s
-        </body>
-        </html>
-      ', output_content), file)
+      writeLines(wrap_results_html(output_content), file)
     },
     contentType = "text/html"
   )
