@@ -563,15 +563,6 @@ ui <- fluidPage(
                         "Plot Options"),
             div(style = "margin-left: 15px; margin-top: 10px;",
               h5("Simple Slopes Plot Settings"),
-              textInput("slopes_title", "Plot Title", "Simple Slopes Plot"),
-              conditionalPanel(
-                condition = "output.is_model3 === true",
-                radioButtons("model3_plot_type", "Plot Type for Model 3:",
-                           choices = list("Conditional Effect Plot" = "conditional",
-                                        "Stacked Simple Slopes Plot" = "stacked"),
-                           selected = "conditional",
-                           inline = TRUE)
-              ),
               checkboxInput("use_color_lines", "Use color for lines", value = TRUE),
               checkboxInput("custom_y_axis", "Customize y-axis range", value = FALSE),
               conditionalPanel(
@@ -800,10 +791,36 @@ ui <- fluidPage(
               br(), br()
             ),
             h4("Plots"),
-            plotOutput("slopes_plot", height = "500px", width = "800px"),
-            br(),
-            div(style = "margin-top: 20px;",
-              uiOutput("download_slopes_button")
+            conditionalPanel(
+              condition = "input.process_model == '3'",
+              h4("Stacked Simple Slopes Plot"),
+              plotOutput("stacked_slopes_plot", height = "500px", width = "800px"),
+              br(),
+              div(style = "margin-top: 20px;",
+                downloadButton("download_stacked_slopes", "Download Stacked Simple Slopes Plot (JPG)",
+                  class = "btn-success",
+                  style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
+              ),
+              br(), br(),
+              h4("Conditional Effect Plot"),
+              plotOutput("conditional_effect_plot", height = "500px", width = "800px"),
+              br(),
+              div(style = "margin-top: 20px;",
+                downloadButton("download_conditional_effect", "Download Conditional Effect Plot (JPG)",
+                  class = "btn-success",
+                  style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
+              )
+            ),
+            conditionalPanel(
+              condition = "input.process_model == '1'",
+              h4("Simple Slopes Plot"),
+              plotOutput("slopes_plot", height = "500px", width = "800px"),
+              br(),
+              div(style = "margin-top: 20px;",
+                downloadButton("download_slopes", "Download Simple Slopes Plot (JPG)",
+                  class = "btn-success",
+                  style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
+              )
             )
           ),
           conditionalPanel(
@@ -4562,8 +4579,221 @@ server <- function(input, output, session) {
     }
   })
   
+  extract_model3_conditional_effect <- function(process_output) {
+    if(is.null(process_output) || length(process_output) == 0) {
+      return(NULL)
+    }
+    
+    start_idx <- which(grepl("Conditional effects of the focal predictor at values of the moderator\\(s\\):",
+                             process_output, ignore.case = TRUE))
+    if(length(start_idx) == 0) {
+      return(NULL)
+    }
+    
+    start_line <- start_idx[1]
+    data_start <- start_line + 2
+    search_end <- min(data_start + 100, length(process_output))
+    search_subset <- process_output[data_start:search_end]
+    end_candidates <- which(grepl("^\\s*$|^Data for visualizing|^----------|^\\*+", search_subset))
+    
+    if(length(end_candidates) > 0) {
+      end_idx <- data_start + end_candidates[1] - 1
+    } else {
+      end_idx <- min(data_start + 100, length(process_output))
+    }
+    
+    if(end_idx <= data_start) {
+      return(NULL)
+    }
+    
+    data_lines <- process_output[data_start:end_idx]
+    data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
+    if(length(data_lines) == 0) {
+      return(NULL)
+    }
+    
+    parsed_rows <- lapply(data_lines, function(line) {
+      nums <- suppressWarnings(as.numeric(strsplit(trimws(line), "\\s+")[[1]]))
+      nums <- nums[!is.na(nums)]
+      if(length(nums) >= 7) nums else NULL
+    })
+    parsed_rows <- Filter(Negate(is.null), parsed_rows)
+    if(length(parsed_rows) == 0) {
+      return(NULL)
+    }
+    
+    max_len <- max(vapply(parsed_rows, length, 0L))
+    if(max_len >= 8) {
+      df <- as.data.frame(do.call(rbind, lapply(parsed_rows, function(nums) nums[1:8])))
+      names(df) <- c("W", "Z", "Effect", "se", "t", "p", "LLCI", "ULCI")
+    } else {
+      df <- as.data.frame(do.call(rbind, lapply(parsed_rows, function(nums) nums[1:7])))
+      names(df) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")
+    }
+    
+    df <- df[complete.cases(df[, c("Z", "Effect")]), ]
+    if(nrow(df) == 0) {
+      return(NULL)
+    }
+    
+    if("W" %in% names(df)) {
+      unique_z <- sort(unique(df$Z))
+      cond_effect_data <- data.frame(
+        Z = numeric(length(unique_z)),
+        Effect = numeric(length(unique_z)),
+        se = numeric(length(unique_z)),
+        t = numeric(length(unique_z)),
+        p = numeric(length(unique_z)),
+        LLCI = numeric(length(unique_z)),
+        ULCI = numeric(length(unique_z))
+      )
+      
+      for(i in 1:length(unique_z)) {
+        z_subset <- df[df$Z == unique_z[i], ]
+        median_w_idx <- which.min(abs(z_subset$W - median(z_subset$W, na.rm = TRUE)))
+        if(length(median_w_idx) == 0) median_w_idx <- 1
+        cond_effect_data[i, ] <- z_subset[median_w_idx, c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")]
+      }
+      cond_effect_data
+    } else {
+      df[, c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")]
+    }
+  }
+  
+  save_stacked_slopes_plot <- function(file, results) {
+    plot_data_df <- results$plot_data
+    if(is.null(plot_data_df) || !is.data.frame(plot_data_df) || nrow(plot_data_df) == 0) {
+      stop("Plot data not available. Please run the analysis first.")
+    }
+    
+    stacked_data <- NULL
+    
+    tryCatch({
+      process_output <- results$output
+      viz_idx <- which(grepl("Data for visualizing the conditional effect of the focal predictor:", process_output, ignore.case = TRUE))
+      
+      if(length(viz_idx) > 0) {
+        data_start <- viz_idx[1] + 2
+        data_end <- min(data_start + 30, length(process_output))
+        potential_data_lines <- process_output[data_start:data_end]
+        potential_data_lines <- potential_data_lines[grepl("^\\s*-?\\d", potential_data_lines)]
+        
+        if(length(potential_data_lines) > 0) {
+          parsed_viz <- tryCatch({
+            data_text <- paste(potential_data_lines, collapse = "\n")
+            parsed_viz <- read.table(text = data_text,
+                                    col.names = c("X", "W", "Z", "Y", "se", "LLCI", "ULCI"),
+                                    stringsAsFactors = FALSE, 
+                                    fill = TRUE, 
+                                    blank.lines.skip = TRUE,
+                                    row.names = NULL,
+                                    na.strings = c("NA", ""))
+            
+            for(col in 1:ncol(parsed_viz)) {
+              parsed_viz[, col] <- as.numeric(parsed_viz[, col])
+            }
+            parsed_viz
+          }, error = function(e) {
+            print(paste("DEBUG: Error parsing stacked plot data:", e$message))
+            NULL
+          })
+          
+          if(!is.null(parsed_viz) && ncol(parsed_viz) == 7 && nrow(parsed_viz) > 0) {
+            stacked_data <- data.frame(
+              Predictor = parsed_viz$X,
+              Moderator = parsed_viz$W,
+              Z = parsed_viz$Z,
+              Outcome = parsed_viz$Y,
+              LLCI = parsed_viz$LLCI,
+              ULCI = parsed_viz$ULCI
+            )
+            stacked_data <- stacked_data[complete.cases(stacked_data), ]
+          }
+        }
+      }
+    }, error = function(e) {
+      print(paste("DEBUG: Error parsing stacked plot data:", e$message))
+    })
+    
+    if(is.null(stacked_data) || nrow(stacked_data) == 0) {
+      stop("Could not parse visualization data for stacked plot.")
+    }
+    
+    unique_z <- sort(unique(stacked_data$Z))
+    if(length(unique_z) == 0) {
+      stop("No Z values found in visualization data.")
+    }
+    
+    unique_w <- sort(unique(stacked_data$Moderator))
+    moderator_levels_raw <- unique_w
+    
+    plot_list <- list()
+    z_label_text <- if(!is.null(input$moderator2_label) && input$moderator2_label != "") input$moderator2_label else input$moderator2_var
+    x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
+    y_label_text <- if(input$y_label != "") input$y_label else input$outcome_var
+    mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(input$moderator_var, " Levels")
+    
+    for(i in 1:length(unique_z)) {
+      z_val <- unique_z[i]
+      z_subset <- stacked_data[stacked_data$Z == z_val, ]
+      
+      if(nrow(z_subset) == 0) next
+      
+      z_display <- round(z_val, input$decimal_places)
+      
+      z_subset$Moderator_factor <- factor(z_subset$Moderator, levels = moderator_levels_raw, 
+                                         labels = format(round(moderator_levels_raw, input$decimal_places), nsmall = input$decimal_places))
+      
+      p_sub <- ggplot(z_subset, aes(
+        x = Predictor,
+        y = Outcome,
+        color = if(input$use_color_lines) Moderator_factor else NULL,
+        linetype = if(!input$use_color_lines) Moderator_factor else NULL,
+        fill = if(input$show_confidence_intervals && input$use_color_lines) Moderator_factor else NULL
+      )) +
+        {if(input$show_confidence_intervals && !all(is.na(z_subset$LLCI))) 
+          geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, color = NA)} +
+        geom_line(linewidth = 1) +
+        {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
+        labs(
+          title = paste0("Simple Slopes at ", z_label_text, " = ", z_display),
+          x = x_label_text,
+          y = y_label_text,
+          color = if(input$use_color_lines) mod_label_text else NULL,
+          linetype = if(!input$use_color_lines) mod_label_text else NULL,
+          fill = if(input$show_confidence_intervals && input$use_color_lines) mod_label_text else NULL
+        ) +
+        theme_minimal() +
+        theme(
+          text = element_text(size = 12),
+          axis.title = element_text(size = 14),
+          axis.text = element_text(size = 12),
+          plot.title = element_text(size = 14, hjust = 0.5),
+          legend.title = element_text(size = 12),
+          legend.text = element_text(size = 12),
+          axis.line = element_line(color = "black", linewidth = 0.5),
+          axis.ticks = element_line(color = "black", linewidth = 0.5)
+        )
+      
+      if(!input$show_confidence_intervals || !input$use_color_lines) {
+        p_sub <- p_sub + guides(fill = "none")
+      }
+      
+      plot_list[[i]] <- p_sub
+    }
+    
+    if(length(plot_list) > 0) {
+      p <- do.call(gridExtra::arrangeGrob, c(plot_list, ncol = 1))
+      grDevices::jpeg(file, width = 10, height = 8 * length(plot_list), units = "in", res = 600)
+      on.exit(grDevices::dev.off(), add = TRUE)
+      grid::grid.draw(p)
+    } else {
+      stop("No plots generated for stacked view.")
+    }
+  }
+  
   # Simple Slopes Plot
-  output$slopes_plot <- renderPlot({
+  build_slopes_plot <- function(plot_type_override = NULL, model3_only = FALSE) {
     # Only allow plots for Models 1 and 3
     req(input$process_model)
     model_num <- as.numeric(input$process_model)
@@ -4625,6 +4855,10 @@ server <- function(input, output, session) {
     # Determine model type
     model_num <- as.numeric(input$process_model)
     has_second_mod <- model_num %in% models_with_second_moderator
+
+    if(model3_only && !has_second_mod) {
+      return()
+    }
     
     # Use plot data from PROCESS directly (plot=2, save=2) - always uses percentiles
     plot_data_df <- results$plot_data
@@ -5380,8 +5614,8 @@ server <- function(input, output, session) {
     
     # Create plot labels and determine plot type
     if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
-      # For Model 3: Check which plot type is selected
-      plot_type <- if(!is.null(input$model3_plot_type)) input$model3_plot_type else "conditional"
+      # For Model 3: Determine which plot type to render
+      plot_type <- if(!is.null(plot_type_override)) plot_type_override else "stacked"
       
       if(plot_type == "stacked") {
         # Stacked Simple Slopes Plot: Parse "Data for visualizing" table and create 3 plots (one per Z level)
@@ -5533,7 +5767,7 @@ server <- function(input, output, session) {
         y_label_text <- paste("Conditional effect of", if(input$x_label != "") input$x_label else input$predictor_var, 
                              "*", if(input$moderator_label != "") input$moderator_label else input$moderator_var,
                              "on", if(input$y_label != "") input$y_label else input$outcome_var)
-        plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Conditional Effect Plot"
+        plot_title <- "Conditional Effect Plot"
         
         # Limit Z range to actual data range
         z_range <- range(plot_data$Z, na.rm = TRUE)
@@ -5576,7 +5810,7 @@ server <- function(input, output, session) {
       x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
       mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(active_moderator, " Levels")
       
-      plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Simple Slopes Plot"
+      plot_title <- "Simple Slopes Plot"
       
       # Single moderation: single plot with 3 lines
       # Map moderator values to factors using the raw values, but display rounded labels
@@ -5622,6 +5856,18 @@ server <- function(input, output, session) {
     }
     
     print(p)
+  }
+  
+  output$slopes_plot <- renderPlot({
+    build_slopes_plot(plot_type_override = "stacked")
+  })
+  
+  output$stacked_slopes_plot <- renderPlot({
+    build_slopes_plot(plot_type_override = "stacked", model3_only = TRUE)
+  })
+  
+  output$conditional_effect_plot <- renderPlot({
+    build_slopes_plot(plot_type_override = "conditional", model3_only = TRUE)
   })
   
   # Johnson-Neyman Plot
@@ -5971,17 +6217,12 @@ server <- function(input, output, session) {
       model_num <- tryCatch(as.numeric(input$process_model), error = function(e) NULL)
       has_second_mod <- !is.null(model_num) && model_num %in% models_with_second_moderator
       if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
-        # For Model 3, check which plot type is selected
-        plot_type <- if(!is.null(input$model3_plot_type)) input$model3_plot_type else "conditional"
-        if(plot_type == "stacked") {
-          paste0("stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
-        } else {
-          paste0("conditional_effect_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
-        }
+        paste0("stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
       } else {
         paste0("simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
       }
     },
+    contentType = "image/jpeg",
     content = function(file) {
       tryCatch({
         # Only allow downloads for Models 1 and 3
@@ -6011,8 +6252,7 @@ server <- function(input, output, session) {
         
         # For Model 3, use same logic as output$slopes_plot
         if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
-          # Check which plot type is selected
-          plot_type <- if(!is.null(input$model3_plot_type)) input$model3_plot_type else "conditional"
+          plot_type <- "stacked"
           
           if(plot_type == "stacked") {
             # Stacked Simple Slopes Plot: Parse "Data for visualizing" table and create 3 plots (one per Z level)
@@ -6138,103 +6378,20 @@ server <- function(input, output, session) {
               plot_list[[i]] <- p_sub
             }
             
-            # Arrange plots vertically using grid.arrange
+            # Arrange plots vertically without drawing to a device
             if(length(plot_list) > 0) {
-              library(gridExtra)
-              p <- do.call(grid.arrange, c(plot_list, ncol = 1))
-              ggsave(file, plot = p, device = "jpeg", width = 10, height = 8 * length(plot_list), dpi = 600, units = "in")
+              p <- do.call(gridExtra::arrangeGrob, c(plot_list, ncol = 1))
+              # Use an explicit device to avoid ggsave + grob issues in downloads
+              grDevices::jpeg(file, width = 10, height = 8 * length(plot_list), units = "in", res = 600)
+              on.exit(grDevices::dev.off(), add = TRUE)
+              grid::grid.draw(p)
             } else {
               stop("No plots generated for stacked view.")
             }
             
           } else {
-            # Conditional effect plot (default) - use same parsing logic as renderPlot
-            cond_effect_data <- NULL
-            
-            tryCatch({
-              process_output <- results$output
-              
-              # Look for "Conditional effects of the focal predictor at values of the moderator(s):"
-              start_idx <- which(grepl("Conditional effects of the focal predictor at values of the moderator\\(s\\):", process_output, ignore.case = TRUE))
-              
-              if(length(start_idx) > 0) {
-                start_line <- start_idx[1]
-                data_start <- start_line + 2
-                
-                search_start <- data_start
-                search_end <- min(data_start + 50, length(process_output))
-                search_subset <- process_output[search_start:search_end]
-                end_candidates <- which(grepl("^\\s*$|^Data for visualizing|^----------|^\\*+", search_subset))
-                
-                if(length(end_candidates) > 0) {
-                  end_idx <- search_start + end_candidates[1] - 1
-                } else {
-                  end_idx <- min(data_start + 100, length(process_output))
-                }
-                
-                if(end_idx > data_start) {
-                  data_lines <- process_output[data_start:end_idx]
-                  data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
-                  
-                  if(length(data_lines) > 0) {
-                    # Parse the data - for Model 3, format is: W, Z, Effect, se, t, p, LLCI, ULCI (8 columns)
-                    parsed <- tryCatch({
-                      data_text <- paste(data_lines, collapse = "\n")
-                      parsed <- read.table(text = data_text,
-                                          col.names = c("W", "Z", "Effect", "se", "t", "p", "LLCI", "ULCI"),
-                                          stringsAsFactors = FALSE, 
-                                          fill = TRUE, 
-                                          blank.lines.skip = TRUE,
-                                          row.names = NULL,
-                                          na.strings = c("NA", ""))
-                      
-                      # Convert to numeric
-                      for(col in names(parsed)) {
-                        parsed[[col]] <- as.numeric(parsed[[col]])
-                      }
-                      
-                      parsed
-                    }, error = function(e) {
-                      print(paste("DEBUG: Error parsing table:", e$message))
-                      NULL
-                    })
-                    
-                    if(!is.null(parsed) && nrow(parsed) > 0) {
-                      # Validate rows - all 8 columns should be numeric
-                      valid_rows <- apply(parsed, 1, function(row) {
-                        !any(is.na(row[1:8])) && is.numeric(row[1]) && is.numeric(row[2]) && is.numeric(row[3])
-                      })
-                      
-                      if(sum(valid_rows) > 0) {
-                        parsed_valid <- parsed[valid_rows, ]
-                        
-                        # Aggregate by Z: for each unique Z, take the effect at median W
-                        unique_z <- sort(unique(parsed_valid$Z))
-                        cond_effect_data <- data.frame(
-                          Z = numeric(length(unique_z)),
-                          Effect = numeric(length(unique_z)),
-                          se = numeric(length(unique_z)),
-                          t = numeric(length(unique_z)),
-                          p = numeric(length(unique_z)),
-                          LLCI = numeric(length(unique_z)),
-                          ULCI = numeric(length(unique_z))
-                        )
-                        
-                        for(i in 1:length(unique_z)) {
-                          z_subset <- parsed_valid[parsed_valid$Z == unique_z[i], ]
-                          # Use median W value's effect (or mean if multiple)
-                          median_w_idx <- which.min(abs(z_subset$W - median(z_subset$W, na.rm = TRUE)))
-                          if(length(median_w_idx) == 0) median_w_idx <- 1
-                          cond_effect_data[i, ] <- z_subset[median_w_idx, c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")]
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }, error = function(e) {
-              print(paste("DEBUG: Error in conditional effect extraction:", e$message))
-            })
+            # Conditional effect plot (default)
+            cond_effect_data <- extract_model3_conditional_effect(results$output)
             
             if(is.null(cond_effect_data) || nrow(cond_effect_data) == 0) {
               stop("Could not extract conditional effect data from PROCESS output.")
@@ -6248,9 +6405,10 @@ server <- function(input, output, session) {
             y_label_text <- paste("Conditional effect of", if(input$x_label != "") input$x_label else input$predictor_var, 
                                  "*", if(input$moderator_label != "") input$moderator_label else input$moderator_var,
                                  "on", if(input$y_label != "") input$y_label else input$outcome_var)
-            plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Conditional Effect Plot"
+            plot_title <- "Conditional Effect Plot"
             
             z_range <- range(plot_data$Z, na.rm = TRUE)
+            y_range <- range(c(plot_data$Effect, plot_data$LLCI, plot_data$ULCI), na.rm = TRUE)
             
             # Create the conditional effect plot
             p <- ggplot(plot_data, aes(x = Z, y = Effect)) +
@@ -6259,7 +6417,7 @@ server <- function(input, output, session) {
               geom_hline(yintercept = 0, linetype = "dashed", color = if(input$use_color_lines) "red" else "black", linewidth = 0.8) +
               geom_line(color = if(input$use_color_lines) "red" else "black", linewidth = 1.2) +
               {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
-              {if(!input$custom_y_axis) coord_cartesian(xlim = z_range)} +
+              {if(!input$custom_y_axis) coord_cartesian(xlim = z_range, ylim = y_range)} +
               labs(
                 title = plot_title,
                 x = x_label_text,
@@ -6378,7 +6536,7 @@ server <- function(input, output, session) {
           x_label_text <- if(input$x_label != "") input$x_label else input$predictor_var
           mod_label_text <- if(input$moderator_label != "") input$moderator_label else paste0(active_moderator, " Levels")
           
-          plot_title <- if(input$slopes_title != "Simple Slopes Plot") input$slopes_title else "Simple Slopes Plot"
+          plot_title <- "Simple Slopes Plot"
           
           # Single moderation: single plot with 3 lines
           plot_data$Moderator_factor <- factor(plot_data$Moderator, levels = moderator_levels_raw, labels = format(moderator_levels, nsmall = input$decimal_places))
@@ -6431,37 +6589,115 @@ server <- function(input, output, session) {
     }
   )
   
-  # Dynamic button label for download slopes plot
-  output$download_slopes_button <- renderUI({
-    model_num <- tryCatch(as.numeric(input$process_model), error = function(e) NULL)
-    has_second_mod <- !is.null(model_num) && model_num %in% models_with_second_moderator
-    has_z_var <- !is.null(input$moderator2_var) && input$moderator2_var != ""
-    
-    button_label <- if(has_second_mod && has_z_var) {
-      # For Model 3, check which plot type is selected
-      plot_type <- if(!is.null(input$model3_plot_type)) input$model3_plot_type else "conditional"
-      if(plot_type == "stacked") {
-        "Download Stacked Simple Slopes Plot (JPG)"
-      } else {
-        "Download Conditional Effect Plot (JPG)"
-      }
-    } else {
-      "Download Simple Slopes Plot (JPG)"
+  output$download_stacked_slopes <- downloadHandler(
+    filename = function() {
+      paste0("stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+    },
+    contentType = "image/jpeg",
+    content = function(file) {
+      tryCatch({
+        req(input$process_model)
+        model_num <- as.numeric(input$process_model)
+        if(model_num != 3) {
+          stop("Stacked simple slopes plot is only available for Model 3.")
+        }
+        
+        req(analysis_results())
+        req(input$moderator_var)
+        req(input$predictor_var)
+        
+        results <- analysis_results()
+        save_stacked_slopes_plot(file, results)
+      }, error = function(e) {
+        print(paste("Error saving stacked slopes plot:", e$message))
+        writeLines(paste("Error generating plot:", e$message), file)
+      })
     }
-    
-    downloadButton("download_slopes", button_label, 
-                  class = "btn-success", 
-                  style = "background-color: #90EE90; border-color: #90EE90; color: #000;")
-  })
+  )
+  
+  output$download_conditional_effect <- downloadHandler(
+    filename = function() {
+      paste0("conditional_effect_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+    },
+    contentType = "image/jpeg",
+    content = function(file) {
+      tryCatch({
+        req(input$process_model)
+        model_num <- as.numeric(input$process_model)
+        if(model_num != 3) {
+          stop("Conditional effect plot is only available for Model 3.")
+        }
+        
+        req(analysis_results())
+        req(input$moderator_var)
+        req(input$predictor_var)
+        
+        results <- analysis_results()
+        plot_data_df <- results$plot_data
+        
+        if(is.null(plot_data_df) || !is.data.frame(plot_data_df) || nrow(plot_data_df) == 0) {
+          stop("Plot data not available. Please run the analysis first.")
+        }
+        
+        cond_effect_data <- extract_model3_conditional_effect(results$output)
+        
+        if(is.null(cond_effect_data) || nrow(cond_effect_data) == 0) {
+          stop("Could not extract conditional effect data from PROCESS output.")
+        }
+        
+        plot_data <- cond_effect_data
+        
+        x_label_text <- if(!is.null(input$moderator2_label) && input$moderator2_label != "") input$moderator2_label else input$moderator2_var
+        y_label_text <- paste("Conditional effect of", if(input$x_label != "") input$x_label else input$predictor_var, 
+                             "*", if(input$moderator_label != "") input$moderator_label else input$moderator_var,
+                             "on", if(input$y_label != "") input$y_label else input$outcome_var)
+        plot_title <- "Conditional Effect Plot"
+        
+        z_range <- range(plot_data$Z, na.rm = TRUE)
+        y_range <- range(c(plot_data$Effect, plot_data$LLCI, plot_data$ULCI), na.rm = TRUE)
+        
+        p <- ggplot(plot_data, aes(x = Z, y = Effect)) +
+          {if(input$show_confidence_intervals && !all(is.na(plot_data$LLCI)) && !all(is.na(plot_data$ULCI))) 
+            geom_ribbon(aes(ymin = LLCI, ymax = ULCI), alpha = 0.2, fill = if(input$use_color_lines) "red" else "grey50", show.legend = FALSE)} +
+          geom_hline(yintercept = 0, linetype = "dashed", color = if(input$use_color_lines) "red" else "black", linewidth = 0.8) +
+          geom_line(color = if(input$use_color_lines) "red" else "black", linewidth = 1.2) +
+          {if(input$custom_y_axis) coord_cartesian(ylim = c(input$y_axis_min, input$y_axis_max))} +
+          {if(!input$custom_y_axis) coord_cartesian(xlim = z_range, ylim = y_range)} +
+          labs(
+            title = plot_title,
+            x = x_label_text,
+            y = y_label_text
+          ) +
+          theme_minimal() +
+          theme(
+            text = element_text(size = 14),
+            axis.title = element_text(size = 16),
+            axis.text = element_text(size = 14),
+            plot.title = element_text(size = 18, hjust = 0.5),
+            axis.line = element_line(color = "black", linewidth = 0.5),
+            axis.ticks = element_line(color = "black", linewidth = 0.5)
+          )
+        
+        ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
+      }, error = function(e) {
+        print(paste("Error saving conditional effect plot:", e$message))
+        writeLines(paste("Error generating plot:", e$message), file)
+      })
+    }
+  )
   
   # Disable plot download buttons until analysis is run
   observe({
     tryCatch({
       has_results <- !is.null(analysis_results())
       shinyjs::toggleState("download_slopes", condition = has_results)
+      shinyjs::toggleState("download_stacked_slopes", condition = has_results)
+      shinyjs::toggleState("download_conditional_effect", condition = has_results)
       shinyjs::toggleState("download_assumptions", condition = !is.null(input$outcome_var) && input$outcome_var != "")
     }, error = function(e) {
       shinyjs::disable("download_slopes")
+      shinyjs::disable("download_stacked_slopes")
+      shinyjs::disable("download_conditional_effect")
       shinyjs::disable("download_assumptions")
     })
   })
