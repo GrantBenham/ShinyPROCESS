@@ -275,6 +275,202 @@ check_required_vars_for_assumptions <- function(model_num, predictor_var, outcom
   return(list(valid = TRUE, message = ""))
 }
 
+# Helper function to generate assumption checks HTML
+# This function eliminates duplication between render function and download handler
+generate_assumption_checks_html <- function(input, rv, mediator_vars_collected_func, outlier_summary_func, include_info_boxes = FALSE) {
+  tryCatch({
+    # Build formula based on model type
+    formula_terms <- c(input$outcome_var, "~", input$predictor_var)
+    
+    # Add interaction for moderation models (only if moderator is selected)
+    if(!is.null(input$moderator_var) && input$moderator_var != "") {
+      formula_terms <- c(formula_terms, "*", input$moderator_var)
+    }
+    
+    # Add second moderator interaction if provided
+    if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+      formula_terms <- c(formula_terms, "*", input$moderator2_var)
+    }
+    
+    # Add mediators for mediation models
+    mediator_vars_current <- mediator_vars_collected_func()
+    if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+      formula_terms <- c(formula_terms, "+", paste(mediator_vars_current, collapse = " + "))
+    }
+    
+    # Add covariates
+    if(!is.null(input$covariates) && length(input$covariates) > 0) {
+      formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
+    }
+    
+    model_formula <- as.formula(paste(formula_terms, collapse = " "))
+    
+    # Check if outcome is binary
+    outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
+    
+    if(outcome_is_binary) {
+      # For binary outcomes, use logistic regression
+      model <- glm(model_formula, data = rv$original_dataset, family = binomial())
+      
+      # Get outlier/influential summary
+      outlier_text <- paste(outlier_summary_func(), collapse = "<br>")
+      
+      # Binary counts
+      bin_counts <- c(
+        binary_count_lines(rv$original_dataset, input$outcome_var, "Outcome (original)"),
+        binary_count_lines(rv$original_dataset, input$predictor_var, "Predictor (original)")
+      )
+      if(!is.null(input$moderator_var) && input$moderator_var != "") {
+        bin_counts <- c(bin_counts,
+          binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
+      }
+      mediator_vars_current <- mediator_vars_collected_func()
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        for(med in mediator_vars_current) {
+          bin_counts <- c(bin_counts,
+            binary_count_lines(rv$original_dataset, med, paste0("Mediator ", med, " (original)")))
+        }
+      }
+      
+      # For binary outcomes, skip normality and homoscedasticity tests
+      diagnostics <- diagnostic_report(model)
+      
+      # Build informational boxes if requested (for download handler)
+      info_boxes <- ""
+      if(include_info_boxes) {
+        info_boxes <- paste(
+          "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
+          "<strong>Note on Assumption Checks:</strong><br>",
+          "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
+          "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
+          "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
+          "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+          "</div>",
+          "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
+          "<strong>Example Reporting Format:</strong><br>",
+          "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
+          "</div>",
+          sep = ""
+        )
+      }
+      
+      output_text <- paste(
+        "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
+        info_boxes,
+        "<strong>Note: Binary Outcome Detected</strong><br>",
+        "<em>Your outcome variable is binary (0/1). PROCESS will use logistic regression for this analysis.</em><br><br>",
+        "<strong>Important:</strong> Standard regression assumptions (normality, homoscedasticity) do not apply to logistic regression.<br>",
+        "For binary outcomes, different diagnostic approaches are needed:<br>",
+        "<ul>",
+        "<li><strong>Linearity:</strong> Check linearity of continuous predictors with the logit of the outcome</li>",
+        "<li><strong>Influential observations:</strong> Review leverage values and Cook's distance in the outlier summary above</li>",
+        "<li><strong>Model fit:</strong> Use pseudo-R² measures (McFadden, Cox-Snell, Nagelkerke) shown in PROCESS output</li>",
+        "<li><strong>Multicollinearity:</strong> VIF can still be calculated for predictors</li>",
+        "</ul><br>",
+        if(length(na.omit(bin_counts)) > 0) {
+          paste(
+            "<strong>Binary Variable Counts (original dataset):</strong><br>",
+            paste(na.omit(bin_counts), collapse = "<br>"),
+            "<br><br>"
+          )
+        } else { "" },
+        outlier_text,
+        "<br><br>",
+        "<strong>Additional Diagnostics:</strong><br>",
+        paste(diagnostics, collapse = "<br>"),
+        "<br><em>Note: VIF calculated for all predictors. For binary outcomes, focus on model fit statistics and residual patterns rather than normality/homoscedasticity.</em>",
+        "</div>",
+        sep = ""
+      )
+    } else {
+      # For continuous outcomes, use linear regression
+      model <- lm(model_formula, data = rv$original_dataset)
+      
+      # Get outlier summary
+      outlier_text <- paste(outlier_summary_func(), collapse = "<br>")
+      
+      # Binary counts (only if binary)
+      bin_counts <- c(
+        binary_count_lines(rv$original_dataset, input$outcome_var, "Outcome (original)"),
+        binary_count_lines(rv$original_dataset, input$predictor_var, "Predictor (original)")
+      )
+      if(!is.null(input$moderator_var) && input$moderator_var != "") {
+        bin_counts <- c(bin_counts,
+          binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
+      }
+      mediator_vars_current <- mediator_vars_collected_func()
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        for(med in mediator_vars_current) {
+          bin_counts <- c(bin_counts,
+            binary_count_lines(rv$original_dataset, med, paste0("Mediator ", med, " (original)")))
+        }
+      }
+      
+      # Run other diagnostics
+      normality <- check_normality(model)
+      homoscedasticity <- test_homoscedasticity(model)
+      diagnostics <- diagnostic_report(model)
+      
+      # Build informational boxes if requested (for download handler)
+      info_boxes <- ""
+      if(include_info_boxes) {
+        info_boxes <- paste(
+          "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
+          "<strong>Note on Assumption Checks:</strong><br>",
+          "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
+          "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
+          "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
+          "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+          "</div>",
+          "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
+          "<strong>Example Reporting Format:</strong><br>",
+          "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
+          "</div>",
+          sep = ""
+        )
+      }
+      
+      # Create final output
+      output_text <- paste(
+        "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
+        info_boxes,
+        if(length(na.omit(bin_counts)) > 0) {
+          paste(
+            "<strong>Binary Variable Counts (original dataset):</strong><br>",
+            paste(na.omit(bin_counts), collapse = "<br>"),
+            "<br><br>"
+          )
+        } else { "" },
+        outlier_text,
+        "<br><br>",
+        "<strong>Normality Test:</strong><br>",
+        normality$text,
+        "<br><em>Interpretation: A significant p-value (< .05) suggests non-normality. ",
+        "However, with large samples, minor deviations often become significant. ",
+        "Visual inspection of the Q-Q plot is often more informative.</em>",
+        "<br><br>",
+        "<strong>Homoscedasticity Test:</strong><br>",
+        homoscedasticity,
+        "<br><em>Interpretation: A significant p-value suggests non-constant variance. ",
+        "Consider the Residuals vs Fitted plot for visual confirmation.</em>",
+        "<br><br>",
+        "<strong>Additional Diagnostics:</strong><br>",
+        paste(diagnostics, collapse = "<br>"),
+        "<br><em>Interpretation:<br>",
+        "- VIF > 5 suggests potential multicollinearity issues<br>",
+        "- With bootstrapping, these diagnostics become less crucial as bootstrap methods are more robust to violations</em>",
+        "</div>",
+        sep = ""
+      )
+    }
+    
+    return(output_text)
+    
+  }, error = function(e) {
+    return(paste("<div class='alert alert-danger'>Error in assumption checks: ", e$message, "</div>"))
+  })
+}
+
 # Helper to summarize binary counts
 binary_count_lines <- function(data, var, label) {
   if (is.null(var) || var == "" || is.null(data)) return(NULL)
@@ -1836,164 +2032,13 @@ server <- function(input, output, session) {
         return(HTML(""))
       }
       
-      # Build formula based on model type
-      formula_terms <- c(input$outcome_var, "~", input$predictor_var)
-      
-      # Add interaction for moderation models (only if moderator is selected)
-      if(!is.null(input$moderator_var) && input$moderator_var != "") {
-        formula_terms <- c(formula_terms, "*", input$moderator_var)
-      }
-      
-      # Add second moderator interaction if provided
-      if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
-        formula_terms <- c(formula_terms, "*", input$moderator2_var)
-      }
-      
-      # Add mediators for mediation models
-      mediator_vars_current <- mediator_vars_collected()
-      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
-        formula_terms <- c(formula_terms, "+", paste(mediator_vars_current, collapse = " + "))
-      }
-      
-      # Add covariates
-      if(!is.null(input$covariates) && length(input$covariates) > 0) {
-        formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
-      }
-      
-      model_formula <- as.formula(paste(formula_terms, collapse = " "))
-      
-      # Check if outcome is binary
-      outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
-      
-      if(outcome_is_binary) {
-        # For binary outcomes, use logistic regression
-        model <- glm(model_formula, data = rv$original_dataset, family = binomial())
-        
-        # Get outlier/influential summary
-        outlier_text <- paste(outlier_summary(), collapse = "<br>")
-        
-        # Build filtered data after removal
-        outliers <- tryCatch(identify_outliers(), error = function(e) NULL)
-        filtered_data <- rv$original_dataset
-        if(!is.null(outliers) && length(outliers$cases) > 0) {
-          filtered_data <- rv$original_dataset[-outliers$cases, ]
-        }
-        
-        # Binary counts
-        bin_counts <- c(
-          binary_count_lines(rv$original_dataset, input$outcome_var, "Outcome (original)"),
-          binary_count_lines(rv$original_dataset, input$predictor_var, "Predictor (original)")
-        )
-        if(!is.null(input$moderator_var)) {
-          bin_counts <- c(bin_counts,
-            binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
-        }
-        mediator_vars_current <- mediator_vars_collected()
-        if(!is.null(mediator_vars_current)) {
-          for(med in mediator_vars_current) {
-            bin_counts <- c(bin_counts,
-              binary_count_lines(rv$original_dataset, med, paste0("Mediator ", med, " (original)")))
-          }
-        }
-        
-        # For binary outcomes, skip normality and homoscedasticity tests
-        diagnostics <- diagnostic_report(model)
-        
-        output_text <- paste(
-          "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
-          "<strong>Note: Binary Outcome Detected</strong><br>",
-          "<em>Your outcome variable is binary (0/1). PROCESS will use logistic regression for this analysis.</em><br><br>",
-          "<strong>Important:</strong> Standard regression assumptions (normality, homoscedasticity) do not apply to logistic regression.<br>",
-          "For binary outcomes, different diagnostic approaches are needed:<br>",
-          "<ul>",
-          "<li><strong>Linearity:</strong> Check linearity of continuous predictors with the logit of the outcome</li>",
-          "<li><strong>Influential observations:</strong> Review leverage values and Cook's distance in the outlier summary above</li>",
-          "<li><strong>Model fit:</strong> Use pseudo-R² measures (McFadden, Cox-Snell, Nagelkerke) shown in PROCESS output</li>",
-          "<li><strong>Multicollinearity:</strong> VIF can still be calculated for predictors</li>",
-          "</ul><br>",
-          if(length(na.omit(bin_counts)) > 0) {
-            paste(
-              "<strong>Binary Variable Counts (original dataset):</strong><br>",
-              paste(na.omit(bin_counts), collapse = "<br>"),
-              "<br><br>"
-            )
-          } else { "" },
-          outlier_text,
-          "<br><br>",
-          "<strong>Additional Diagnostics:</strong><br>",
-          paste(diagnostics, collapse = "<br>"),
-          "<br><em>Note: VIF calculated for all predictors. For binary outcomes, focus on model fit statistics and residual patterns rather than normality/homoscedasticity.</em>",
-          "</div>",
-          sep = ""
-        )
-      } else {
-        # For continuous outcomes, use linear regression
-        model <- lm(model_formula, data = rv$original_dataset)
-        
-        # Get outlier summary
-        outlier_text <- paste(outlier_summary(), collapse = "<br>")
-        
-        # Build filtered data after removal
-        outliers <- tryCatch(identify_outliers(), error = function(e) NULL)
-        filtered_data <- rv$original_dataset
-        if(!is.null(outliers) && length(outliers$cases) > 0) {
-          filtered_data <- rv$original_dataset[-outliers$cases, ]
-        }
-        
-        # Binary counts (only if binary)
-        bin_counts <- c(
-          binary_count_lines(rv$original_dataset, input$outcome_var, "Outcome (original)"),
-          binary_count_lines(rv$original_dataset, input$predictor_var, "Predictor (original)")
-        )
-        if(!is.null(input$moderator_var)) {
-          bin_counts <- c(bin_counts,
-            binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
-        }
-        mediator_vars_current <- mediator_vars_collected()
-        if(!is.null(mediator_vars_current)) {
-          for(med in mediator_vars_current) {
-            bin_counts <- c(bin_counts,
-              binary_count_lines(rv$original_dataset, med, paste0("Mediator ", med, " (original)")))
-          }
-        }
-        
-        # Run other diagnostics
-        normality <- check_normality(model)
-        homoscedasticity <- test_homoscedasticity(model)
-        diagnostics <- diagnostic_report(model)
-        
-        # Create final output
-        output_text <- paste(
-          "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
-          if(length(na.omit(bin_counts)) > 0) {
-            paste(
-              "<strong>Binary Variable Counts (original dataset):</strong><br>",
-              paste(na.omit(bin_counts), collapse = "<br>"),
-              "<br><br>"
-            )
-          } else { "" },
-          outlier_text,
-          "<br><br>",
-          "<strong>Normality Test:</strong><br>",
-          normality$text,
-          "<br><em>Interpretation: A significant p-value (< .05) suggests non-normality. ",
-          "However, with large samples, minor deviations often become significant. ",
-          "Visual inspection of the Q-Q plot is often more informative.</em>",
-          "<br><br>",
-          "<strong>Homoscedasticity Test:</strong><br>",
-          homoscedasticity,
-          "<br><em>Interpretation: A significant p-value suggests non-constant variance. ",
-          "Consider the Residuals vs Fitted plot for visual confirmation.</em>",
-          "<br><br>",
-          "<strong>Additional Diagnostics:</strong><br>",
-          paste(diagnostics, collapse = "<br>"),
-          "<br><em>Interpretation:<br>",
-          "- VIF > 5 suggests potential multicollinearity issues<br>",
-          "- With bootstrapping, these diagnostics become less crucial as bootstrap methods are more robust to violations</em>",
-          "</div>",
-          sep = ""
-        )
-      }
+      # Generate HTML using helper function (without info boxes for UI display)
+      output_text <- generate_assumption_checks_html(
+        input, rv, 
+        mediator_vars_collected_func = mediator_vars_collected,
+        outlier_summary_func = outlier_summary,
+        include_info_boxes = FALSE
+      )
       
       HTML(output_text)
       
@@ -3515,7 +3560,28 @@ server <- function(input, output, session) {
       <body>
         %s
       </body>
-      </html>
+    </html>
+    ', content)
+  }
+  
+  # Helper function to wrap assumption checks content in complete HTML document
+  # Used by download handler to create standalone HTML file
+  wrap_assumptions_html <- function(content) {
+    sprintf('
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          table { border-collapse: collapse; margin: 10px 0; }
+          th, td { border: 1px solid #dee2e6; padding: 8px; }
+          th { background-color: #f8f9fa; }
+        </style>
+      </head>
+      <body>
+        %s
+      </body>
+    </html>
     ', content)
   }
   
@@ -3569,158 +3635,16 @@ server <- function(input, output, session) {
     content = function(file) {
       req(rv$original_dataset, input$outcome_var, input$predictor_var)
       
-      # Get the assumption details HTML
-      assumption_html <- tryCatch({
-        # Build formula based on model type
-        formula_terms <- c(input$outcome_var, "~", input$predictor_var)
-        
-        # Add interaction for moderation models
-        if(!is.null(input$moderator_var) && input$moderator_var != "") {
-          formula_terms <- c(formula_terms, "*", input$moderator_var)
-        }
-        
-        # Add mediators for mediation models
-        mediator_vars_current <- mediator_vars_collected()
-        if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
-          formula_terms <- c(formula_terms, "+", paste(mediator_vars_current, collapse = " + "))
-        }
-        
-        # Add covariates
-        if(!is.null(input$covariates) && length(input$covariates) > 0) {
-          formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
-        }
-        
-        model_formula <- as.formula(paste(formula_terms, collapse = " "))
-        outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
-        
-        if(outcome_is_binary) {
-          model <- glm(model_formula, data = rv$original_dataset, family = binomial())
-          outlier_text <- paste(outlier_summary(), collapse = "<br>")
-          bin_counts <- c(
-            binary_count_lines(rv$original_dataset, input$outcome_var, "Outcome (original)"),
-            binary_count_lines(rv$original_dataset, input$predictor_var, "Predictor (original)")
-          )
-          if(!is.null(input$moderator_var)) {
-            bin_counts <- c(bin_counts,
-              binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
-          }
-          diagnostics <- diagnostic_report(model)
-          
-          paste(
-            "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
-            "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
-            "<strong>Note on Assumption Checks:</strong><br>",
-            "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
-            "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
-            "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
-            "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
-            "</div>",
-            "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
-            "<strong>Example Reporting Format:</strong><br>",
-            "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
-            "</div>",
-            "<strong>Note: Binary Outcome Detected</strong><br>",
-            "<em>Your outcome variable is binary (0/1). PROCESS will use logistic regression for this analysis.</em><br><br>",
-            "<strong>Important:</strong> Standard regression assumptions (normality, homoscedasticity) do not apply to logistic regression.<br>",
-            "For binary outcomes, different diagnostic approaches are needed:<br>",
-            "<ul>",
-            "<li><strong>Linearity:</strong> Check linearity of continuous predictors with the logit of the outcome</li>",
-            "<li><strong>Influential observations:</strong> Review leverage values and Cook's distance in the outlier summary above</li>",
-            "<li><strong>Model fit:</strong> Use pseudo-R² measures (McFadden, Cox-Snell, Nagelkerke) shown in PROCESS output</li>",
-            "<li><strong>Multicollinearity:</strong> VIF can still be calculated for predictors</li>",
-            "</ul><br>",
-            if(length(na.omit(bin_counts)) > 0) {
-              paste(
-                "<strong>Binary Variable Counts (original dataset):</strong><br>",
-                paste(na.omit(bin_counts), collapse = "<br>"),
-                "<br><br>"
-              )
-            } else { "" },
-            outlier_text,
-            "<br><br>",
-            "<strong>Additional Diagnostics:</strong><br>",
-            paste(diagnostics, collapse = "<br>"),
-            "<br><em>Note: VIF calculated for all predictors. For binary outcomes, focus on model fit statistics and residual patterns rather than normality/homoscedasticity.</em>",
-            "</div>",
-            sep = ""
-          )
-        } else {
-          model <- lm(model_formula, data = rv$original_dataset)
-          outlier_text <- paste(outlier_summary(), collapse = "<br>")
-          bin_counts <- c(
-            binary_count_lines(rv$original_dataset, input$outcome_var, "Outcome (original)"),
-            binary_count_lines(rv$original_dataset, input$predictor_var, "Predictor (original)")
-          )
-          if(!is.null(input$moderator_var)) {
-            bin_counts <- c(bin_counts,
-              binary_count_lines(rv$original_dataset, input$moderator_var, "Moderator (original)"))
-          }
-          normality <- check_normality(model)
-          homoscedasticity <- test_homoscedasticity(model)
-          diagnostics <- diagnostic_report(model)
-          
-          paste(
-            "<div style='font-family: Courier, monospace; white-space: pre-wrap;'>",
-            "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
-            "<strong>Note on Assumption Checks:</strong><br>",
-            "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
-            "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
-            "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
-            "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
-            "</div>",
-            "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
-            "<strong>Example Reporting Format:</strong><br>",
-            "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
-            "</div>",
-            if(length(na.omit(bin_counts)) > 0) {
-              paste(
-                "<strong>Binary Variable Counts (original dataset):</strong><br>",
-                paste(na.omit(bin_counts), collapse = "<br>"),
-                "<br><br>"
-              )
-            } else { "" },
-            outlier_text,
-            "<br><br>",
-            "<strong>Normality Test:</strong><br>",
-            normality$text,
-            "<br><em>Interpretation: A significant p-value (< .05) suggests non-normality. ",
-            "However, with large samples, minor deviations often become significant. ",
-            "Visual inspection of the Q-Q plot is often more informative.</em>",
-            "<br><br>",
-            "<strong>Homoscedasticity Test:</strong><br>",
-            homoscedasticity,
-            "<br><em>Interpretation: A significant p-value suggests non-constant variance. ",
-            "Consider the Residuals vs Fitted plot for visual confirmation.</em>",
-            "<br><br>",
-            "<strong>Additional Diagnostics:</strong><br>",
-            paste(diagnostics, collapse = "<br>"),
-            "<br><em>Interpretation:<br>",
-            "- VIF > 5 suggests potential multicollinearity issues<br>",
-            "- With bootstrapping, these diagnostics become less crucial as bootstrap methods are more robust to violations</em>",
-            "</div>",
-            sep = ""
-          )
-        }
-      }, error = function(e) {
-        paste("<div class='alert alert-danger'>Error in assumption checks: ", e$message, "</div>")
-      })
+      # Generate HTML using helper function (with info boxes for download)
+      assumption_html <- generate_assumption_checks_html(
+        input, rv,
+        mediator_vars_collected_func = mediator_vars_collected,
+        outlier_summary_func = outlier_summary,
+        include_info_boxes = TRUE
+      )
       
-      writeLines(sprintf('
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 20px; }
-            table { border-collapse: collapse; margin: 10px 0; }
-            th, td { border: 1px solid #dee2e6; padding: 8px; }
-            th { background-color: #f8f9fa; }
-          </style>
-        </head>
-        <body>
-          %s
-        </body>
-      </html>
-      ', assumption_html), file)
+      # Wrap in complete HTML document
+      writeLines(wrap_assumptions_html(assumption_html), file)
     },
     contentType = "text/html"
   )
