@@ -9,3 +9,4 @@ Results/
 .Rhistory
 rsconnect/
 IMPLEMENTATION_INSTRUCTIONS.md
+*.R.checkpoint*
