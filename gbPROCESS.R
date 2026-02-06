@@ -3603,15 +3603,32 @@ server <- function(input, output, session) {
         process_args$xmtest <- 0
       }
       if(isTRUE(input$total)) process_args$total <- 1
-      # Capture bootstrap results for download when bootstrapping is enabled
-      if(isTRUE(input$use_bootstrap)) {
-        process_args$save <- 1  # This makes PROCESS return bootstrap results
-      }
-      # Only enable plot if user explicitly wants it
-      if(isTRUE(input$plot)) {
-        process_args$plot <- 1
+      
+      # Check if this is a moderation model
+      model_num <- as.numeric(input$process_model)
+      is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
+      
+      # For moderation models, set plot=2 and save=2 to get plot data in result object
+      # NOTE: plot=2 generates data with SE and CI. R pop-up plots are suppressed via graphics device
+      # To enable R pop-up plots, remove the pdf(NULL) call in the PROCESS execution
+      if(is_mod_model) {
+        process_args$plot <- 2  # Generate estimates + SE + CI for visualization
+        process_args$save <- 2  # Return plot data in result object
       } else {
-        process_args$plot <- 0
+        # For non-moderation models, handle bootstrap and plot options as before
+        # Capture bootstrap results for download when bootstrapping is enabled
+        # Set save=1 to get bootstrap results in return value (but don't save to file)
+        if(isTRUE(input$use_bootstrap)) {
+          process_args$save <- 1  # This makes PROCESS return bootstrap results
+        }
+        # Only enable plot if user explicitly wants it (with warning)
+        if(isTRUE(input$plot)) {
+          process_args$plot <- 1
+          showNotification("Note: This will open R graphics device windows that cannot be easily saved or customized.", type = "warning", duration = 5)
+        } else {
+          # Explicitly set plot to 0 to prevent any default plotting
+          process_args$plot <- 0
+        }
       }
       if(isTRUE(input$probe_interactions)) {
         # Parse probe threshold (e.g., "p < .10" -> 0.10)
@@ -3657,9 +3674,55 @@ server <- function(input, output, session) {
         options(width = old_width$width)
         print(paste("DEBUG: PROCESS completed. Output lines:", length(process_output)))
         
-        # Store results including bootstrap data if available
+        # Store results including bootstrap data and plot data if available
+        # Use same logic as original_analysis
         bootstrap_data <- NULL
-        if(input$use_bootstrap && !is.null(result)) {
+        plot_data <- NULL
+        
+        # Check if this is a moderation model that needs plot data
+        is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
+        
+        if(is_mod_model && !is.null(result)) {
+          # For moderation models, we need plot data for visualization
+          if(is.data.frame(result)) {
+            plot_data <- result
+            print(paste("DEBUG: Plot data captured (data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
+          } else if(is.matrix(result)) {
+            # PROCESS returns resultm as a matrix when save=2
+            plot_data <- as.data.frame(result)
+            # Remove rows with all NA or 99999 (PROCESS uses 99999 as placeholder)
+            plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
+            print(paste("DEBUG: Plot data captured (matrix->data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
+          } else if(is.list(result) && length(result) > 0) {
+            print(paste("DEBUG: Result is list with", length(result), "elements"))
+            # For save=2, result is resultm (plot data)
+            # For save=3, result is list(boots, resultm) where resultm is plot data
+            if(length(result) == 2) {
+              # Second element is plot data when save=3
+              if(is.data.frame(result[[2]])) {
+                plot_data <- result[[2]]
+              } else if(is.matrix(result[[2]])) {
+                plot_data <- as.data.frame(result[[2]])
+                plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
+              }
+              # First element is bootstrap when save=3
+              if(is.data.frame(result[[1]])) {
+                bootstrap_data <- result[[1]]
+              } else if(is.matrix(result[[1]])) {
+                bootstrap_data <- as.data.frame(result[[1]])
+              }
+              print(paste("DEBUG: Plot data captured (list[[2]]), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
+            } else if(is.data.frame(result[[1]])) {
+              plot_data <- result[[1]]  # First element is plot data when save=2
+              print(paste("DEBUG: Plot data captured (list[[1]]), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
+            } else if(is.matrix(result[[1]])) {
+              plot_data <- as.data.frame(result[[1]])
+              plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
+              print(paste("DEBUG: Plot data captured (list[[1]] matrix->data.frame), rows:", nrow(plot_data), "cols:", ncol(plot_data)))
+            }
+          }
+        } else if(input$use_bootstrap && !is.null(result)) {
+          # For non-moderation models, handle bootstrap as before
           # PROCESS returns bootstrap results when save=1 and bootstrapping is enabled
           print(paste("DEBUG: Bootstrap enabled, result type:", class(result)))
           if(is.data.frame(result)) {
@@ -3673,7 +3736,7 @@ server <- function(input, output, session) {
             }
           }
         } else {
-          print(paste("DEBUG: Bootstrap not enabled or result is NULL. use_bootstrap:", input$use_bootstrap, "result is null:", is.null(result)))
+          print(paste("DEBUG: No special data to capture. is_mod_model:", is_mod_model, "use_bootstrap:", input$use_bootstrap, "result is null:", is.null(result)))
         }
         
         rv$analysis_results <- list(
@@ -3681,7 +3744,9 @@ server <- function(input, output, session) {
           data_used = process_data,
           original_data = rv$original_dataset,
           settings = analysis_settings,
-          bootstrap_data = bootstrap_data
+          bootstrap_data = bootstrap_data,
+          plot_data = plot_data,
+          result = result  # Store the full result object
         )
         # Track which model these results are for
         if(!is.null(input$process_model) && input$process_model != "") {
