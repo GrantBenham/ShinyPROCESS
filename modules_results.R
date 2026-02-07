@@ -420,7 +420,7 @@ output$download_filtered_data <- downloadHandler(
     
     outliers <- identify_outliers()
     
-    if(outliers$count == 0) {
+    if(is.null(outliers) || outliers$count == 0) {
       stop("No outliers/influential cases found to remove")
     }
     
@@ -433,3 +433,36 @@ output$download_filtered_data <- downloadHandler(
     }
   }
 )
+
+# Initially disable filtered dataset download button
+shinyjs::disable("download_filtered_data")
+
+# Enable/disable filtered dataset download button based on outlier count
+observe({
+  tryCatch({
+    # Check if we have the required inputs
+    has_required_inputs <- !is.null(rv$original_dataset) && 
+                          !is.null(input$outcome_var) && input$outcome_var != "" &&
+                          !is.null(input$predictor_var) && input$predictor_var != ""
+    
+    if(!has_required_inputs) {
+      shinyjs::disable("download_filtered_data")
+      return()
+    }
+    
+    # Try to identify outliers
+    outliers <- tryCatch({
+      identify_outliers()
+    }, error = function(e) {
+      NULL
+    })
+    
+    # Enable button only if outliers exist and count > 0
+    has_outliers <- !is.null(outliers) && !is.null(outliers$count) && outliers$count > 0
+    
+    shinyjs::toggleState("download_filtered_data", condition = has_outliers)
+  }, error = function(e) {
+    # If anything fails, disable the button
+    shinyjs::disable("download_filtered_data")
+  })
+})
