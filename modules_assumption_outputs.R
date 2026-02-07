@@ -254,18 +254,61 @@
       return(HTML(""))
     }
     
+    # Check if outcome is binary
+    outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
+    
+    # Build note text based on outcome type
+    if(outcome_is_binary) {
+      # Get Cook's distance threshold for reporting
+      n <- nrow(rv$original_dataset)
+      cooks_threshold <- if(input$cooks_threshold_type == "conservative") {
+        sprintf("4/n = %.4f", 4/n)
+      } else if(input$cooks_threshold_type == "liberal") {
+        "1.0"
+      } else {
+        sprintf("%.4f", input$cooks_threshold_custom)
+      }
+      
+      note_text <- paste(
+        "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and Cook's distance threshold (", cooks_threshold, "). ",
+        "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) using <strong>logistic regression diagnostics</strong> (Cook's distance and leverage) for binary outcomes.",
+        sep = ""
+      )
+      
+      example_text <- paste(
+        "Prior to analysis, we examined assumptions for the outcome model using logistic regression diagnostics. ",
+        "Cook's distance and leverage values were calculated from a logistic regression model predicting [outcome] from [predictor], [mediators], and [covariates]. ",
+        "Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. ",
+        "[X] cases with Cook's distance > ", cooks_threshold, " were identified as influential [and removed/retained based on your decision]. ",
+        "Note: For binary outcomes, standard regression assumptions (normality, homoscedasticity) do not apply. Model fit was assessed using pseudo-R² measures (McFadden, Cox-Snell, Nagelkerke) shown in PROCESS output.",
+        sep = ""
+      )
+    } else {
+      note_text <- paste(
+        "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value (|SR| > ", input$residual_threshold, "). ",
+        "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) using <strong>linear regression diagnostics</strong> (standardized residuals) for continuous outcomes.",
+        sep = ""
+      )
+      
+      example_text <- paste(
+        "Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. ",
+        "A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. ",
+        "Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. ",
+        "[X] cases with standardized residuals > ", input$residual_threshold, " were identified as outliers [and removed/retained based on your decision].",
+        sep = ""
+      )
+    }
+    
     HTML(paste(
       "<div style='background-color: #e7f3ff; padding: 10px; margin-bottom: 15px; border-left: 4px solid #2196F3; font-family: Arial, sans-serif;'>",
       "<strong>Note on Assumption Checks:</strong><br>",
-      "These assumption checks are always performed on the original dataset. Results update automatically based on your selected variables and standardized residual threshold value. ",
-      "These assumption checks examine the <strong>outcome model</strong> (Y ~ X + M + W*X + covariates) only. ",
-      "Mediator equations (e.g., M ~ X) are not checked here but may be examined separately if needed. ",
-      "This approach is standard practice in mediation analysis and provides appropriate diagnostic information for the outcome equation.",
+      note_text,
       "</div>",
       "<div style='background-color: #fff9e6; padding: 10px; margin-bottom: 15px; border-left: 4px solid #FF9800; font-family: Arial, sans-serif;'>",
       "<strong>Example Reporting Format:</strong><br>",
-      "<em>Prior to analysis, we examined assumptions for the outcome model. Standardized residuals were calculated from a regression model predicting [outcome] from [predictor], [mediators], and [covariates]. A Q-Q plot indicated residuals were approximately normally distributed, and a Breusch-Pagan test confirmed homoscedasticity, χ²(df) = X.XX, p = .XX. Variance inflation factors (VIF) for all predictors were below 5, indicating no multicollinearity concerns. [X] cases with standardized residuals > 2.0 were identified as outliers [and removed/retained based on your decision].</em>",
-      "</div>"
+      "<em>", example_text, "</em>",
+      "</div>",
+      sep = ""
     ))
   })
   
