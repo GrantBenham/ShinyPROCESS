@@ -106,9 +106,14 @@
       updateSelectInput(session, "covariates", choices = vars, selected = NULL)
       
       # Clear mediator count and all individual mediator selects (M1, M2, M3, etc.)
-      updateSelectInput(session, "mediator_count", selected = "")
-      for(i in 1:10) {  # Clear up to 10 (max for Model 4)
-        updateSelectInput(session, paste0("mediator_m", i), choices = c("Select variable" = "", vars), selected = "")
+      # BUT: Skip clearing if we're loading settings - the restore observer will handle it
+      if(!isTRUE(rv$load_settings_pending)) {
+        updateSelectInput(session, "mediator_count", selected = "")
+        for(i in 1:10) {  # Clear up to 10 (max for Model 4)
+          updateSelectInput(session, paste0("mediator_m", i), choices = c("Select variable" = "", vars), selected = "")
+        }
+      } else {
+        print("DEBUG: Skipping mediator clearing - loading settings, restore observer will handle")
       }
       
       # Clear plot labels when model changes (they will be auto-populated when new variables are selected)
@@ -406,6 +411,11 @@
   # Mediator list UI with dropdown for count + individual M1, M2, M3... selects
   # Using selectInput (dropdown) instead of numericInput to avoid infinite loop issues
   output$mediator_list_ui <- renderUI({
+    # Make this reactive to restore flags so it re-renders when restore starts
+    # Access restore flags to make them dependencies (even if we don't use the variables)
+    restore_pending <- rv$restore_mediators_pending
+    expected_count <- rv$expected_mediator_count
+    
     # Check if dataset and model are available
     if(is.null(rv$original_dataset) || is.null(input$process_model) || input$process_model == "") {
       return(NULL)
@@ -437,10 +447,25 @@
     names(count_choices)[2:(max_mediators + 1)] <- 1:max_mediators
     
     # Get current count for determining how many M1, M2, M3... selects to show
-    current_count <- if(!is.null(input$mediator_count) && input$mediator_count != "" && !is.na(as.numeric(input$mediator_count)) && as.numeric(input$mediator_count) > 0) {
+    # During restore, use expected_mediator_count if available, otherwise use input$mediator_count
+    current_count <- if(isTRUE(rv$restore_mediators_pending) && !is.null(rv$expected_mediator_count) && rv$expected_mediator_count > 0) {
+      # During restore, use the expected count
+      min(as.integer(rv$expected_mediator_count), max_mediators)
+    } else if(!is.null(input$mediator_count) && input$mediator_count != "" && !is.na(as.numeric(input$mediator_count)) && as.numeric(input$mediator_count) > 0) {
+      # Normal operation - use input value
       min(as.integer(input$mediator_count), max_mediators)
     } else {
       0
+    }
+    
+    # Determine selected value for mediator_count dropdown
+    # During restore, use expected_mediator_count, otherwise use input$mediator_count
+    selected_count <- if(isTRUE(rv$restore_mediators_pending) && !is.null(rv$expected_mediator_count) && rv$expected_mediator_count > 0) {
+      as.character(rv$expected_mediator_count)
+    } else if(!is.null(input$mediator_count) && input$mediator_count != "" && !is.na(as.numeric(input$mediator_count)) && as.numeric(input$mediator_count) > 0) {
+      input$mediator_count
+    } else {
+      ""
     }
     
     tagList(
@@ -448,7 +473,7 @@
       selectInput("mediator_count", 
                   "Number of Mediators:", 
                   choices = count_choices,
-                  selected = if(current_count > 0) as.character(current_count) else ""),
+                  selected = selected_count),
       
       # Dynamic M1, M2, M3... selects
       if(current_count > 0) {
@@ -477,6 +502,13 @@
       return()
     }
     
+    # Skip if we're restoring mediators from saved settings
+    # The restore observer will handle setting the mediator values after UI regenerates
+    if(isTRUE(rv$restore_mediators_pending)) {
+      print("DEBUG: Mediator count changed during restore - skipping clear, restore observer will handle values")
+      return()
+    }
+    
     # Skip if dataset not available
     if(is.null(rv$original_dataset)) {
       return()
@@ -496,7 +528,7 @@
     # And if they change from 2 to 3, M3 starts fresh
     for(i in 1:10) {
       updateSelectInput(session, paste0("mediator_m", i), 
-                        choices = c("Select variable" = "", vars), 
+                        choices = c("Select variable" = "", vars),
                         selected = "")
     }
     

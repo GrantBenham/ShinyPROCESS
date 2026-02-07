@@ -48,6 +48,7 @@ server <- function(input, output, session) {
     settings_to_load = NULL,
     restore_mediators_pending = FALSE,
     mediator_vars_to_restore = NULL,
+    expected_mediator_count = NULL,  # Store expected count during restore
     restore_labels_pending = FALSE,
     labels_to_restore = NULL,
     # Track previous variable values to detect when variables change
