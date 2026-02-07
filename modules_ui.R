@@ -315,20 +315,17 @@ ui <- fluidPage(
             downloadButton("download_results", "Results output (html)", class = "btn-success", style = "background-color: #90EE90; border-color: #90EE90; color: #000; margin-bottom: 10px;")
           )
         ),
-        conditionalPanel(
-          condition = "input.run_analysis_no_outliers > input.run_analysis",
-          h4("Download Reduced Dataset"),
-          radioButtons("filtered_data_format", "Format:",
-            choices = list(
-              "CSV (.csv)" = "csv",
-              "SPSS (.sav)" = "sav"
-            ),
-            selected = "csv",
-            inline = TRUE
+        h4("Download Reduced Dataset"),
+        radioButtons("filtered_data_format", "Format:",
+          choices = list(
+            "CSV (.csv)" = "csv",
+            "SPSS (.sav)" = "sav"
           ),
-          downloadButton("download_filtered_data", "Dataset Without Outliers",
-            class = "btn-warning")
-        )
+          selected = "csv",
+          inline = TRUE
+        ),
+        downloadButton("download_filtered_data", "Dataset Without Outliers",
+          class = "btn-warning")
       )
     ),
     
