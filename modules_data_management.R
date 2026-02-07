@@ -494,6 +494,12 @@
     )
   })
   
+  # Output reactive to indicate if dataset is loaded (for UI conditional rendering)
+  output$dataset_loaded <- reactive({
+    !is.null(rv$original_dataset)
+  })
+  outputOptions(output, "dataset_loaded", suspendWhenHidden = FALSE)
+  
   # Observer to clear all mediator inputs when mediator_count changes
   # This ensures a clean slate when user changes the number of mediators
   observeEvent(input$mediator_count, {

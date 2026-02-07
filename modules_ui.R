@@ -20,17 +20,28 @@ ui <- fluidPage(
       
       # Save/Load Analysis Settings
       h4("Analysis Settings"),
-      div(
+      conditionalPanel(
+        condition = "output.dataset_loaded === true",
         div(
-          fileInput("load_settings_file", "Load Analysis Settings", 
-                   accept = ".json",
-                   buttonLabel = "Choose JSON File",
-                   placeholder = "No file selected"),
-          style = "margin-bottom: 10px;"
-        ),
-        downloadButton("save_settings", "Save Analysis Settings", 
-                       class = "btn-info", 
-                       style = "width: 100%;")
+          div(
+            id = "load_settings_file",
+            fileInput("load_settings_file", "Load Analysis Settings", 
+                     accept = ".json",
+                     buttonLabel = "Choose JSON File",
+                     placeholder = "No file selected"),
+            style = "margin-bottom: 10px;"
+          ),
+          downloadButton("save_settings", "Save Analysis Settings", 
+                         class = "btn-info", 
+                         style = "width: 100%;")
+        )
+      ),
+      conditionalPanel(
+        condition = "output.dataset_loaded !== true",
+        div(
+          style = "color: #666; font-style: italic; padding: 10px;",
+          p("Load a dataset to enable save/load settings.")
+        )
       ),
       
       h4("Model Selection"),

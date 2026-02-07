@@ -13,6 +13,129 @@ This Shiny application provides a user-friendly interface for conducting moderat
 - **Bootstrap Confidence Intervals**: Support for percentile and bias-corrected bootstrap methods
 - **Visualization**: Simple slopes plots, conditional effect plots, and Johnson-Neyman plots for moderation models
 - **Export Options**: Download results as HTML files and filtered datasets
+- **Settings Management**: Save and load analysis settings as JSON files
+
+---
+
+## Application Structure
+
+This application uses a modular architecture for improved maintainability and organization. The codebase is split into logical modules that are sourced by the main application file.
+
+### Main Application File
+
+**`gbPROCESS.R`** (~2,557 lines)
+- Entry point for the Shiny application
+- Loads libraries and sources all modules
+- Defines reactive values (`rv`) for state management
+- Contains plot generation helpers and output renderers (cohesive plot functionality)
+- Contains miscellaneous observers (button states, mutual exclusivity checks)
+
+### Module Files
+
+**`modules_assumptions.R`** (~491 lines)
+- Assumption checking helper functions
+- Functions: `is_binary_variable()`, `is_continuous_variable()`, `identify_outliers_assumption()`, `check_normality()`, `test_homoscedasticity()`, `diagnostic_report()`, `generate_assumption_checks_html()`, etc.
+- **Dependencies**: `car` package (VIF, ncvTest), `ggplot2` (Q-Q plots)
+
+**`modules_ui.R`** (~553 lines)
+- Complete UI definition (`fluidPage` structure)
+- All sidebar and main panel components
+- Tab definitions (Assumption Checks, Analysis Results, Plots)
+- Conditional panels and styling
+- **Dependencies**: `shiny`, `bslib`, `shinyjs`
+
+**`modules_data_management.R`** (~719 lines)
+- File upload handling (CSV, SAV)
+- Variable selection observers
+- Model change detection and clearing logic
+- Mediator UI dynamic generation
+- Variable validation
+- UI conditional output reactives
+- **Dependencies**: `shiny`, `haven` (SPSS files), `shinyjs`
+
+**`modules_assumption_outputs.R`** (~798 lines)
+- Assumption check output renderers
+- `identify_outliers()` reactive
+- `outlier_summary()` reactive
+- Diagnostic plots (Q-Q, residuals, scale-location)
+- Violin plots for continuous variables
+- Download handler for assumption checks
+- **Dependencies**: `modules_assumptions.R`, `ggplot2`
+
+**`modules_analysis.R`** (~747 lines)
+- Core analysis execution logic
+- `run_process_analysis()` function (shared by both analysis types)
+- `original_analysis()` eventReactive
+- `outliers_analysis()` eventReactive
+- `analysis_results()` reactive
+- Observers for analysis completion
+- **Dependencies**: `process.R`, `modules_assumptions.R`
+
+**`modules_results.R`** (~469 lines)
+- Results display and download functionality
+- `create_bivariate_correlations()` function
+- `create_missing_data_breakdown()` function
+- `create_formatted_output()` function
+- `wrap_results_html()` function
+- `output$analysis_output` renderer
+- Download handlers for results and filtered datasets
+- Button state observers
+- **Dependencies**: `modules_analysis.R`
+
+**`modules_save_load.R`** (~701 lines)
+- Save/load analysis settings to/from JSON files
+- Validates variables exist in current dataset when loading
+- Handles model changes and variable restoration
+- **Dependencies**: `jsonlite` package
+
+### External Files
+
+**`process.R`** (~7,582 lines)
+- Core PROCESS macro functionality (Hayes' PROCESS V5)
+- Sourced by the main application
+- **Note**: This is the original PROCESS macro - do not modify
+
+### Module Loading Order
+
+The modules are sourced in the following order in `gbPROCESS.R`:
+
+1. **Outside server function** (no Shiny context needed):
+   - `modules_assumptions.R` - Helper functions only
+
+2. **Inside server function** (requires Shiny context):
+   - `process.R` - PROCESS macro
+   - `modules_save_load.R` - Save/load functionality
+   - `modules_data_management.R` - Data upload and variable selection
+   - `modules_assumption_outputs.R` - Assumption check outputs
+   - `modules_analysis.R` - Analysis execution
+   - `modules_results.R` - Results display
+
+All modules are sourced with `local = TRUE` to ensure proper variable scope within the Shiny server function.
+
+### Dependencies
+
+**Required R Packages**:
+- `shiny` - Shiny web application framework
+- `bslib` - Bootstrap themes for Shiny
+- `ggplot2` - Plotting and visualization
+- `stringr` - String manipulation
+- `dplyr` - Data manipulation
+- `shinyjs` - JavaScript functionality for Shiny
+- `car` - Regression diagnostics (VIF, ncvTest)
+- `haven` - SPSS file support (.sav files)
+- `jsonlite` - JSON file handling (for save/load settings)
+- `grid` - Grid graphics (for plot layouts)
+- `gridExtra` - Extended grid graphics (for stacked plots)
+- `grDevices` - Graphics devices (for plot downloads)
+
+**Installation**:
+```r
+install.packages(c("shiny", "bslib", "ggplot2", "stringr", "dplyr", 
+                   "shinyjs", "car", "haven", "jsonlite", "grid", 
+                   "gridExtra"))
+```
+
+---
 
 ---
 
@@ -122,6 +245,24 @@ Expand and configure the following sections as needed:
 2. If you ran analysis with outliers removed, you can also download the filtered dataset:
    - Choose format (CSV or SPSS .sav)
    - Click **"Dataset Without Outliers"**
+
+### Step 9: Save/Load Analysis Settings (Optional)
+
+**Save Settings**:
+1. After loading a dataset and configuring your analysis, click **"Save Analysis Settings"** in the sidebar
+2. A JSON file will be downloaded containing all your current settings (model, variables, options, plot labels, etc.)
+3. This file can be loaded later to restore your exact analysis configuration
+
+**Load Settings**:
+1. Load a dataset that contains all variables referenced in the saved settings file
+2. Click **"Choose JSON File"** in the sidebar
+3. Select a previously saved JSON settings file
+4. The application will:
+   - Validate that all variables in the JSON file exist in the current dataset
+   - Show an error message listing any missing variables if validation fails
+   - Restore all settings (model, variables, options, plot labels) if validation passes
+
+**Note**: The save/load buttons are automatically disabled until a dataset is loaded. If you try to load a JSON file with variables that don't exist in the current dataset, you'll see a clear error message listing the missing variables.
 
 ---
 
@@ -478,6 +619,23 @@ This section allows you to configure how outliers and influential cases are iden
   - **SPSS (.sav)**: SPSS format
 - **Useful for**: Further analyses on the cleaned dataset
 
+### Save/Load Analysis Settings
+
+**Save Analysis Settings**
+- Saves all current analysis settings to a JSON file
+- Includes: model number, variable selections, all PROCESS options, plot labels, etc.
+- **Available**: Only when a dataset is loaded (button is disabled until dataset is loaded)
+- **Useful for**: Reproducing analyses, sharing configurations, working across sessions
+
+**Load Analysis Settings**
+- Loads previously saved analysis settings from a JSON file
+- **Available**: Only when a dataset is loaded (button is disabled until dataset is loaded)
+- **Validation**: The application automatically validates that all variables referenced in the JSON file exist in the current dataset
+- **Error Handling**: If any variables are missing, a clear error message is displayed listing the missing variables, and settings are not loaded
+- **Useful for**: Restoring previous analysis configurations quickly
+
+**Note**: The save/load buttons are automatically disabled until a dataset is loaded. When loading settings, ensure your current dataset contains all variables referenced in the saved JSON file.
+
 ---
 
 ## Main Panel Tabs
@@ -554,6 +712,7 @@ Displays the complete PROCESS analysis output including:
 - **Variable Types**: The application automatically detects binary variables (0/1 or exactly 2 unique values) and continuous variables.
 - **Model Validation**: The application validates variable selections based on model requirements and prevents duplicate variable selection.
 - **Results Clearing**: Analysis results are automatically cleared when you change the model number to prevent confusion.
+- **Settings Validation**: When loading saved settings, the application validates that all referenced variables exist in the current dataset. If any variables are missing, an error message is displayed listing the missing variables, and settings are not loaded.
 
 ---
 

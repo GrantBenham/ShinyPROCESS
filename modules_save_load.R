@@ -22,9 +22,13 @@ if(!requireNamespace("jsonlite", quietly = TRUE)) {
 # Save Analysis Settings Handler
 output$save_settings <- downloadHandler(
   filename = function() {
+    # Prevent execution if no dataset loaded
+    req(rv$original_dataset)
     paste0("process_settings_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".json")
   },
   content = function(file) {
+    # Prevent execution if no dataset loaded
+    req(rv$original_dataset)
     # Collect all current input values
     settings <- list(
       # Metadata
@@ -113,8 +117,14 @@ output$save_settings <- downloadHandler(
   contentType = "application/json"
 )
 
+# Note: Save/load buttons are now conditionally rendered using conditionalPanel
+# in modules_ui.R based on output$dataset_loaded reactive from modules_data_management.R
+# This ensures buttons are completely hidden (not just disabled) when no dataset is loaded
+
 # Load Analysis Settings Handler
 observeEvent(input$load_settings_file, {
+  # Prevent execution if no dataset loaded
+  req(rv$original_dataset)
   req(input$load_settings_file)
   
   # Step 0: Validate file type
@@ -124,7 +134,7 @@ observeEvent(input$load_settings_file, {
     return()
   }
   
-  # Step 1: Validate dataset is loaded
+  # Step 1: Validate dataset is loaded (redundant check since button is disabled, but good for safety)
   if(is.null(rv$original_dataset)) {
     showNotification("Please load a dataset first before loading settings.", type = "error", duration = 5)
     return()
