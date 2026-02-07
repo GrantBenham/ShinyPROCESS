@@ -266,7 +266,11 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       mediator_vars = mediator_vars_collected(),
       moderator_var = input$moderator_var,
       moderator2_var = if(!is.null(input$moderator2_var) && input$moderator2_var != "") input$moderator2_var else NULL,
-      covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL
+      covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL,
+      probe_interactions = if(!is.null(input$probe_interactions)) input$probe_interactions else FALSE,
+      probe_threshold = if(!is.null(input$probe_threshold)) input$probe_threshold else "p < .10",
+      conditioning_values = if(!is.null(input$conditioning_values)) input$conditioning_values else "1",
+      show_jn_regions = if(!is.null(input$show_jn_regions)) input$show_jn_regions else TRUE
     )
     
     # Early validation check for W and Z same variable
@@ -289,7 +293,16 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     }
     
     # Build PROCESS arguments
-    center_value <- as.numeric(input$centering)
+    # Handle centering - ensure we have a valid numeric value
+    center_value <- if(!is.null(input$centering) && input$centering != "" && length(input$centering) > 0) {
+      as.numeric(input$centering)
+    } else {
+      0
+    }
+    # Ensure center_value is not NULL or length 0
+    if(is.null(center_value) || length(center_value) == 0 || is.na(center_value)) {
+      center_value <- 0
+    }
     if(model_num == 4 && input$xmint) {
       center_value <- 0
     }
@@ -303,10 +316,23 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       conf = input$conf_level,
       modelbt = if(input$use_bootstrap) 1 else 0,
       boot = if(input$use_bootstrap) input$boot_samples else 0,
-      bc = if(input$use_bootstrap) as.numeric(input$bootstrap_ci_method) else 0,
+      bc = {
+        if(input$use_bootstrap && !is.null(input$bootstrap_ci_method) && 
+           input$bootstrap_ci_method != "" && length(input$bootstrap_ci_method) > 0) {
+          bc_val <- as.numeric(input$bootstrap_ci_method)
+          if(is.null(bc_val) || length(bc_val) == 0 || is.na(bc_val)) 0 else bc_val
+        } else {
+          0
+        }
+      },
       hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
       covcoeff = if(input$covcoeff) 1 else 0,
-      cov = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else "xxxxx"
+      cov = if(!is.null(input$covariates) && length(input$covariates) > 0 && 
+                 !all(input$covariates == "")) {
+        input$covariates
+      } else {
+        "xxxxx"
+      }
     )
     
     # Add model-specific variables
@@ -330,9 +356,24 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74, 83:92)) {
       if(!is.null(input$moderator_var) && input$moderator_var != "") {
         process_args$w <- input$moderator_var
-        process_args$jn <- 1
-        if(isTRUE(input$probe_interactions) && !is.null(input$conditioning_values) && length(input$conditioning_values) > 0) {
-          process_args$moments <- ifelse(input$conditioning_values == "0", 1, 0)
+        # Always set jn=1 for moderation models when probing is enabled to ensure JN plot data is generated
+        # Check if probe_interactions is enabled (handle NULL from old JSON files)
+        probe_interactions_enabled <- if(is.null(input$probe_interactions)) {
+          TRUE  # Default to TRUE for moderation models
+        } else {
+          isTRUE(input$probe_interactions)
+        }
+        
+        if(probe_interactions_enabled) {
+          process_args$jn <- 1
+          # Set moments based on conditioning_values if probe_interactions is enabled
+          # Default to "1" (percentiles) if conditioning_values is NULL or empty
+          cond_val <- if(!is.null(input$conditioning_values) && length(input$conditioning_values) > 0 && input$conditioning_values != "") {
+            input$conditioning_values
+          } else {
+            "1"  # Default to percentiles
+          }
+          process_args$moments <- ifelse(cond_val == "0", 1, 0)
         }
       }
       
@@ -454,8 +495,20 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       }
     }
     
-    if(isTRUE(input$probe_interactions)) {
-      probe_text <- input$probe_threshold
+    # Handle probe_interactions - check if it's TRUE or if it's NULL (default to TRUE for moderation models)
+    probe_interactions_enabled_for_intprobe <- if(is.null(input$probe_interactions)) {
+      # If NULL (e.g., from old JSON), default to TRUE for moderation models
+      is_mod_model
+    } else {
+      isTRUE(input$probe_interactions)
+    }
+    
+    if(probe_interactions_enabled_for_intprobe) {
+      probe_text <- if(!is.null(input$probe_threshold) && input$probe_threshold != "") {
+        input$probe_threshold
+      } else {
+        "p < .10"
+      }
       probe_val <- tryCatch({
         num_match <- regmatches(probe_text, regexpr("0?\\.?\\d+", probe_text))
         if(length(num_match) > 0) {
@@ -464,10 +517,29 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
           0.1
         }
       }, error = function(e) 0.1)
-      process_args$intprobe <- probe_val
+      # Only set intprobe if we got a valid value
+      if(!is.null(probe_val) && !is.na(probe_val) && length(probe_val) > 0) {
+        process_args$intprobe <- probe_val
+      }
     }
     if(!is.na(input$seed) && !is.null(input$seed) && input$seed >= 1) process_args$seed <- input$seed
     if(input$decimals != 4) process_args$decimals <- paste0("9.", input$decimals)
+    
+    # Debug: Print all process_args to identify any NULL or empty values
+    print("DEBUG: ===== PROCESS ARGUMENTS BEFORE EXECUTION =====")
+    for(arg_name in names(process_args)) {
+      arg_value <- process_args[[arg_name]]
+      if(is.null(arg_value)) {
+        print(paste("DEBUG: process_args$", arg_name, " = NULL", sep = ""))
+      } else if(length(arg_value) == 0) {
+        print(paste("DEBUG: process_args$", arg_name, " = (length 0)", sep = ""))
+      } else if(is.character(arg_value) && arg_value == "") {
+        print(paste("DEBUG: process_args$", arg_name, " = '' (empty string)", sep = ""))
+      } else {
+        print(paste("DEBUG: process_args$", arg_name, " = ", paste(arg_value, collapse = ", "), sep = ""))
+      }
+    }
+    print("DEBUG: ===== END PROCESS ARGUMENTS =====")
     
     # Run PROCESS
     tryCatch({

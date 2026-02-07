@@ -149,11 +149,18 @@ create_formatted_output <- function(analysis_results) {
     },
     "",
     "<strong>ANALYSIS SETTINGS</strong>",
-    paste("Centering:", switch(settings$centering,
-      "0" = "No centering",
-      "1" = "All variables that define products",
-      "2" = "Only continuous variables that define products"
-    )),
+    paste("Centering:", {
+      centering_val <- if(!is.null(settings$centering) && length(settings$centering) > 0) {
+        as.character(settings$centering)[1]
+      } else {
+        "0"
+      }
+      switch(centering_val,
+        "0" = "No centering",
+        "1" = "All variables that define products",
+        "2" = "Only continuous variables that define products"
+      )
+    }),
     "",
     "<strong>Bootstrap Settings:</strong>",
     if(!is.null(settings$use_bootstrap) && isTRUE(settings$use_bootstrap)) {
@@ -176,19 +183,22 @@ create_formatted_output <- function(analysis_results) {
     },
     "",
     "<strong>Advanced Options:</strong>",
-    if(!is.null(settings$hc_method)) {
-      hc_display <- switch(settings$hc_method,
-        "none" = "OLS",
-        "0" = "HC0 (Huber-White)",
-        "1" = "HC1 (Hinkley)",
-        "2" = "HC2",
-        "3" = "HC3 (Davidson-MacKinnon)",
-        "4" = "HC4 (Cribari-Neto)"
-      )
-      if(is.null(hc_display)) hc_display <- "OLS"  # fallback
-      paste("Standard Errors:", hc_display)
-    } else {
-      "Standard Errors: OLS"
+    {
+      if(!is.null(settings$hc_method) && length(settings$hc_method) > 0) {
+        hc_val <- as.character(settings$hc_method)[1]
+        hc_display <- switch(hc_val,
+          "none" = "OLS",
+          "0" = "HC0 (Huber-White)",
+          "1" = "HC1 (Hinkley)",
+          "2" = "HC2",
+          "3" = "HC3 (Davidson-MacKinnon)",
+          "4" = "HC4 (Cribari-Neto)"
+        )
+        if(is.null(hc_display)) hc_display <- "OLS"  # fallback
+        paste("Standard Errors:", hc_display)
+      } else {
+        "Standard Errors: OLS"
+      }
     },
     if(!is.null(settings$stand) && isTRUE(settings$stand)) "Standardized coefficients: Yes",
     if(!is.null(settings$normal) && isTRUE(settings$normal)) "Normal theory tests: Yes",
@@ -197,22 +207,18 @@ create_formatted_output <- function(analysis_results) {
     if(!is.null(settings$xmtest) && isTRUE(settings$xmtest)) "Test for X by M interaction: Yes",
     if(!is.null(settings$total) && isTRUE(settings$total)) "Total effect of X: Yes",
     "",
-    if((!is.null(settings$probe_interactions) && isTRUE(settings$probe_interactions)) || 
-       (!is.null(settings$jn) && isTRUE(settings$jn))) {
+    if(!is.null(settings$probe_interactions) && isTRUE(settings$probe_interactions)) {
       c("<strong>Probing Moderation:</strong>",
-        if(!is.null(settings$probe_interactions) && isTRUE(settings$probe_interactions)) {
-          c(paste("Probe interactions: Yes"),
-            if(!is.null(settings$probe_threshold)) paste("Probe threshold:", settings$probe_threshold),
-            if(!is.null(settings$conditioning_values)) {
-              paste("Conditioning values:", switch(settings$conditioning_values,
-                "0" = "Mean ± 1 SD",
-                "1" = "Mean ± 2 SD",
-                "2" = "16th, 50th, 84th percentiles"
-              ))
-            }
-          )
+        paste("Probe interactions: Yes"),
+        if(!is.null(settings$probe_threshold)) paste("Probe threshold:", settings$probe_threshold),
+        if(!is.null(settings$conditioning_values) && length(settings$conditioning_values) > 0) {
+          cond_val <- as.character(settings$conditioning_values)[1]
+          paste("Conditioning values:", switch(cond_val,
+            "0" = "Mean ± 1 SD",
+            "1" = "16th, 50th, 84th percentiles"
+          ))
         },
-        if(!is.null(settings$jn) && isTRUE(settings$jn)) "Johnson-Neyman technique: Yes"
+        if(!is.null(settings$show_jn_regions) && isTRUE(settings$show_jn_regions)) "Show Johnson-Neyman significance regions: Yes"
       )
     },
     ""
@@ -238,9 +244,42 @@ create_formatted_output <- function(analysis_results) {
   in_covariance_matrix <- FALSE
   xmtest_explanation_added <- FALSE
   xmint_explanation_added <- FALSE
+  in_jn_regions_section <- FALSE
+  skip_jn_regions <- FALSE
+  
+  # Check if we should skip JN significance regions section
+  if(!is.null(settings$show_jn_regions) && !isTRUE(settings$show_jn_regions)) {
+    skip_jn_regions <- TRUE
+  }
   
   for(i in seq_along(filtered_output)) {
     line <- filtered_output[i]
+    
+    # Track JN significance regions section
+    if(grepl("Moderator value\\(s\\) defining Johnson-Neyman significance region\\(s\\):", line, ignore.case = TRUE)) {
+      in_jn_regions_section <- TRUE
+      if(skip_jn_regions) {
+        # Skip this header line and continue to skip until next major section
+        next
+      } else {
+        processed_output <- c(processed_output, line)
+        next
+      }
+    }
+    
+    # If we're in JN regions section and should skip it, continue skipping until next major section
+    if(in_jn_regions_section && skip_jn_regions) {
+      # Check if we've reached the next major section
+      # Look for section headers (lines that start with capital letters, contain colons, or are separators)
+      if(grepl("^[A-Z].*:|^\\*+|^----------|^Conditional effect|^Data for visualizing|^Test\\(s\\) of|^Outcome Variable:", line, ignore.case = TRUE)) {
+        # We've hit a new section - stop skipping
+        in_jn_regions_section <- FALSE
+        # Fall through to process this line normally
+      } else {
+        # Still in JN regions section, skip this line
+        next
+      }
+    }
     
     # Bold important headers
     if(grepl("^Outcome Variable:", line, ignore.case = TRUE)) {

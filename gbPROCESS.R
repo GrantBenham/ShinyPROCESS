@@ -253,6 +253,12 @@ server <- function(input, output, session) {
       x_label_text <- if(input$moderator_label != "") input$moderator_label else input$moderator_var
       y_label_text <- if(input$x_label != "") paste("Effect of", input$x_label) else paste("Effect of", input$predictor_var)
       
+      # Extract probe threshold value for title
+      probe_threshold_text <- "p < .10"  # default
+      if(!is.null(input$probe_threshold) && input$probe_threshold != "") {
+        probe_threshold_text <- input$probe_threshold
+      }
+      
       # Ensure data is sorted by Moderator for proper ribbon rendering
       # This prevents overlapping ribbons that might appear as the same color
       jn_data <- jn_data[order(jn_data$Moderator), ]
@@ -269,7 +275,7 @@ server <- function(input, output, session) {
                  color = if(input$use_color_lines) "blue" else "black") +
         geom_hline(yintercept = 0, linetype = "dashed") +
         theme_minimal() +
-        labs(title = "Johnson-Neyman Plot",
+        labs(title = paste("Johnson-Neyman Plot (probe threshold:", probe_threshold_text, ")"),
              x = x_label_text,
              y = y_label_text) +
         theme(

@@ -11,3 +11,4 @@ rsconnect/
 IMPLEMENTATION_INSTRUCTIONS.md
 *.R.checkpoint*
 *.md
+*_backup

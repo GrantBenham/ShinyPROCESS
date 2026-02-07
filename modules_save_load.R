@@ -91,10 +91,10 @@ output$save_settings <- downloadHandler(
       covmy = if(!is.null(input$covmy)) input$covmy else FALSE,
       
       # PROCESS Options - Probing Moderation
-      probe_interactions = if(!is.null(input$probe_interactions)) input$probe_interactions else FALSE,
+      probe_interactions = if(!is.null(input$probe_interactions)) input$probe_interactions else TRUE,
       probe_threshold = if(!is.null(input$probe_threshold)) input$probe_threshold else "p < .10",
       conditioning_values = if(!is.null(input$conditioning_values)) input$conditioning_values else "1",
-      jn = if(!is.null(input$jn)) input$jn else FALSE,
+      show_jn_regions = if(!is.null(input$show_jn_regions)) input$show_jn_regions else TRUE,
       
       # Plot Options
       slopes_title = if(!is.null(input$slopes_title)) input$slopes_title else "Simple Slopes Plot",
@@ -430,8 +430,12 @@ observe({
     if(!is.null(settings$conditioning_values)) {
       updateRadioButtons(session, "conditioning_values", selected = settings$conditioning_values)
     }
-    if(!is.null(settings$jn)) {
-      updateCheckboxInput(session, "jn", value = settings$jn)
+    if(!is.null(settings$show_jn_regions)) {
+      updateCheckboxInput(session, "show_jn_regions", value = settings$show_jn_regions)
+    }
+    # Legacy support: if old JSON has 'jn' instead of 'show_jn_regions', convert it
+    if(is.null(settings$show_jn_regions) && !is.null(settings$jn)) {
+      updateCheckboxInput(session, "show_jn_regions", value = settings$jn)
     }
     
     # Restore Plot Options

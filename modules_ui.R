@@ -242,6 +242,39 @@ ui <- fluidPage(
           )
         ),
         
+        # Moderator Settings (collapsible) - Only for moderation models
+        conditionalPanel(
+          condition = "output.is_moderation_model === true",
+          tags$details(id = "details_moderator_settings",
+            tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
+                        "Moderator Settings"),
+            div(style = "margin-left: 15px; margin-top: 10px;",
+              tags$div(
+                tags$label("Moderator values for visualization data and plots:", style = "font-weight: bold;"),
+                tags$div(
+                  style = "margin-top: 5px;",
+                  tags$div(
+                    title = "Percentiles (16th, 50th, 84th): Uses the 16th, 50th (median), and 84th percentiles of the moderator distribution. This is the default because PROCESS visualization data (used for generating plots) always uses percentiles. Selecting percentiles ensures consistency between probing results and plot visualizations. More robust to outliers and non-normal distributions. Recommended when the moderator distribution is skewed or has outliers.",
+                    tags$label(
+                      tags$input(type = "radio", name = "conditioning_values", value = "1", checked = "checked"),
+                      "Percentiles (16th, 50th, 84th)",
+                      style = "font-weight: normal; margin-right: 15px;"
+                    )
+                  ),
+                  tags$div(
+                    title = "Moments (Mean ±1 SD): Uses the mean and one standard deviation above and below the mean. More interpretable and commonly used in reporting. However, note that PROCESS visualization data (used for generating plots) always uses percentiles regardless of this setting. If you select moments, the probing results in the text output will use mean ±1 SD, but the plot visualizations will still show percentile-based values (16th, 50th, 84th), so they may not match precisely. Use this option if you want probing results to match your reporting style, understanding that plots will display percentile-based values.",
+                    tags$label(
+                      tags$input(type = "radio", name = "conditioning_values", value = "0"),
+                      "Moments (Mean ±1 SD)",
+                      style = "font-weight: normal;"
+                    )
+                  )
+                )
+              )
+            )
+          )
+        ),
+        
         # Advanced Options (collapsible)
         tags$details(id = "details_advanced_options",
           tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
@@ -333,20 +366,14 @@ ui <- fluidPage(
             ),
             tags$div(title = "When checked, covariates are excluded from the outcome (Y) equation. This option affects model specification but does not produce a separate covariance matrix output. For Model 1, this option works around a PROCESS limitation by not passing covariates when enabled.",
               checkboxInput("covmy", "Exclude covariates from Y equation", FALSE)
-            )
-          )
-        ),
-        
-        # Probing Moderation Options (collapsible) - Only for moderation models
-        conditionalPanel(
-          condition = "output.is_moderation_model === true",
-          tags$details(id = "details_probing_moderation",
-            tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
-                        "Probing Moderation"),
-            div(style = "margin-left: 15px; margin-top: 10px;",
+            ),
+            
+            # Probing Moderation Options (at end of Output Options) - Only for moderation models
+            conditionalPanel(
+              condition = "output.is_moderation_model === true",
               tags$div(
-                title = "Probing interactions shows conditional effects at different levels of the moderator. When enabled, displays how the effect of X on Y changes across moderator values.",
-                checkboxInput("probe_interactions", "Probe interactions", FALSE)
+                title = "Probing moderation shows conditional effects at different levels of the moderator. When enabled, displays how the effect of X on Y changes across moderator values.",
+                checkboxInput("probe_interactions", "Probe moderation", TRUE)
               ),
               conditionalPanel(
                 condition = "input.probe_interactions == true",
@@ -355,42 +382,20 @@ ui <- fluidPage(
                   textInput("probe_threshold", "When to probe:", value = "p < .10")
                 ),
                 tags$div(
-                  tags$label("Values for nondiscrete moderators:", style = "font-weight: bold;"),
-                  tags$div(
-                    style = "margin-top: 5px;",
-                    tags$div(
-                      title = "Percentiles (16th, 50th, 84th): Uses the 16th, 50th (median), and 84th percentiles of the moderator distribution. This is the default because PROCESS visualization data (used for generating plots) always uses percentiles. Selecting percentiles ensures consistency between probing results and plot visualizations. More robust to outliers and non-normal distributions. Recommended when the moderator distribution is skewed or has outliers.",
-                      tags$label(
-                        tags$input(type = "radio", name = "conditioning_values", value = "1", checked = "checked"),
-                        "Percentiles (16th, 50th, 84th)",
-                        style = "font-weight: normal; margin-right: 15px;"
-                      )
-                    ),
-                    tags$div(
-                      title = "Moments (Mean ±1 SD): Uses the mean and one standard deviation above and below the mean. More interpretable and commonly used in reporting. However, note that PROCESS visualization data (used for generating plots) always uses percentiles regardless of this setting. If you select moments, the probing results in the text output will use mean ±1 SD, but the plot visualizations will still show percentile-based values (16th, 50th, 84th), so they may not match precisely. Use this option if you want probing results to match your reporting style, understanding that plots will display percentile-based values.",
-                      tags$label(
-                        tags$input(type = "radio", name = "conditioning_values", value = "0"),
-                        "Moments (Mean ±1 SD)",
-                        style = "font-weight: normal;"
-                      )
-                    )
-                  )
-                ),
-                tags$div(
-                  title = "Johnson-Neyman technique identifies regions of significance where the effect of X on Y is statistically significant. Shows the range of moderator values where the effect is significant vs. non-significant.",
-                  checkboxInput("jn", "Johnson-Neyman technique", FALSE)
+                  title = "Controls whether the 'Moderator value(s) defining Johnson-Neyman significance region(s)' section appears in the results text. Note: Johnson-Neyman plot requires 'Probe moderation' to be enabled and the interaction p-value to meet the 'When to probe' threshold. The plot will be generated automatically when these conditions are met, regardless of this checkbox setting.",
+                  checkboxInput("show_jn_regions", "Show Johnson-Neyman significance regions in output", TRUE)
                 )
               )
             )
           )
         ),
         
-        # Visualizing Moderation Options (collapsible) - Only for moderation models
+        # Live Plot Settings (renamed from Plot Options) - Only for moderation models
         conditionalPanel(
           condition = "output.is_plot_model === true",
           tags$details(
             tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
-                        "Plot Options"),
+                        "Live Plot Settings"),
             div(style = "margin-left: 15px; margin-top: 10px;",
               h5("Simple Slopes Plot Settings"),
               checkboxInput("use_color_lines", "Use color for lines", value = TRUE),
