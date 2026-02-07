@@ -23,17 +23,23 @@ ui <- fluidPage(
       conditionalPanel(
         condition = "output.dataset_loaded === true",
         div(
-          div(
-            id = "load_settings_file",
-            fileInput("load_settings_file", "Load Analysis Settings", 
-                     accept = ".json",
-                     buttonLabel = "Choose JSON File",
-                     placeholder = "No file selected"),
-            style = "margin-bottom: 10px;"
+          tags$div(
+            title = "Load previously saved analysis settings from a JSON file. The file must contain variables that exist in your current dataset. If any variables are missing, an error message will be displayed.",
+            div(
+              id = "load_settings_file",
+              fileInput("load_settings_file", "Load Analysis Settings", 
+                       accept = ".json",
+                       buttonLabel = "Choose JSON File",
+                       placeholder = "No file selected"),
+              style = "margin-bottom: 10px;"
+            )
           ),
-          downloadButton("save_settings", "Save Analysis Settings", 
-                         class = "btn-info", 
-                         style = "width: 100%;")
+          tags$div(
+            title = "Save all current analysis settings (model, variables, options, plot labels) to a JSON file. This file can be loaded later to restore your exact analysis configuration.",
+            downloadButton("save_settings", "Save Analysis Settings", 
+                           class = "btn-info", 
+                           style = "width: 100%;")
+          )
         )
       ),
       conditionalPanel(
@@ -45,8 +51,10 @@ ui <- fluidPage(
       ),
       
       h4("Model Selection"),
-      selectInput("process_model", "PROCESS Model Number",
-                  choices = c("Select model" = "", 
+      tags$div(
+        title = "Select the PROCESS model number (1-73, 75-92) that matches your research question. Model 74 is not directly selectable - use Model 4 with 'Allow X by M interaction' enabled. Changing the model clears all variable selections and previous results.",
+        selectInput("process_model", "PROCESS Model Number",
+                    choices = c("Select model" = "", 
                               "1" = "1", "2" = "2", "3" = "3", "4" = "4", 
                               "5" = "5", "6" = "6", "7" = "7", "8" = "8",
                               "9" = "9", "10" = "10", "11" = "11", "12" = "12",
@@ -70,7 +78,8 @@ ui <- fluidPage(
                               "81" = "81", "82" = "82", "83" = "83", "84" = "84",
                               "85" = "85", "86" = "86", "87" = "87", "88" = "88",
                               "89" = "89", "90" = "90", "91" = "91", "92" = "92"),
-                  selected = ""),
+                    selected = "")
+      ),
       
       # Select Variables (collapsible)
       tags$details(id = "details_select_vars",
@@ -90,29 +99,54 @@ ui <- fluidPage(
           conditionalPanel(
             condition = "output.outcome_is_continuous === true",
             h5("Outlier Detection (Continuous Outcomes)"),
-            numericInput("residual_threshold", "Standardized Residual Threshold", 
-                        value = 2, min = 1, max = 10, step = 0.1),
-            p(em("Cases with |standardized residual| > threshold will be identified as outliers"))
+            tags$div(
+              title = "Cases with |standardized residual| > threshold will be identified as outliers. Standardized residuals represent how many standard deviations an observed value deviates from the model's prediction. Common thresholds: |SR| > 2 (standard), |SR| > 2.5 (stringent), |SR| > 3 (very conservative).",
+              numericInput("residual_threshold", "Standardized Residual Threshold", 
+                          value = 2, min = 1, max = 10, step = 0.1)
+            )
           ),
           conditionalPanel(
             condition = "output.outcome_is_continuous === false",
             h5("Influential Case Detection (Binary Outcomes)"),
-            radioButtons("cooks_threshold_type", "Cook's Distance Threshold:",
-              choices = list(
-                "Conservative (4/n)" = "conservative",
-                "Liberal (1.0)" = "liberal",
-                "Custom" = "custom"
-              ),
-              selected = "conservative"
+            tags$div(
+              tags$label("Cook's Distance Threshold:", style = "font-weight: bold;"),
+              tags$div(
+                style = "margin-top: 5px;",
+                tags$div(
+                  title = "Conservative threshold: 4/n (where n = sample size). This is the recommended default. Automatically adjusts for sample size - smaller samples use higher thresholds. More conservative (flags fewer cases as influential).",
+                  tags$label(
+                    tags$input(type = "radio", name = "cooks_threshold_type", value = "conservative", checked = "checked"),
+                    "Conservative (4/n)",
+                    style = "font-weight: normal; margin-right: 15px;"
+                  )
+                ),
+                tags$div(
+                  title = "Liberal threshold: Fixed value of 1.0. More liberal (flags more cases as influential). Use when you want a more sensitive screen for influential cases.",
+                  tags$label(
+                    tags$input(type = "radio", name = "cooks_threshold_type", value = "liberal"),
+                    "Liberal (1.0)",
+                    style = "font-weight: normal; margin-right: 15px;"
+                  )
+                ),
+                tags$div(
+                  title = "Custom threshold: Specify your own threshold between 0 and 1. Lower values are more conservative (flag more cases). Allows fine-tuning based on your specific analysis needs.",
+                  tags$label(
+                    tags$input(type = "radio", name = "cooks_threshold_type", value = "custom"),
+                    "Custom",
+                    style = "font-weight: normal;"
+                  )
+                )
+              )
             ),
             conditionalPanel(
               condition = "input.cooks_threshold_type == 'custom'",
-              numericInput("cooks_threshold_custom", "Custom Cook's Distance Threshold", 
-                          value = 0.01, min = 0, max = 1, step = 0.001)
-            ),
-            p(em("Cases with Cook's distance > threshold will be identified as influential"))
-          ),
-          p(em("Note: Additional assumption check features (e.g., univariate outlier analysis) may be added here in future updates."))
+              tags$div(
+                title = "Enter a custom Cook's Distance threshold between 0 and 1. Lower values are more conservative (flag more cases as influential).",
+                numericInput("cooks_threshold_custom", "Custom Cook's Distance Threshold", 
+                            value = 0.01, min = 0, max = 1, step = 0.001)
+              )
+            )
+          )
         )
       ),
       
@@ -126,13 +160,35 @@ ui <- fluidPage(
           tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9;", 
                       "Centering Options"),
           div(style = "margin-left: 15px; margin-top: 10px;",
-            radioButtons("centering", "Mean Centering:",
-              choices = list(
-                "No centering" = "0",
-                "All variables that define products" = "1",
-                "Only continuous variables that define products" = "2"
-              ),
-              selected = "0"
+            tags$div(
+              tags$label("Mean Centering:", style = "font-weight: bold;"),
+              tags$div(
+                style = "margin-top: 5px;",
+                tags$div(
+                  title = "No centering: Uses variables in their original scale. Appropriate when variables are already centered or when you want to interpret effects at zero values of predictors.",
+                  tags$label(
+                    tags$input(type = "radio", name = "centering", value = "0", checked = "checked"),
+                    "No centering",
+                    style = "font-weight: normal; margin-right: 15px;"
+                  )
+                ),
+                tags$div(
+                  title = "All variables that define products: Centers all variables (both continuous and categorical) that are involved in interaction terms. Simplifies interpretation of main effects when interactions are present.",
+                  tags$label(
+                    tags$input(type = "radio", name = "centering", value = "1"),
+                    "All variables that define products",
+                    style = "font-weight: normal; margin-right: 15px;"
+                  )
+                ),
+                tags$div(
+                  title = "Only continuous variables that define products: Centers only continuous variables in interaction terms, leaving categorical variables uncentered. Useful when you want to preserve the original scale of categorical variables.",
+                  tags$label(
+                    tags$input(type = "radio", name = "centering", value = "2"),
+                    "Only continuous variables that define products",
+                    style = "font-weight: normal;"
+                  )
+                )
+              )
             )
           )
         ),
@@ -142,21 +198,47 @@ ui <- fluidPage(
           tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                       "Bootstrap Settings"),
           div(style = "margin-left: 15px; margin-top: 10px;",
-            checkboxInput("use_bootstrap", "Use bootstrapping", TRUE),
+            tags$div(
+              title = "Bootstrap resampling provides robust confidence intervals that don't assume normality. Recommended for both mediation and moderation analyses. Higher sample counts provide more stable estimates but take longer to compute.",
+              checkboxInput("use_bootstrap", "Use bootstrapping", TRUE)
+            ),
             conditionalPanel(
               condition = "input.use_bootstrap == true",
-              numericInput("boot_samples", "Number of bootstrap samples:", 5000, min = 1000, max = 10000),
-              radioButtons("bootstrap_ci_method", "Bootstrap Confidence Interval Method:",
-                choices = list(
-                  "Percentile bootstrap" = "0",
-                  "Bias-corrected bootstrap" = "1"
-                ),
-                selected = "0"
+              tags$div(
+                title = "Number of bootstrap resamples. 5000 is generally sufficient for most analyses. Higher values (up to 10000) provide more stable estimates but take longer.",
+                numericInput("boot_samples", "Number of bootstrap samples:", 5000, min = 1000, max = 10000)
+              ),
+              tags$div(
+                tags$label("Bootstrap Confidence Interval Method:", style = "font-weight: bold;"),
+                tags$div(
+                  style = "margin-top: 5px;",
+                  tags$div(
+                    title = "Percentile bootstrap: Uses the percentiles (e.g., 2.5th and 97.5th) of the bootstrap distribution to form confidence intervals. Simpler and more straightforward. Generally recommended for most analyses.",
+                    tags$label(
+                      tags$input(type = "radio", name = "bootstrap_ci_method", value = "0", checked = "checked"),
+                      "Percentile bootstrap",
+                      style = "font-weight: normal; margin-right: 15px;"
+                    )
+                  ),
+                  tags$div(
+                    title = "Bias-corrected bootstrap: Adjusts for bias in the bootstrap distribution. Can be more accurate than percentile bootstrap but may be less stable with small samples. Use when you suspect bias in the distribution.",
+                    tags$label(
+                      tags$input(type = "radio", name = "bootstrap_ci_method", value = "1"),
+                      "Bias-corrected bootstrap",
+                      style = "font-weight: normal;"
+                    )
+                  )
+                )
               )
             ),
-            numericInput("conf_level", "Confidence Level (%)", 95, min = 80, max = 99, step = 1),
-            numericInput("seed", "Random Seed (optional)", value = NA, min = 1, max = 999999),
-            p(em("Leave blank to use a random seed. Enter a number (1-999999) to set a specific seed for reproducibility."))
+            tags$div(
+              title = "Confidence level for confidence intervals. Common choices: 90%, 95% (default), 99%.",
+              numericInput("conf_level", "Confidence Level (%)", 95, min = 80, max = 99, step = 1)
+            ),
+            tags$div(
+              title = "Set a specific seed for random number generation to ensure reproducible results. Leave blank for a random seed (different results each run). Enter a number (1-999999) to set a specific seed.",
+              numericInput("seed", "Random Seed (optional)", value = NA, min = 1, max = 999999)
+            )
           )
         ),
         
@@ -170,16 +252,19 @@ ui <- fluidPage(
             # 1. Add clustering variable selector in UI
             # 2. Pass cluster variable to PROCESS: cluster = input$cluster_var
             # 3. Set robustse=1 and hc=5 when cluster-robust is selected
-            selectInput("hc_method", "Standard Errors:",
-              choices = list(
-                "OLS" = "none",
-                "HC0 (Huber-White)" = "0",
-                "HC1 (Hinkley)" = "1",
-                "HC2" = "2",
-                "HC3 (Davidson-MacKinnon)" = "3",
-                "HC4 (Cribari-Neto)" = "4"
-              ),
-              selected = "none"
+            tags$div(
+              title = "Standard error methods: OLS (default, assumes homoscedasticity). HC0-HC4 are robust standard errors that account for heteroscedasticity (unequal variance). Use robust standard errors if you suspect heteroscedasticity. HC3 is recommended for small samples, HC4 is more conservative and good for influential cases.",
+              selectInput("hc_method", "Standard Errors:",
+                choices = list(
+                  "OLS" = "none",
+                  "HC0 (Huber-White)" = "0",
+                  "HC1 (Hinkley)" = "1",
+                  "HC2" = "2",
+                  "HC3 (Davidson-MacKinnon)" = "3",
+                  "HC4 (Cribari-Neto)" = "4"
+                ),
+                selected = "none"
+              )
             ),
             tags$div(title = "Requests standardized regression coefficients. Useful for comparing effects across variables with different scales.",
               checkboxInput("stand", "Standardized coefficients", FALSE)
@@ -259,19 +344,42 @@ ui <- fluidPage(
             tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                         "Probing Moderation"),
             div(style = "margin-left: 15px; margin-top: 10px;",
-              checkboxInput("probe_interactions", "Probe interactions", FALSE),
+              tags$div(
+                title = "Probing interactions shows conditional effects at different levels of the moderator. When enabled, displays how the effect of X on Y changes across moderator values.",
+                checkboxInput("probe_interactions", "Probe interactions", FALSE)
+              ),
               conditionalPanel(
                 condition = "input.probe_interactions == true",
-                textInput("probe_threshold", "When to probe:", value = "p < .10"),
-                p(em("Enter threshold for probing (e.g., 'p < .10' or 'p < .05')")),
-                radioButtons("conditioning_values", "Values for nondiscrete moderators:",
-                  choices = list(
-                    "Percentiles (16th, 50th, 84th)" = "1",
-                    "Moments (Mean and Â±1 SD)" = "0"
-                  ),
-                  selected = "1"
+                tags$div(
+                  title = "Enter the threshold for when to probe interactions (e.g., 'p < .10' or 'p < .05'). Interactions meeting this threshold will be probed.",
+                  textInput("probe_threshold", "When to probe:", value = "p < .10")
                 ),
-                checkboxInput("jn", "Johnson-Neyman technique", FALSE)
+                tags$div(
+                  tags$label("Values for nondiscrete moderators:", style = "font-weight: bold;"),
+                  tags$div(
+                    style = "margin-top: 5px;",
+                    tags$div(
+                      title = "Percentiles (16th, 50th, 84th): Uses the 16th, 50th (median), and 84th percentiles of the moderator distribution. This is the default because PROCESS visualization data (used for generating plots) always uses percentiles. Selecting percentiles ensures consistency between probing results and plot visualizations. More robust to outliers and non-normal distributions. Recommended when the moderator distribution is skewed or has outliers.",
+                      tags$label(
+                        tags$input(type = "radio", name = "conditioning_values", value = "1", checked = "checked"),
+                        "Percentiles (16th, 50th, 84th)",
+                        style = "font-weight: normal; margin-right: 15px;"
+                      )
+                    ),
+                    tags$div(
+                      title = "Moments (Mean ±1 SD): Uses the mean and one standard deviation above and below the mean. More interpretable and commonly used in reporting. However, note that PROCESS visualization data (used for generating plots) always uses percentiles regardless of this setting. If you select moments, the probing results in the text output will use mean ±1 SD, but the plot visualizations will still show percentile-based values (16th, 50th, 84th), so they may not match precisely. Use this option if you want probing results to match your reporting style, understanding that plots will display percentile-based values.",
+                      tags$label(
+                        tags$input(type = "radio", name = "conditioning_values", value = "0"),
+                        "Moments (Mean ±1 SD)",
+                        style = "font-weight: normal;"
+                      )
+                    )
+                  )
+                ),
+                tags$div(
+                  title = "Johnson-Neyman technique identifies regions of significance where the effect of X on Y is statistically significant. Shows the range of moderator values where the effect is significant vs. non-significant.",
+                  checkboxInput("jn", "Johnson-Neyman technique", FALSE)
+                )
               )
             )
           )
