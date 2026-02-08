@@ -393,7 +393,7 @@ server <- function(input, output, session) {
       potential_data_lines <- process_output[data_start:data_end]
       potential_data_lines <- potential_data_lines[grepl("^\\s*-?\\d", potential_data_lines)]
       
-      if(length(potential_data_lines) < 9) {
+      if(length(potential_data_lines) < 4) {
         return(NULL)
       }
       
@@ -410,12 +410,12 @@ server <- function(input, output, session) {
         for(col in 1:ncol(parsed_viz)) {
           parsed_viz[, col] <- as.numeric(parsed_viz[, col])
         }
-        parsed_viz[1:9, ]  # Take first 9 rows
+        parsed_viz
       }, error = function(e) {
         return(NULL)
       })
       
-      if(is.null(parsed_viz) || ncol(parsed_viz) != 6 || nrow(parsed_viz) < 9) {
+      if(is.null(parsed_viz) || ncol(parsed_viz) != 6 || nrow(parsed_viz) < 4) {
         return(NULL)
       }
       
@@ -434,6 +434,9 @@ server <- function(input, output, session) {
       
       moderator_levels_raw <- sort(unique(plot_data$Moderator))
       if(length(moderator_levels_raw) == 0) {
+        return(NULL)
+      }
+      if(length(unique(plot_data$Predictor)) < 2 || length(moderator_levels_raw) < 2) {
         return(NULL)
       }
       
