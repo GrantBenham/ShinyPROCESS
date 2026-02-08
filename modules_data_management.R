@@ -63,16 +63,7 @@
     dbg(paste("DEBUG: New model number:", input$process_model))
     dbg(paste("DEBUG: Previous model number:", rv$previous_model))
     
-    # DEBUG: Print current values BEFORE clearing
-    dbg("DEBUG: Values BEFORE clearing:")
-    print(paste("  predictor_var:", if(is.null(input$predictor_var) || input$predictor_var == "") "EMPTY" else input$predictor_var))
-    print(paste("  outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
-    print(paste("  moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
-    print(paste("  moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
-    print(paste("  mediator_count:", if(is.null(input$mediator_count) || input$mediator_count == "") "EMPTY" else input$mediator_count))
-    print(paste("  mediator_vars_collected:", if(is.null(mediator_vars_collected()) || length(mediator_vars_collected()) == 0) "EMPTY" else paste(mediator_vars_collected(), collapse=", ")))
-    print(paste("  covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
-    print(paste("  rv$mediator_order:", if(is.null(rv$mediator_order) || length(rv$mediator_order) == 0) "NULL/EMPTY" else paste(rv$mediator_order, collapse=", ")))
+    # DEBUG: Print current values BEFORE clearing (removed; timing was misleading)
     
     # Set clearing flag to prevent observers from repopulating and validation from running
     # Clear analysis results immediately so old results don't show when model changes
