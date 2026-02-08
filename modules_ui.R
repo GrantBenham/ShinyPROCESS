@@ -250,18 +250,25 @@ ui <- fluidPage(
                         "Moderator Settings"),
             div(style = "margin-left: 15px; margin-top: 10px;",
               tags$div(
-                tags$label("Moderator values for probing (text output):", style = "font-weight: bold;"),
+                tags$label("Moderator values for probing and plots:", style = "font-weight: bold;"),
                 radioButtons(
                   inputId = "conditioning_values",
                   label = NULL,
-                  choices = c(
-                    "Percentiles (16th, 50th, 84th)" = "1",
-                    "Moments (Mean ±1 SD)" = "0"
+                  choiceNames = list(
+                    tags$span(
+                      "Percentiles (16th, 50th, 84th)",
+                      title = "Uses the 16th, 50th (median), and 84th percentiles of the moderator distribution. This affects conditional effects in the text output and the visualization data used for plots. More robust to outliers and non-normal distributions. Recommended when the moderator distribution is skewed or has outliers."
+                    ),
+                    tags$span(
+                      "Moments (Mean ±1 SD)",
+                      title = "Uses the mean and one standard deviation above and below the mean. This affects conditional effects in the text output and the visualization data used for plots. More interpretable and commonly used in reporting."
+                    )
                   ),
+                  choiceValues = c("1", "0"),
                   selected = "1"
                 ),
                 tags$small(
-                  "Note: visualization data and plots always use percentiles (16th, 50th, 84th).",
+                  "This setting also drives the visualization data used for plots.",
                   style = "display: block; margin-top: 4px; color: #555;"
                 )
               )
