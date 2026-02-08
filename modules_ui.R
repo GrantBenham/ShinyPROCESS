@@ -250,25 +250,19 @@ ui <- fluidPage(
                         "Moderator Settings"),
             div(style = "margin-left: 15px; margin-top: 10px;",
               tags$div(
-                tags$label("Moderator values for visualization data and plots:", style = "font-weight: bold;"),
-                tags$div(
-                  style = "margin-top: 5px;",
-                  tags$div(
-                    title = "Percentiles (16th, 50th, 84th): Uses the 16th, 50th (median), and 84th percentiles of the moderator distribution. This is the default because PROCESS visualization data (used for generating plots) always uses percentiles. Selecting percentiles ensures consistency between probing results and plot visualizations. More robust to outliers and non-normal distributions. Recommended when the moderator distribution is skewed or has outliers.",
-                    tags$label(
-                      tags$input(type = "radio", name = "conditioning_values", value = "1", checked = "checked"),
-                      "Percentiles (16th, 50th, 84th)",
-                      style = "font-weight: normal; margin-right: 15px;"
-                    )
+                tags$label("Moderator values for probing (text output):", style = "font-weight: bold;"),
+                radioButtons(
+                  inputId = "conditioning_values",
+                  label = NULL,
+                  choices = c(
+                    "Percentiles (16th, 50th, 84th)" = "1",
+                    "Moments (Mean ±1 SD)" = "0"
                   ),
-                  tags$div(
-                    title = "Moments (Mean ±1 SD): Uses the mean and one standard deviation above and below the mean. More interpretable and commonly used in reporting. However, note that PROCESS visualization data (used for generating plots) always uses percentiles regardless of this setting. If you select moments, the probing results in the text output will use mean ±1 SD, but the plot visualizations will still show percentile-based values (16th, 50th, 84th), so they may not match precisely. Use this option if you want probing results to match your reporting style, understanding that plots will display percentile-based values.",
-                    tags$label(
-                      tags$input(type = "radio", name = "conditioning_values", value = "0"),
-                      "Moments (Mean ±1 SD)",
-                      style = "font-weight: normal;"
-                    )
-                  )
+                  selected = "1"
+                ),
+                tags$small(
+                  "Note: visualization data and plots always use percentiles (16th, 50th, 84th).",
+                  style = "display: block; margin-top: 4px; color: #555;"
                 )
               )
             )

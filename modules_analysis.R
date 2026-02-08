@@ -418,6 +418,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
             "1"  # Default to percentiles
           }
           process_args$moments <- ifelse(cond_val == "0", 1, 0)
+          dbg(paste("DEBUG: conditioning_values =", cond_val, "=> moments =", process_args$moments))
         }
       }
       
