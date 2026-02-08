@@ -806,7 +806,7 @@
           button_enabled <- (n_complete >= 3)
         }
       }, error = function(e) {
-        print(paste("DEBUG: Error checking outliers for button:", e$message))
+        dbg(paste("DEBUG: Error checking outliers for button:", e$message))
         button_enabled <- FALSE
       })
     }
@@ -838,3 +838,4 @@
     },
     contentType = "text/html"
   )
+

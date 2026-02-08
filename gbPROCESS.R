@@ -17,6 +17,14 @@ library(haven)  # For SPSS file support
 # Increase file upload size to 50MB
 options(shiny.maxRequestSize = 50 * 1024^2)
 
+# Debug controls (set to TRUE to enable verbose console output)
+DEBUG_MODE <- FALSE
+dbg <- function(...) {
+  if (isTRUE(DEBUG_MODE)) {
+    print(...)
+  }
+}
+
 # Source assumption checks module (helper functions)
 source("modules_assumptions.R", local = TRUE)
 
@@ -82,13 +90,13 @@ server <- function(input, output, session) {
   
   # DEBUG: Observer to track button clicks
   observeEvent(input$run_analysis, {
-    print("DEBUG: Run Analysis button clicked!")
-    print(paste("DEBUG: Button click count:", input$run_analysis))
+    dbg("DEBUG: Run Analysis button clicked!")
+    dbg(paste("DEBUG: Button click count:", input$run_analysis))
   })
   
   observeEvent(input$run_analysis_no_outliers, {
-    print("DEBUG: Run Analysis (No Outliers) button clicked!")
-    print(paste("DEBUG: Button click count:", input$run_analysis_no_outliers))
+    dbg("DEBUG: Run Analysis (No Outliers) button clicked!")
+    dbg(paste("DEBUG: Button click count:", input$run_analysis_no_outliers))
   })
   
   # ============================================================================
@@ -815,7 +823,7 @@ server <- function(input, output, session) {
             }
             parsed_viz
           }, error = function(e) {
-            print(paste("DEBUG: Error parsing stacked plot data:", e$message))
+            dbg(paste("DEBUG: Error parsing stacked plot data:", e$message))
             NULL
           })
           
@@ -833,7 +841,7 @@ server <- function(input, output, session) {
         }
       }
     }, error = function(e) {
-      print(paste("DEBUG: Error parsing stacked plot data:", e$message))
+      dbg(paste("DEBUG: Error parsing stacked plot data:", e$message))
     })
     
     if(is.null(stacked_data) || nrow(stacked_data) == 0) {
@@ -1004,7 +1012,7 @@ server <- function(input, output, session) {
         
         # Debug: COMPREHENSIVE inspection of result object structure
         print("========================================")
-        print("DEBUG: COMPREHENSIVE RESULT OBJECT INSPECTION FOR MODEL 3")
+        dbg("DEBUG: COMPREHENSIVE RESULT OBJECT INSPECTION FOR MODEL 3")
         print("========================================")
         print(paste("Result class:", paste(class(result_obj), collapse=", ")))
         print(paste("Result type:", typeof(result_obj)))
@@ -1078,7 +1086,7 @@ server <- function(input, output, session) {
         }
         
         print("========================================")
-        print("DEBUG: Checking results$plot_data structure")
+        dbg("DEBUG: Checking results$plot_data structure")
         print("========================================")
         plot_data_df <- results$plot_data
         if(!is.null(plot_data_df)) {
@@ -1116,7 +1124,7 @@ server <- function(input, output, session) {
           # The conditional effect data should be at the end, with Z values in column 1
           # and should have fewer unique values in column 1 (Z) than the simple slopes data
           
-          print("DEBUG: Searching for conditional effect data in plot_data matrix...")
+          dbg("DEBUG: Searching for conditional effect data in plot_data matrix...")
           print(paste("Matrix has", nrow(plot_matrix), "rows and", ncol(plot_matrix), "columns"))
           
           # Try to identify the conditional effect section
@@ -1136,7 +1144,7 @@ server <- function(input, output, session) {
           if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
             z_var_data <- results$data_used[[input$moderator2_var]]
             z_range <- range(z_var_data, na.rm = TRUE)
-            print(paste("DEBUG: Z variable range:", z_range[1], "to", z_range[2]))
+            dbg(paste("DEBUG: Z variable range:", z_range[1], "to", z_range[2]))
             
             # Look for rows where column 1 values are within Z range and look like Z values
             # These should be the conditional effect rows
@@ -1144,12 +1152,12 @@ server <- function(input, output, session) {
             z_matches <- which(potential_z_col >= z_range[1] & potential_z_col <= z_range[2])
             
             if(length(z_matches) > 0) {
-              print(paste("DEBUG: Found", length(z_matches), "rows with Z values in column 1"))
+              dbg(paste("DEBUG: Found", length(z_matches), "rows with Z values in column 1"))
               
               # Check if these rows form a continuous sequence (conditional effect data)
               # vs scattered (simple slopes data)
               z_values <- unique(sort(potential_z_col[z_matches]))
-              print(paste("DEBUG: Unique Z values found:", length(z_values)))
+              dbg(paste("DEBUG: Unique Z values found:", length(z_values)))
               print("First few Z values:")
               print(head(z_values, 10))
               
@@ -1167,7 +1175,7 @@ server <- function(input, output, session) {
                 
                 # If differences are relatively uniform, it's likely conditional effect data
                 if(length(z_diff) > 10 && sd(z_diff) / mean(z_diff) < 0.5) {
-                  print("DEBUG: Column 1 values appear to form a sequence (conditional effect data)")
+                  dbg("DEBUG: Column 1 values appear to form a sequence (conditional effect data)")
                   
                   # Find the rows that correspond to this Z sequence
                   # They should be consecutive or near-consecutive in the matrix
@@ -1182,10 +1190,10 @@ server <- function(input, output, session) {
                       # Check if column 2 looks like effects (can be negative)
                       effects <- as.numeric(cond_section[, 2])
                       if(!all(is.na(effects)) && length(unique(effects)) > 1) {
-                        print("DEBUG: Found conditional effect data section!")
+                        dbg("DEBUG: Found conditional effect data section!")
                         cond_effect_data <- as.data.frame(cond_section[, 1:7])
                         colnames(cond_effect_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")
-                        print("DEBUG: Conditional effect data extracted:")
+                        dbg("DEBUG: Conditional effect data extracted:")
                         print(head(cond_effect_data, 10))
                       }
                     }
@@ -1219,8 +1227,8 @@ server <- function(input, output, session) {
           }
         } else if(is.matrix(result_obj) || is.array(result_obj)) {
           print(paste("Result is matrix/array with", nrow(result_obj), "rows and", ncol(result_obj), "cols"))
-          print("DEBUG: This matrix is the plot_data (X, W, Z, predicted Y, SE, LLCI, ULCI), not conditional effect data")
-          print("DEBUG: For Model 3, conditional effect data must be found elsewhere (text output or calculated from coefficients)")
+          dbg("DEBUG: This matrix is the plot_data (X, W, Z, predicted Y, SE, LLCI, ULCI), not conditional effect data")
+          dbg("DEBUG: For Model 3, conditional effect data must be found elsewhere (text output or calculated from coefficients)")
           # The result matrix contains simple slopes plot data, NOT conditional effect data
           # Conditional effect data shows how X*W changes across Z, which is different
           # We need to find it in text output or calculate from coefficients
@@ -1235,7 +1243,7 @@ server <- function(input, output, session) {
           if(is.null(cond_effect_data) && is.list(result_obj)) {
             # First check for named elements that might contain conditional effect data
             if(!is.null(names(result_obj))) {
-              print("DEBUG: Result object has named elements:")
+              dbg("DEBUG: Result object has named elements:")
               print(names(result_obj))
               
               # Check for common names that might contain conditional effect data
@@ -1243,7 +1251,7 @@ server <- function(input, output, session) {
               for(name in possible_names) {
                 if(name %in% names(result_obj)) {
                   elem <- result_obj[[name]]
-                  print(paste("DEBUG: Found element named '", name, "'"))
+                  dbg(paste("DEBUG: Found element named '", name, "'"))
                   if(is.data.frame(elem) || is.matrix(elem)) {
                     elem_df <- as.data.frame(elem)
                     print(paste("  Rows:", nrow(elem_df), "Cols:", ncol(elem_df)))
@@ -1261,7 +1269,7 @@ server <- function(input, output, session) {
                       }, error = function(e) FALSE)
                       
                       if(col_check) {
-                        print(paste("DEBUG: Found conditional effect data in result$", name))
+                        dbg(paste("DEBUG: Found conditional effect data in result$", name))
                         cond_effect_data <- elem_df
                         colnames(cond_effect_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")[1:ncol(cond_effect_data)]
                         break
@@ -1274,7 +1282,7 @@ server <- function(input, output, session) {
             
             # If not found by name, check all elements
             if(is.null(cond_effect_data) && length(result_obj) > 1) {
-              print("DEBUG: Checking all result object elements for conditional effect data...")
+              dbg("DEBUG: Checking all result object elements for conditional effect data...")
               for(i in 1:length(result_obj)) {
                 elem <- result_obj[[i]]
                 if(is.data.frame(elem) && ncol(elem) >= 7) {
@@ -1293,7 +1301,7 @@ server <- function(input, output, session) {
                   }, error = function(e) FALSE)
                   
                   if(col_check) {
-                    print(paste("DEBUG: Found potential conditional effect data in result[[", i, "]]"))
+                    dbg(paste("DEBUG: Found potential conditional effect data in result[[", i, "]]"))
                     cond_effect_data <- elem
                     colnames(cond_effect_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")[1:ncol(cond_effect_data)]
                     break
@@ -1312,7 +1320,7 @@ server <- function(input, output, session) {
                   }, error = function(e) FALSE)
                   
                   if(col_check) {
-                    print(paste("DEBUG: Found potential conditional effect data in result[[", i, "]] (matrix)"))
+                    dbg(paste("DEBUG: Found potential conditional effect data in result[[", i, "]] (matrix)"))
                     cond_effect_data <- as.data.frame(elem)
                     colnames(cond_effect_data) <- c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")[1:ncol(cond_effect_data)]
                     break
@@ -1327,7 +1335,7 @@ server <- function(input, output, session) {
             process_output <- results$output
             
             # Debug: search for all possible section names
-            print("DEBUG: Searching PROCESS output for conditional effect section...")
+            dbg("DEBUG: Searching PROCESS output for conditional effect section...")
             all_effect_lines <- grep("effect|Effect|conditional|Conditional", process_output, ignore.case = TRUE, value = FALSE)
             if(length(all_effect_lines) > 0) {
               print(paste("Found", length(all_effect_lines), "lines containing 'effect' or 'conditional':"))
@@ -1353,7 +1361,7 @@ server <- function(input, output, session) {
             if(length(start_idx) > 0) {
               # Use the first match
               start_line <- start_idx[1]
-              print(paste("DEBUG: Found conditional effect section at line", start_line))
+              dbg(paste("DEBUG: Found conditional effect section at line", start_line))
               print(paste("Section header:", process_output[start_line]))
               
               # Find the data section - it should start 2 lines after the header
@@ -1382,14 +1390,14 @@ server <- function(input, output, session) {
                 }
               }
               
-              print(paste("DEBUG: Data section from line", data_start, "to", end_idx))
+              dbg(paste("DEBUG: Data section from line", data_start, "to", end_idx))
               
               if(end_idx > data_start) {
                 data_lines <- process_output[data_start:end_idx]
                 data_lines <- data_lines[grepl("^\\s*-?\\d", data_lines)]
                 
                 if(length(data_lines) > 0) {
-                  print(paste("DEBUG: Found", length(data_lines), "potential data lines"))
+                  dbg(paste("DEBUG: Found", length(data_lines), "potential data lines"))
                   print("First few data lines:")
                   print(head(data_lines, 5))
                   
@@ -1412,7 +1420,7 @@ server <- function(input, output, session) {
                     
                     parsed
                   }, error = function(e) {
-                    print(paste("DEBUG: Error parsing table:", e$message))
+                    dbg(paste("DEBUG: Error parsing table:", e$message))
                     # Try alternative parsing
                     tryCatch({
                       # Split by whitespace and parse manually
@@ -1430,13 +1438,13 @@ server <- function(input, output, session) {
                         NULL
                       }
                     }, error = function(e2) {
-                      print(paste("DEBUG: Alternative parsing also failed:", e2$message))
+                      dbg(paste("DEBUG: Alternative parsing also failed:", e2$message))
                       NULL
                     })
                   })
                   
                   if(!is.null(parsed) && nrow(parsed) > 0) {
-                    print(paste("DEBUG: Parsed", nrow(parsed), "rows"))
+                    dbg(paste("DEBUG: Parsed", nrow(parsed), "rows"))
                     print("First few rows of parsed data:")
                     print(head(parsed, 10))
                     
@@ -1446,7 +1454,7 @@ server <- function(input, output, session) {
                     })
                     
                     if(sum(valid_rows) > 0) {
-                      print(paste("DEBUG: Found", sum(valid_rows), "valid rows"))
+                      dbg(paste("DEBUG: Found", sum(valid_rows), "valid rows"))
                       # For conditional effect plot, we need to aggregate by Z
                       # If there are multiple W values per Z, we'll use the median W value's effect
                       parsed_valid <- parsed[valid_rows, ]
@@ -1471,25 +1479,25 @@ server <- function(input, output, session) {
                         cond_effect_data[i, ] <- z_subset[median_w_idx, c("Z", "Effect", "se", "t", "p", "LLCI", "ULCI")]
                       }
                       
-                      print("DEBUG: Conditional effect data aggregated by Z:")
+                      dbg("DEBUG: Conditional effect data aggregated by Z:")
                       print(cond_effect_data)
                       # Try to get ranges, but don't fail if it errors
                       tryCatch({
                         z_range_debug <- range(cond_effect_data$Z, na.rm = TRUE)
                         effect_range_debug <- range(cond_effect_data$Effect, na.rm = TRUE)
-                        print(paste("DEBUG: Z range:", paste(z_range_debug, collapse=" to ")))
-                        print(paste("DEBUG: Effect range:", paste(effect_range_debug, collapse=" to ")))
+                        dbg(paste("DEBUG: Z range:", paste(z_range_debug, collapse=" to ")))
+                        dbg(paste("DEBUG: Effect range:", paste(effect_range_debug, collapse=" to ")))
                       }, error = function(e) {
-                        print("DEBUG: Could not calculate ranges (non-fatal)")
+                        dbg("DEBUG: Could not calculate ranges (non-fatal)")
                       })
                     } else {
-                      print("DEBUG: No valid rows found after parsing")
+                      dbg("DEBUG: No valid rows found after parsing")
                     }
                   } else {
-                    print("DEBUG: Parsing returned NULL or empty")
+                    dbg("DEBUG: Parsing returned NULL or empty")
                   }
                 } else {
-                  print("DEBUG: No data lines found matching pattern")
+                  dbg("DEBUG: No data lines found matching pattern")
                 }
               }
             }
@@ -1497,7 +1505,7 @@ server <- function(input, output, session) {
         }  # Close if(is.null(cond_effect_data)) block
           
       }, error = function(e) {
-        print(paste("DEBUG: Error in conditional effect extraction:", e$message))
+        dbg(paste("DEBUG: Error in conditional effect extraction:", e$message))
         # Don't return here - let the code continue to check if cond_effect_data was set
       })
       
@@ -1534,13 +1542,13 @@ server <- function(input, output, session) {
               
               parsed_viz
             }, error = function(e) {
-              print(paste("DEBUG: Error parsing visualization data:", e$message))
+              dbg(paste("DEBUG: Error parsing visualization data:", e$message))
               NULL
             })
             
             if(!is.null(parsed_viz) && ncol(parsed_viz) == 7 && nrow(parsed_viz) > 0) {
-              print(paste("DEBUG: Successfully parsed visualization data with", nrow(parsed_viz), "rows"))
-              print("DEBUG: First few rows:")
+              dbg(paste("DEBUG: Successfully parsed visualization data with", nrow(parsed_viz), "rows"))
+              dbg("DEBUG: First few rows:")
               print(head(parsed_viz, 5))
               
               # For Model 3 conditional effect plot, we need to show the effect of X*W across Z
@@ -1589,31 +1597,31 @@ server <- function(input, output, session) {
                                 is.finite(cond_effect_data$Z) & is.finite(cond_effect_data$Effect)
                   if(sum(valid_rows) >= 3) {
                     cond_effect_data <- cond_effect_data[valid_rows, ]
-                    print(paste("DEBUG: Extracted conditional effect data from visualization section"))
-                    print(paste("DEBUG: Using X =", x_median, "and W =", w_median))
-                    print(paste("DEBUG: Found", nrow(cond_effect_data), "unique Z values"))
+                    dbg(paste("DEBUG: Extracted conditional effect data from visualization section"))
+                    dbg(paste("DEBUG: Using X =", x_median, "and W =", w_median))
+                    dbg(paste("DEBUG: Found", nrow(cond_effect_data), "unique Z values"))
                     z_range <- range(cond_effect_data$Z, na.rm = TRUE)
                     effect_range <- range(cond_effect_data$Effect, na.rm = TRUE)
-                    print(paste("DEBUG: Z range:", paste(z_range, collapse=" to ")))
-                    print(paste("DEBUG: Effect range:", paste(effect_range, collapse=" to ")))
+                    dbg(paste("DEBUG: Z range:", paste(z_range, collapse=" to ")))
+                    dbg(paste("DEBUG: Effect range:", paste(effect_range, collapse=" to ")))
                   } else {
-                    print("DEBUG: Not enough valid rows after filtering")
+                    dbg("DEBUG: Not enough valid rows after filtering")
                     cond_effect_data <- NULL
                   }
                 } else {
-                  print("DEBUG: No rows found at median X and W")
+                  dbg("DEBUG: No rows found at median X and W")
                   cond_effect_data <- NULL
                 }
               } else {
-                print("DEBUG: Could not determine unique X or W values")
+                dbg("DEBUG: Could not determine unique X or W values")
                 cond_effect_data <- NULL
               }
             } else {
-              print("DEBUG: Failed to parse visualization data as 7 columns")
+              dbg("DEBUG: Failed to parse visualization data as 7 columns")
               cond_effect_data <- NULL
             }
           } else {
-            print("DEBUG: No data lines found in visualization section")
+            dbg("DEBUG: No data lines found in visualization section")
             cond_effect_data <- NULL
           }
         }
@@ -1627,9 +1635,9 @@ server <- function(input, output, session) {
       # Use the conditional effect data
       plot_data <- cond_effect_data
       active_moderator <- input$moderator2_var
-      print("DEBUG: Successfully assigned cond_effect_data to plot_data")
-      print(paste("DEBUG: plot_data has", nrow(plot_data), "rows and", ncol(plot_data), "columns"))
-      print(paste("DEBUG: plot_data column names:", paste(names(plot_data), collapse=", ")))
+      dbg("DEBUG: Successfully assigned cond_effect_data to plot_data")
+      dbg(paste("DEBUG: plot_data has", nrow(plot_data), "rows and", ncol(plot_data), "columns"))
+      dbg(paste("DEBUG: plot_data column names:", paste(names(plot_data), collapse=", ")))
     } else {
       # Single moderation: Parse "Data for visualizing" table from text output
       # This table contains exactly 9 rows (3 moderator levels × 3 X values) with 6 columns
@@ -1667,7 +1675,7 @@ server <- function(input, output, session) {
               
               parsed_viz
             }, error = function(e) {
-              print(paste("DEBUG: Error parsing visualization data from text:", e$message))
+              dbg(paste("DEBUG: Error parsing visualization data from text:", e$message))
               NULL
             })
             
@@ -1675,7 +1683,7 @@ server <- function(input, output, session) {
               # Take first 9 rows (in case there are more)
               parsed_viz <- parsed_viz[1:9, ]
               
-              print(paste("DEBUG: Successfully parsed visualization data from text with", nrow(parsed_viz), "rows"))
+              dbg(paste("DEBUG: Successfully parsed visualization data from text with", nrow(parsed_viz), "rows"))
               
               plot_data <- data.frame(
                 Predictor = parsed_viz$X,
@@ -1704,18 +1712,18 @@ server <- function(input, output, session) {
               }
               
             } else {
-              print(paste("DEBUG: Parsed visualization data has wrong dimensions. Expected 9 rows × 6 columns, found", 
+              dbg(paste("DEBUG: Parsed visualization data has wrong dimensions. Expected 9 rows × 6 columns, found", 
                          ifelse(is.null(parsed_viz), "NULL", nrow(parsed_viz)), "rows ×", 
                          ifelse(is.null(parsed_viz), "NULL", ncol(parsed_viz)), "columns."))
             }
           } else {
-            print(paste("DEBUG: Found only", length(potential_data_lines), "data lines, expected at least 9"))
+            dbg(paste("DEBUG: Found only", length(potential_data_lines), "data lines, expected at least 9"))
           }
         } else {
-          print("DEBUG: Could not find 'Data for visualizing' section in PROCESS output")
+          dbg("DEBUG: Could not find 'Data for visualizing' section in PROCESS output")
         }
       }, error = function(e) {
-        print(paste("DEBUG: Error trying to parse visualization data from text:", e$message))
+        dbg(paste("DEBUG: Error trying to parse visualization data from text:", e$message))
       })
       
       if(is.null(plot_data) || nrow(plot_data) == 0) {
@@ -1768,7 +1776,7 @@ server <- function(input, output, session) {
                 }
                 parsed_viz
               }, error = function(e) {
-                print(paste("DEBUG: Error parsing stacked plot data:", e$message))
+                dbg(paste("DEBUG: Error parsing stacked plot data:", e$message))
                 NULL
               })
               
@@ -1786,7 +1794,7 @@ server <- function(input, output, session) {
             }
           }
         }, error = function(e) {
-          print(paste("DEBUG: Error parsing stacked plot data:", e$message))
+          dbg(paste("DEBUG: Error parsing stacked plot data:", e$message))
         })
         
         if(is.null(stacked_data) || nrow(stacked_data) == 0) {
@@ -2410,7 +2418,7 @@ server <- function(input, output, session) {
   observe({
     # Don't auto-update labels when loading settings or during clearing
     if(isTRUE(rv$load_settings_pending) || isTRUE(rv$is_clearing) || isTRUE(rv$restore_labels_pending)) {
-      print("DEBUG: Auto-label observer SKIPPED - load_settings_pending, is_clearing, or restore_labels_pending is TRUE")
+      dbg("DEBUG: Auto-label observer SKIPPED - load_settings_pending, is_clearing, or restore_labels_pending is TRUE")
       return()
     }
     
@@ -2420,7 +2428,7 @@ server <- function(input, output, session) {
       if(is.null(input$predictor_var) || input$predictor_var == "" ||
          is.null(input$outcome_var) || input$outcome_var == "" ||
          is.null(input$moderator_var) || input$moderator_var == "") {
-        print("DEBUG: Auto-label observer SKIPPED - variables are empty (likely during model change)")
+        dbg("DEBUG: Auto-label observer SKIPPED - variables are empty (likely during model change)")
         return()
       }
       
@@ -2453,27 +2461,27 @@ server <- function(input, output, session) {
         should_update_mod <- mod_label_empty || moderator_changed
         
         # Debug output
-        print(paste("DEBUG: Auto-label observer - predictor_changed:", predictor_changed, 
+        dbg(paste("DEBUG: Auto-label observer - predictor_changed:", predictor_changed, 
                     "x_label:", input$x_label, "predictor_var:", input$predictor_var,
                     "should_update_x:", should_update_x))
-        print(paste("DEBUG: Auto-label observer - outcome_changed:", outcome_changed,
+        dbg(paste("DEBUG: Auto-label observer - outcome_changed:", outcome_changed,
                     "y_label:", input$y_label, "outcome_var:", input$outcome_var,
                     "should_update_y:", should_update_y))
-        print(paste("DEBUG: Auto-label observer - moderator_changed:", moderator_changed,
+        dbg(paste("DEBUG: Auto-label observer - moderator_changed:", moderator_changed,
                     "moderator_label:", input$moderator_label, "moderator_var:", input$moderator_var,
                     "should_update_mod:", should_update_mod))
         
         # Update labels that need updating
         if(should_update_x) {
-          print(paste("DEBUG: Updating x_label from", input$x_label, "to", input$predictor_var))
+          dbg(paste("DEBUG: Updating x_label from", input$x_label, "to", input$predictor_var))
           updateTextInput(session, "x_label", value = input$predictor_var)
         }
         if(should_update_y) {
-          print(paste("DEBUG: Updating y_label from", input$y_label, "to", input$outcome_var))
+          dbg(paste("DEBUG: Updating y_label from", input$y_label, "to", input$outcome_var))
           updateTextInput(session, "y_label", value = input$outcome_var)
         }
         if(should_update_mod) {
-          print(paste("DEBUG: Updating moderator_label from", input$moderator_label, "to", input$moderator_var))
+          dbg(paste("DEBUG: Updating moderator_label from", input$moderator_label, "to", input$moderator_var))
           updateTextInput(session, "moderator_label", value = input$moderator_var)
         }
         
@@ -2493,7 +2501,7 @@ server <- function(input, output, session) {
           should_update_mod2 <- mod2_label_empty || mod2_changed || !mod2_label_matches_current
           
           if(should_update_mod2) {
-            print(paste("DEBUG: Updating moderator2_label from", input$moderator2_label, "to", input$moderator2_var))
+            dbg(paste("DEBUG: Updating moderator2_label from", input$moderator2_label, "to", input$moderator2_var))
             updateTextInput(session, "moderator2_label", value = input$moderator2_var)
           }
           
@@ -2577,3 +2585,4 @@ server <- function(input, output, session) {
 
 # Run the app
 shinyApp(ui, server)
+

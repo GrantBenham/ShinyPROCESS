@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 # DATA MANAGEMENT MODULE
 # ============================================================================
 # This module contains data upload, variable selection, and state management
@@ -41,7 +41,7 @@
     
     rv$original_dataset <- data
     rv$current_dataset <- data
-    print(paste("DEBUG - Dataset loaded with", nrow(data), "rows"))
+    dbg(paste("DEBUG - Dataset loaded with", nrow(data), "rows"))
     rv$analysis_results <- NULL  # Reset analysis results when new file is loaded
     rv$validation_error <- NULL
     
@@ -54,17 +54,17 @@
     updateSelectInput(session, "covariates", selected = NULL)
     
     # The is_clearing flag will be cleared by the separate observer after UI updates complete
-    print("DEBUG - Cleared all variable selections after dataset upload")
+    dbg("DEBUG - Cleared all variable selections after dataset upload")
   })
   
   # Clear analysis results and all variables when model changes
   observeEvent(input$process_model, {
-    print("DEBUG: ===== MODEL CHANGE OBSERVER STARTED =====")
-    print(paste("DEBUG: New model number:", input$process_model))
-    print(paste("DEBUG: Previous model number:", rv$previous_model))
+    dbg("DEBUG: ===== MODEL CHANGE OBSERVER STARTED =====")
+    dbg(paste("DEBUG: New model number:", input$process_model))
+    dbg(paste("DEBUG: Previous model number:", rv$previous_model))
     
     # DEBUG: Print current values BEFORE clearing
-    print("DEBUG: Values BEFORE clearing:")
+    dbg("DEBUG: Values BEFORE clearing:")
     print(paste("  predictor_var:", if(is.null(input$predictor_var) || input$predictor_var == "") "EMPTY" else input$predictor_var))
     print(paste("  outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
     print(paste("  moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
@@ -85,7 +85,7 @@
       rv$previous_model <- input$process_model  # Store current model as previous for next change
     })
     
-    print("DEBUG - Model changed, resetting all variables to initial state")
+    dbg("DEBUG - Model changed, resetting all variables to initial state")
     
     # Clear all reactive values first
     isolate({
@@ -113,16 +113,16 @@
           updateSelectInput(session, paste0("mediator_m", i), choices = c("Select variable" = "", vars), selected = "")
         }
       } else {
-        print("DEBUG: Skipping mediator clearing - loading settings, restore observer will handle")
+        dbg("DEBUG: Skipping mediator clearing - loading settings, restore observer will handle")
       }
       
       # Clear plot labels when model changes (they will be auto-populated when new variables are selected)
       # Only clear if we're NOT loading settings (settings loading will restore labels after model is set)
-      print(paste("DEBUG: load_settings_pending is:", rv$load_settings_pending))
+      dbg(paste("DEBUG: load_settings_pending is:", rv$load_settings_pending))
       if(!isTRUE(rv$load_settings_pending)) {
-        print(paste("DEBUG: Clearing plot labels - x_label was:", input$x_label))
-        print(paste("DEBUG: Clearing plot labels - y_label was:", input$y_label))
-        print(paste("DEBUG: Clearing plot labels - moderator_label was:", input$moderator_label))
+        dbg(paste("DEBUG: Clearing plot labels - x_label was:", input$x_label))
+        dbg(paste("DEBUG: Clearing plot labels - y_label was:", input$y_label))
+        dbg(paste("DEBUG: Clearing plot labels - moderator_label was:", input$moderator_label))
         # Clear labels immediately
         updateTextInput(session, "x_label", value = "")
         updateTextInput(session, "y_label", value = "")
@@ -134,19 +134,19 @@
         rv$previous_outcome_var <- NULL
         rv$previous_moderator_var <- NULL
         rv$previous_moderator2_var <- NULL
-        print("DEBUG: Plot labels cleared (will be auto-populated when variables are selected)")
+        dbg("DEBUG: Plot labels cleared (will be auto-populated when variables are selected)")
       } else {
-        print("DEBUG: Plot labels NOT cleared (settings are being loaded, will restore labels)")
+        dbg("DEBUG: Plot labels NOT cleared (settings are being loaded, will restore labels)")
       }
       
-      print("DEBUG: All variable inputs cleared via updateSelectInput (all inputs exist in DOM)")
+      dbg("DEBUG: All variable inputs cleared via updateSelectInput (all inputs exist in DOM)")
     }
     
     # Analysis results already cleared above in the first isolate block
     # This ensures old results don't persist when model changes
     
-    print("DEBUG - All clearing methods attempted")
-    print("DEBUG: ===== MODEL CHANGE OBSERVER COMPLETED =====")
+    dbg("DEBUG - All clearing methods attempted")
+    dbg("DEBUG: ===== MODEL CHANGE OBSERVER COMPLETED =====")
   })
   
   # Note: Model 74 is not user-selectable - it is automatically created from Model 4
@@ -164,7 +164,7 @@
       invalidateLater(500, session)  # Wait 500ms for UI updates to complete
       isolate({
         rv$is_clearing <- FALSE
-        print("DEBUG - Cleared is_clearing flag")
+        dbg("DEBUG - Cleared is_clearing flag")
       })
     }
   }, priority = -1)  # Low priority to run after other observers
@@ -187,7 +187,7 @@
   observeEvent(validation_trigger_debounced(), {
     # Skip validation if we're in the middle of clearing (model change)
     if(isTRUE(rv$is_clearing)) {
-      print("DEBUG: Real-time validation skipped - is_clearing is TRUE")
+      dbg("DEBUG: Real-time validation skipped - is_clearing is TRUE")
       return()
     }
     
@@ -199,16 +199,16 @@
     }
     
     # DEBUG: Print all current input values
-    print("DEBUG: ===== Real-time validation check =====")
-    print(paste("DEBUG: Current model:", if(is.null(current_model)) "NULL" else current_model))
-    print(paste("DEBUG: predictor_var:", if(is.null(input$predictor_var) || input$predictor_var == "") "EMPTY" else input$predictor_var))
-    print(paste("DEBUG: outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
-    print(paste("DEBUG: moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
-    print(paste("DEBUG: moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
+    dbg("DEBUG: ===== Real-time validation check =====")
+    dbg(paste("DEBUG: Current model:", if(is.null(current_model)) "NULL" else current_model))
+    dbg(paste("DEBUG: predictor_var:", if(is.null(input$predictor_var) || input$predictor_var == "") "EMPTY" else input$predictor_var))
+    dbg(paste("DEBUG: outcome_var:", if(is.null(input$outcome_var) || input$outcome_var == "") "EMPTY" else input$outcome_var))
+    dbg(paste("DEBUG: moderator_var:", if(is.null(input$moderator_var) || input$moderator_var == "") "EMPTY" else input$moderator_var))
+    dbg(paste("DEBUG: moderator2_var:", if(is.null(input$moderator2_var) || input$moderator2_var == "") "EMPTY" else input$moderator2_var))
     mediator_vars_current <- mediator_vars_collected()
-    print(paste("DEBUG: mediator_count:", if(is.null(input$mediator_count) || input$mediator_count == "") "EMPTY" else input$mediator_count))
-    print(paste("DEBUG: mediator_vars_collected:", if(is.null(mediator_vars_current) || length(mediator_vars_current) == 0) "EMPTY" else paste(mediator_vars_current, collapse=", ")))
-    print(paste("DEBUG: covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
+    dbg(paste("DEBUG: mediator_count:", if(is.null(input$mediator_count) || input$mediator_count == "") "EMPTY" else input$mediator_count))
+    dbg(paste("DEBUG: mediator_vars_collected:", if(is.null(mediator_vars_current) || length(mediator_vars_current) == 0) "EMPTY" else paste(mediator_vars_current, collapse=", ")))
+    dbg(paste("DEBUG: covariates:", if(is.null(input$covariates) || length(input$covariates) == 0) "EMPTY" else paste(input$covariates, collapse=", ")))
     
     # Collect all selected variables - but only check enabled inputs
     # Disabled inputs can't be changed by user, so we only validate enabled ones
@@ -255,9 +255,9 @@
       all_vars <- c(all_vars, input$covariates)
     }
     
-    print(paste("DEBUG: All collected variables (only enabled inputs):", paste(all_vars, collapse=", ")))
-    print(paste("DEBUG: Unique variables:", paste(unique(all_vars), collapse=", ")))
-    print(paste("DEBUG: Length all_vars:", length(all_vars), "Length unique:", length(unique(all_vars))))
+    dbg(paste("DEBUG: All collected variables (only enabled inputs):", paste(all_vars, collapse=", ")))
+    dbg(paste("DEBUG: Unique variables:", paste(unique(all_vars), collapse=", ")))
+    dbg(paste("DEBUG: Length all_vars:", length(all_vars), "Length unique:", length(unique(all_vars))))
     
     # Check for duplicates (with exception for Model 74 where X and W can be the same)
     if(length(all_vars) > 0 && length(all_vars) != length(unique(all_vars))) {
@@ -272,11 +272,11 @@
            input$predictor_var == input$moderator_var &&
            duplicate_vars[1] == input$predictor_var) {
           # This is the expected X=W for Model 74, so clear any error
-          print("DEBUG: Model 74 - X=W is allowed, clearing duplicate error")
+          dbg("DEBUG: Model 74 - X=W is allowed, clearing duplicate error")
           rv$validation_error <- NULL
         } else {
           # There are other duplicates beyond X=W
-          print(paste("DEBUG: DUPLICATES FOUND:", paste(unique(duplicate_vars), collapse=", ")))
+          dbg(paste("DEBUG: DUPLICATES FOUND:", paste(unique(duplicate_vars), collapse=", ")))
           rv$validation_error <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
                                         paste(unique(duplicate_vars), collapse = "', '"), 
                                         "' is/are used in more than one role.")
@@ -288,7 +288,7 @@
         }
       } else {
         # Not Model 74, so duplicates are not allowed
-        print(paste("DEBUG: DUPLICATES FOUND:", paste(unique(duplicate_vars), collapse=", ")))
+        dbg(paste("DEBUG: DUPLICATES FOUND:", paste(unique(duplicate_vars), collapse=", ")))
         rv$validation_error <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
                                       paste(unique(duplicate_vars), collapse = "', '"), 
                                       "' is/are used in more than one role.")
@@ -300,10 +300,10 @@
       }
     } else {
       # Clear validation error if no duplicates
-      print("DEBUG: No duplicates found - clearing validation error")
+      dbg("DEBUG: No duplicates found - clearing validation error")
       rv$validation_error <- NULL
     }
-    print("DEBUG: ===== End real-time validation check =====")
+    dbg("DEBUG: ===== End real-time validation check =====")
   }, ignoreNULL = FALSE, ignoreInit = TRUE)
   
   # Clear analysis results when key variables change (to prevent stale data)
@@ -311,7 +311,7 @@
     # Only clear if we have existing results (to avoid clearing on initial load)
     if(!is.null(rv$analysis_results)) {
       rv$analysis_results <- NULL
-      print("DEBUG - Key variables changed, clearing analysis results")
+      dbg("DEBUG - Key variables changed, clearing analysis results")
     }
   })
   
@@ -468,7 +468,7 @@
       ""
     }
     
-    print(paste("DEBUG: mediator_list_ui renderUI - restore_pending:", restore_pending, "expected_count:", expected_count, "selected_count:", selected_count))
+    dbg(paste("DEBUG: mediator_list_ui renderUI - restore_pending:", restore_pending, "expected_count:", expected_count, "selected_count:", selected_count))
     
     tagList(
       # Number of mediators dropdown
@@ -509,7 +509,7 @@
     # CRITICAL: Check cooldown FIRST before any other checks
     # This prevents clearing mediators immediately after they're restored
     if(isTRUE(rv$mediator_restore_cooldown)) {
-      print("DEBUG: Mediator count changed during cooldown period - skipping clear to prevent loop")
+      dbg("DEBUG: Mediator count changed during cooldown period - skipping clear to prevent loop")
       return()
     }
     
@@ -521,7 +521,7 @@
     # Skip if we're restoring mediators from saved settings
     # The restore observer will handle setting the mediator values after UI regenerates
     if(isTRUE(rv$restore_mediators_pending)) {
-      print("DEBUG: Mediator count changed during restore - skipping clear, restore observer will handle values")
+      dbg("DEBUG: Mediator count changed during restore - skipping clear, restore observer will handle values")
       return()
     }
     
@@ -548,7 +548,7 @@
                         selected = "")
     }
     
-    print(paste("DEBUG: Mediator count changed to", new_count, "- all mediator inputs cleared"))
+    dbg(paste("DEBUG: Mediator count changed to", new_count, "- all mediator inputs cleared"))
   }, ignoreInit = TRUE)  # ignoreInit = TRUE prevents clearing on initial load
   
   # Define which models require a second moderator (Z)
@@ -559,19 +559,19 @@
   # Dynamically generate variable selectors based on model
   output$variable_selectors <- renderUI({
     # Debug output
-    print(paste("DEBUG: variable_selectors renderUI called"))
-    print(paste("DEBUG: rv$original_dataset is NULL?", is.null(rv$original_dataset)))
-    print(paste("DEBUG: input$process_model:", input$process_model))
+    dbg(paste("DEBUG: variable_selectors renderUI called"))
+    dbg(paste("DEBUG: rv$original_dataset is NULL?", is.null(rv$original_dataset)))
+    dbg(paste("DEBUG: input$process_model:", input$process_model))
     
     # Check if dataset and model are available
     if(is.null(rv$original_dataset) || is.null(input$process_model) || input$process_model == "") {
-      print("DEBUG: variable_selectors - dataset or model not available, returning NULL")
+      dbg("DEBUG: variable_selectors - dataset or model not available, returning NULL")
       return(tags$p("Please load a dataset and select a model number first."))
     }
     
     vars <- names(rv$original_dataset)
     model_num <- as.numeric(input$process_model)
-    print(paste("DEBUG: variable_selectors - rendering for model", model_num))
+    dbg(paste("DEBUG: variable_selectors - rendering for model", model_num))
     
     # Determine which inputs should be enabled/disabled for this model
     # Models with one moderator (W): 1, 5, 14, 15, 58, 59, 74, 83-92
@@ -729,7 +729,8 @@
   # Output to track if analysis results exist
   output$analysis_ready <- reactive({
     result <- !is.null(rv$analysis_results)
-    print(paste("DEBUG: analysis_ready reactive called. Result:", result))
+    dbg(paste("DEBUG: analysis_ready reactive called. Result:", result))
     result
   })
   outputOptions(output, "analysis_ready", suspendWhenHidden = FALSE)
+

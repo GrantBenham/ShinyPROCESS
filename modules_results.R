@@ -370,17 +370,17 @@ wrap_results_html <- function(content) {
 
 # Display analysis results
 output$analysis_output <- renderUI({
-  print("DEBUG: analysis_output renderUI called")
+  dbg("DEBUG: analysis_output renderUI called")
   
   # If analysis results are NULL (e.g., after model switch), show empty state
   if(is.null(rv$analysis_results)) {
-    print("DEBUG: rv$analysis_results is NULL, showing empty state")
+    dbg("DEBUG: rv$analysis_results is NULL, showing empty state")
     return(HTML("<div style='padding: 20px; text-align: center; color: #666;'>Run an analysis to see results here.</div>"))
   }
   
   # Check for validation errors first
   if(!is.null(rv$validation_error)) {
-    print(paste("DEBUG: Validation error found:", rv$validation_error))
+    dbg(paste("DEBUG: Validation error found:", rv$validation_error))
     return(HTML(paste0(
       "<div style='color: red; font-weight: bold; padding: 15px; border: 2px solid red; background-color: #ffe6e6; margin: 10px 0; border-radius: 5px;'>",
       "<strong>ERROR:</strong><br><br>",
@@ -391,16 +391,16 @@ output$analysis_output <- renderUI({
   
   tryCatch({
     results <- analysis_results()
-    print(paste("DEBUG: analysis_results() returned NULL?", is.null(results)))
+    dbg(paste("DEBUG: analysis_results() returned NULL?", is.null(results)))
     if(is.null(results)) {
       return(HTML("<p>No analysis results available. Please run an analysis.</p>"))
     }
-    print("DEBUG: Creating formatted output...")
+    dbg("DEBUG: Creating formatted output...")
     HTML(create_formatted_output(results))
   }, error = function(e) {
     # Catch other errors and display them in the output
     error_msg <- conditionMessage(e)
-    print(paste("DEBUG: Error caught in analysis_output:", error_msg))
+    dbg(paste("DEBUG: Error caught in analysis_output:", error_msg))
     HTML(paste0(
       "<div style='color: red; font-weight: bold; padding: 15px; border: 2px solid red; background-color: #ffe6e6; margin: 10px 0; border-radius: 5px;'>",
       "<strong>ERROR:</strong><br><br>",
@@ -438,7 +438,7 @@ observe({
     if(has_results && !is.null(current_model_num) && !is.null(results$settings) && !is.null(results$settings$model)) {
       has_results <- results$settings$model == current_model_num
       if(!has_results) {
-        print(paste("DEBUG: Download button disabled - results model", results$settings$model, "doesn't match current", current_model_num))
+        dbg(paste("DEBUG: Download button disabled - results model", results$settings$model, "doesn't match current", current_model_num))
       }
     }
     
@@ -505,3 +505,4 @@ observe({
     shinyjs::disable("download_filtered_data")
   })
 })
+

@@ -22,7 +22,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
   # Clear any previous validation errors at the start
   rv$validation_error <- NULL
   
-  print(paste("DEBUG: ===== run_process_analysis STARTED (outliers_removed =", remove_outliers, ") ====="))
+  dbg(paste("DEBUG: ===== run_process_analysis STARTED (outliers_removed =", remove_outliers, ") ====="))
 
   # Extra diagnostics for vector-length issues in logical checks
   debug_input <- function(name, value) {
@@ -31,7 +31,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     value_preview <- tryCatch({
       if(is.null(value)) "NULL" else paste(head(as.character(value), 3), collapse = ", ")
     }, error = function(e) "<unprintable>")
-    print(paste("DEBUG: INPUT", name, "- type:", value_type, "len:", value_len, "value:", value_preview))
+    dbg(paste("DEBUG: INPUT", name, "- type:", value_type, "len:", value_len, "value:", value_preview))
   }
   is_nonempty_scalar <- function(value) {
     !is.null(value) && length(value) == 1 && nzchar(as.character(value))
@@ -176,7 +176,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
   }
   
   # Duplicate check: collect all selected variables and check for duplicates
-  print("DEBUG: ===== Analysis duplicate check STARTED =====")
+  dbg("DEBUG: ===== Analysis duplicate check STARTED =====")
   models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
   models_with_second_moderator <- c(2, 3)
   models_with_moderators_disabled <- c(4, 6, 80:82)
@@ -219,7 +219,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
          is_nonempty_scalar(input$moderator_var) &&
          input$predictor_var == input$moderator_var &&
          duplicate_vars[1] == input$predictor_var) {
-        print("DEBUG: Model 74 - X=W is allowed, proceeding with analysis")
+        dbg("DEBUG: Model 74 - X=W is allowed, proceeding with analysis")
       } else {
         error_msg <- paste0("Error: The same variable cannot be used for multiple roles. Variable(s) '", 
                           paste(unique(duplicate_vars), collapse = "', '"), 
@@ -237,7 +237,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       return(NULL)
     }
   }
-  print("DEBUG: ===== Analysis duplicate check PASSED =====")
+  dbg("DEBUG: ===== Analysis duplicate check PASSED =====")
   
   req(analysis_dataset, input$outcome_var, input$predictor_var, input$process_model)
   
@@ -573,25 +573,29 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     }
     
     # Debug: Print all process_args to identify any NULL or empty values
-    print("DEBUG: ===== PROCESS ARGUMENTS BEFORE EXECUTION =====")
+    dbg("DEBUG: ===== PROCESS ARGUMENTS BEFORE EXECUTION =====")
     for(arg_name in names(process_args)) {
+      if(arg_name == "data") {
+        dbg("DEBUG: process_args$data = <omitted>")
+        next
+      }
       arg_value <- process_args[[arg_name]]
       if(is.null(arg_value)) {
-        print(paste("DEBUG: process_args$", arg_name, " = NULL", sep = ""))
+        dbg(paste("DEBUG: process_args$", arg_name, " = NULL", sep = ""))
       } else if(length(arg_value) == 0) {
-        print(paste("DEBUG: process_args$", arg_name, " = (length 0)", sep = ""))
+        dbg(paste("DEBUG: process_args$", arg_name, " = (length 0)", sep = ""))
       } else if(is.character(arg_value) && length(arg_value) == 1 && arg_value == "") {
-        print(paste("DEBUG: process_args$", arg_name, " = '' (empty string)", sep = ""))
+        dbg(paste("DEBUG: process_args$", arg_name, " = '' (empty string)", sep = ""))
       } else {
-        print(paste("DEBUG: process_args$", arg_name, " = ", paste(arg_value, collapse = ", "), sep = ""))
+        dbg(paste("DEBUG: process_args$", arg_name, " = ", paste(arg_value, collapse = ", "), sep = ""))
       }
     }
-    print("DEBUG: ===== END PROCESS ARGUMENTS =====")
+    dbg("DEBUG: ===== END PROCESS ARGUMENTS =====")
 
     # Additional context for debugging analysis failures
-    print(paste("DEBUG: complete_cases count =", n_complete, "of", nrow(analysis_dataset)))
-    print(paste("DEBUG: all_vars_for_complete =", paste(all_vars_for_complete, collapse = ", ")))
-    print(paste("DEBUG: mediator_vars_current =", {
+    dbg(paste("DEBUG: complete_cases count =", n_complete, "of", nrow(analysis_dataset)))
+    dbg(paste("DEBUG: all_vars_for_complete =", paste(all_vars_for_complete, collapse = ", ")))
+    dbg(paste("DEBUG: mediator_vars_current =", {
       if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
         paste(mediator_vars_current, collapse = ", ")
       } else {
@@ -608,7 +612,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
         result <- withCallingHandlers(
           do.call(process, process_args),
           warning = function(w) {
-            print(paste("DEBUG: WARNING during PROCESS execution:", conditionMessage(w)))
+            dbg(paste("DEBUG: WARNING during PROCESS execution:", conditionMessage(w)))
             invokeRestart("muffleWarning")
           }
         )
@@ -621,20 +625,20 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       plot_data <- NULL
 
       # Debug: summarize result object
-      print(paste("DEBUG: PROCESS result class =", paste(class(result), collapse = ", ")))
-      print(paste("DEBUG: PROCESS result length =", if(is.null(result)) 0 else length(result)))
+      dbg(paste("DEBUG: PROCESS result class =", paste(class(result), collapse = ", ")))
+      dbg(paste("DEBUG: PROCESS result length =", if(is.null(result)) 0 else length(result)))
       if(is.list(result)) {
-        print(paste("DEBUG: PROCESS result names =", paste(names(result), collapse = ", ")))
+        dbg(paste("DEBUG: PROCESS result names =", paste(names(result), collapse = ", ")))
       }
       if(is.data.frame(result)) {
-        print(paste("DEBUG: PROCESS result data.frame dims =", nrow(result), "x", ncol(result)))
+        dbg(paste("DEBUG: PROCESS result data.frame dims =", nrow(result), "x", ncol(result)))
       } else if(is.matrix(result)) {
-        print(paste("DEBUG: PROCESS result matrix dims =", nrow(result), "x", ncol(result)))
+        dbg(paste("DEBUG: PROCESS result matrix dims =", nrow(result), "x", ncol(result)))
       }
-      print(paste("DEBUG: PROCESS output length =", length(process_output)))
+      dbg(paste("DEBUG: PROCESS output length =", length(process_output)))
       if(length(process_output) > 0) {
-        print(paste("DEBUG: PROCESS output first line =", process_output[1]))
-        print(paste("DEBUG: PROCESS output last line =", process_output[length(process_output)]))
+        dbg(paste("DEBUG: PROCESS output first line =", process_output[1]))
+        dbg(paste("DEBUG: PROCESS output last line =", process_output[length(process_output)]))
       }
       
       if(is_mod_model && !is.null(result)) {
@@ -699,9 +703,11 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       
       return(results_list)
     }, error = function(e) {
-      print(paste("DEBUG: ERROR in PROCESS execution:", e$message))
-      print("DEBUG: Stack trace (sys.calls):")
-      print(sys.calls())
+      dbg(paste("DEBUG: ERROR in PROCESS execution:", e$message))
+      dbg("DEBUG: Stack trace (sys.calls):")
+      if (isTRUE(DEBUG_MODE)) {
+        print(sys.calls())
+      }
       showNotification(paste("Error running PROCESS analysis:", e$message), type = "error", duration = 10)
       rv$analysis_results <- NULL
       rv$validation_error <- conditionMessage(e)
@@ -709,11 +715,15 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     })
   })
   }, error = function(e) {
-    print(paste("DEBUG: UNCAUGHT ERROR in run_process_analysis:", e$message))
-    print("DEBUG: Stack trace (traceback):")
-    traceback()
-    print("DEBUG: Stack trace (sys.calls):")
-    print(sys.calls())
+    dbg(paste("DEBUG: UNCAUGHT ERROR in run_process_analysis:", e$message))
+    dbg("DEBUG: Stack trace (traceback):")
+    if (isTRUE(DEBUG_MODE)) {
+      traceback()
+    }
+    dbg("DEBUG: Stack trace (sys.calls):")
+    if (isTRUE(DEBUG_MODE)) {
+      print(sys.calls())
+    }
     showNotification(paste("Error running PROCESS analysis:", e$message), type = "error", duration = 10)
     rv$analysis_results <- NULL
     rv$validation_error <- conditionMessage(e)
@@ -730,9 +740,9 @@ original_analysis <- eventReactive(input$run_analysis, {
   if(!is.null(result)) {
     rv$analysis_results <- result
   } else {
-    print("DEBUG: original_analysis() returned NULL")
+    dbg("DEBUG: original_analysis() returned NULL")
     if(!is.null(rv$validation_error)) {
-      print(paste("DEBUG: rv$validation_error =", rv$validation_error))
+      dbg(paste("DEBUG: rv$validation_error =", rv$validation_error))
     }
   }
   result
@@ -764,9 +774,9 @@ outliers_analysis <- eventReactive(input$run_analysis_no_outliers, {
   if(!is.null(result)) {
     rv$analysis_results <- result
   } else {
-    print("DEBUG: outliers_analysis() returned NULL")
+    dbg("DEBUG: outliers_analysis() returned NULL")
     if(!is.null(rv$validation_error)) {
-      print(paste("DEBUG: rv$validation_error =", rv$validation_error))
+      dbg(paste("DEBUG: rv$validation_error =", rv$validation_error))
     }
   }
   result
@@ -776,7 +786,7 @@ outliers_analysis <- eventReactive(input$run_analysis_no_outliers, {
 observeEvent(original_analysis(), {
   # Only update if we're not in a clearing state (to prevent stale results from previous model)
   if(!isTRUE(rv$is_clearing)) {
-    print("DEBUG: original_analysis() completed, checking if results match current model")
+    dbg("DEBUG: original_analysis() completed, checking if results match current model")
     result <- original_analysis()
     current_model_num <- if(!is.null(input$process_model) && input$process_model != "") {
       as.numeric(input$process_model)
@@ -789,15 +799,15 @@ observeEvent(original_analysis(), {
       if(is.null(current_model_num) || result$settings$model == current_model_num) {
         rv$analysis_results <- result
         rv$results_model <- result$settings$model
-        print(paste("DEBUG: rv$analysis_results updated for model", rv$results_model))
+        dbg(paste("DEBUG: rv$analysis_results updated for model", rv$results_model))
       } else {
-        print(paste("DEBUG: Skipping results update - results are for model", result$settings$model, "but current model is", current_model_num))
+        dbg(paste("DEBUG: Skipping results update - results are for model", result$settings$model, "but current model is", current_model_num))
       }
     } else {
-      print("DEBUG: Skipping results update - result doesn't have valid model information")
+      dbg("DEBUG: Skipping results update - result doesn't have valid model information")
     }
   } else {
-    print("DEBUG: Skipping analysis results update - in clearing state")
+    dbg("DEBUG: Skipping analysis results update - in clearing state")
   }
 }, ignoreNULL = TRUE)
 
@@ -805,7 +815,7 @@ observeEvent(original_analysis(), {
 observeEvent(outliers_analysis(), {
   # Only update if we're not in a clearing state (to prevent stale results from previous model)
   if(!isTRUE(rv$is_clearing)) {
-    print("DEBUG: outliers_analysis() completed, checking if results match current model")
+    dbg("DEBUG: outliers_analysis() completed, checking if results match current model")
     result <- outliers_analysis()
     current_model_num <- if(!is.null(input$process_model) && input$process_model != "") {
       as.numeric(input$process_model)
@@ -818,21 +828,21 @@ observeEvent(outliers_analysis(), {
       if(is.null(current_model_num) || result$settings$model == current_model_num) {
         rv$analysis_results <- result
         rv$results_model <- result$settings$model
-        print(paste("DEBUG: rv$analysis_results updated for model", rv$results_model))
+        dbg(paste("DEBUG: rv$analysis_results updated for model", rv$results_model))
       } else {
-        print(paste("DEBUG: Skipping results update - results are for model", result$settings$model, "but current model is", current_model_num))
+        dbg(paste("DEBUG: Skipping results update - results are for model", result$settings$model, "but current model is", current_model_num))
       }
     } else {
-      print("DEBUG: Skipping results update - result doesn't have valid model information")
+      dbg("DEBUG: Skipping results update - result doesn't have valid model information")
     }
   } else {
-    print("DEBUG: Skipping analysis results update - in clearing state")
+    dbg("DEBUG: Skipping analysis results update - in clearing state")
   }
 }, ignoreNULL = TRUE)
 
 # Combined results reactive - use stored results from rv
 analysis_results <- reactive({
-  print(paste("DEBUG: analysis_results reactive called. rv$analysis_results is NULL?", is.null(rv$analysis_results)))
+  dbg(paste("DEBUG: analysis_results reactive called. rv$analysis_results is NULL?", is.null(rv$analysis_results)))
   
   # Get current model number
   current_model_num <- if(!is.null(input$process_model) && input$process_model != "") {
@@ -849,7 +859,7 @@ analysis_results <- reactive({
       NULL
     }
     if(!is.null(stored_model) && stored_model != current_model_num) {
-      print(paste("DEBUG: Stored results are for model", stored_model, "but current model is", current_model_num, "- clearing results"))
+      dbg(paste("DEBUG: Stored results are for model", stored_model, "but current model is", current_model_num, "- clearing results"))
       rv$analysis_results <- NULL
       rv$results_model <- NULL
       return(NULL)
@@ -858,7 +868,7 @@ analysis_results <- reactive({
   
   # If model has changed (tracked separately), don't try to recover old results
   if(!is.null(current_model_num) && !is.null(rv$results_model) && current_model_num != rv$results_model) {
-    print(paste("DEBUG: Model changed from", rv$results_model, "to", current_model_num, "- not recovering old results"))
+    dbg(paste("DEBUG: Model changed from", rv$results_model, "to", current_model_num, "- not recovering old results"))
     return(NULL)
   }
   
@@ -869,7 +879,7 @@ analysis_results <- reactive({
     run_no_outliers_val <- if(!is.null(input$run_analysis_no_outliers) && length(input$run_analysis_no_outliers) > 0) input$run_analysis_no_outliers else 0
     
     if(run_analysis_val > 0 && (run_no_outliers_val == 0 || run_analysis_val >= run_no_outliers_val)) {
-      print("DEBUG: rv$analysis_results is NULL, trying to get from original_analysis()")
+      dbg("DEBUG: rv$analysis_results is NULL, trying to get from original_analysis()")
       tryCatch({
         result <- original_analysis()
         # Verify the recovered results match the current model
@@ -877,16 +887,16 @@ analysis_results <- reactive({
           if(is.null(current_model_num) || result$settings$model == current_model_num) {
             rv$analysis_results <- result
             rv$results_model <- if(!is.null(result$settings$model)) result$settings$model else current_model_num
-            print(paste("DEBUG: Retrieved results from original_analysis() for model", rv$results_model))
+            dbg(paste("DEBUG: Retrieved results from original_analysis() for model", rv$results_model))
           } else {
-            print(paste("DEBUG: Recovered results are for model", result$settings$model, "but current model is", current_model_num, "- not using them"))
+            dbg(paste("DEBUG: Recovered results are for model", result$settings$model, "but current model is", current_model_num, "- not using them"))
           }
         }
       }, error = function(e) {
-        print(paste("DEBUG: Error getting from original_analysis():", e$message))
+        dbg(paste("DEBUG: Error getting from original_analysis():", e$message))
       })
     } else if(run_no_outliers_val > 0) {
-      print("DEBUG: rv$analysis_results is NULL, trying to get from outliers_analysis()")
+      dbg("DEBUG: rv$analysis_results is NULL, trying to get from outliers_analysis()")
       tryCatch({
         result <- outliers_analysis()
         # Verify the recovered results match the current model
@@ -894,13 +904,13 @@ analysis_results <- reactive({
           if(is.null(current_model_num) || result$settings$model == current_model_num) {
             rv$analysis_results <- result
             rv$results_model <- if(!is.null(result$settings$model)) result$settings$model else current_model_num
-            print(paste("DEBUG: Retrieved results from outliers_analysis() for model", rv$results_model))
+            dbg(paste("DEBUG: Retrieved results from outliers_analysis() for model", rv$results_model))
           } else {
-            print(paste("DEBUG: Recovered results are for model", result$settings$model, "but current model is", current_model_num, "- not using them"))
+            dbg(paste("DEBUG: Recovered results are for model", result$settings$model, "but current model is", current_model_num, "- not using them"))
           }
         }
       }, error = function(e) {
-        print(paste("DEBUG: Error getting from outliers_analysis():", e$message))
+        dbg(paste("DEBUG: Error getting from outliers_analysis():", e$message))
       })
     }
   }
@@ -913,10 +923,11 @@ analysis_results <- reactive({
       NULL
     }
     if(!is.null(stored_model) && stored_model != current_model_num) {
-      print(paste("DEBUG: Final check - results model", stored_model, "doesn't match current", current_model_num, "- returning NULL"))
+      dbg(paste("DEBUG: Final check - results model", stored_model, "doesn't match current", current_model_num, "- returning NULL"))
       return(NULL)
     }
   }
   
   rv$analysis_results
 })
+
