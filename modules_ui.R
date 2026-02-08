@@ -110,32 +110,25 @@ ui <- fluidPage(
             h5("Influential Case Detection (Binary Outcomes)"),
             tags$div(
               tags$label("Cook's Distance Threshold:", style = "font-weight: bold;"),
-              tags$div(
-                style = "margin-top: 5px;",
-                tags$div(
-                  title = "Conservative threshold: 4/n (where n = sample size). This is the recommended default. Automatically adjusts for sample size - smaller samples use higher thresholds. More conservative (flags fewer cases as influential).",
-                  tags$label(
-                    tags$input(type = "radio", name = "cooks_threshold_type", value = "conservative", checked = "checked"),
+              radioButtons(
+                inputId = "cooks_threshold_type",
+                label = NULL,
+                choiceNames = list(
+                  tags$span(
                     "Conservative (4/n)",
-                    style = "font-weight: normal; margin-right: 15px;"
-                  )
-                ),
-                tags$div(
-                  title = "Liberal threshold: Fixed value of 1.0. More liberal (flags more cases as influential). Use when you want a more sensitive screen for influential cases.",
-                  tags$label(
-                    tags$input(type = "radio", name = "cooks_threshold_type", value = "liberal"),
+                    title = "Conservative threshold: 4/n (where n = sample size). This is the recommended default. Automatically adjusts for sample size - smaller samples use higher thresholds. More conservative (flags fewer cases as influential)."
+                  ),
+                  tags$span(
                     "Liberal (1.0)",
-                    style = "font-weight: normal; margin-right: 15px;"
+                    title = "Liberal threshold: Fixed value of 1.0. More liberal (flags more cases as influential). Use when you want a more sensitive screen for influential cases."
+                  ),
+                  tags$span(
+                    "Custom",
+                    title = "Custom threshold: Specify your own threshold between 0 and 1. Lower values are more conservative (flag more cases). Allows fine-tuning based on your specific analysis needs."
                   )
                 ),
-                tags$div(
-                  title = "Custom threshold: Specify your own threshold between 0 and 1. Lower values are more conservative (flag more cases). Allows fine-tuning based on your specific analysis needs.",
-                  tags$label(
-                    tags$input(type = "radio", name = "cooks_threshold_type", value = "custom"),
-                    "Custom",
-                    style = "font-weight: normal;"
-                  )
-                )
+                choiceValues = c("conservative", "liberal", "custom"),
+                selected = "conservative"
               )
             ),
             conditionalPanel(
@@ -162,32 +155,25 @@ ui <- fluidPage(
           div(style = "margin-left: 15px; margin-top: 10px;",
             tags$div(
               tags$label("Mean Centering:", style = "font-weight: bold;"),
-              tags$div(
-                style = "margin-top: 5px;",
-                tags$div(
-                  title = "No centering: Uses variables in their original scale. Appropriate when variables are already centered or when you want to interpret effects at zero values of predictors.",
-                  tags$label(
-                    tags$input(type = "radio", name = "centering", value = "0", checked = "checked"),
+              radioButtons(
+                inputId = "centering",
+                label = NULL,
+                choiceNames = list(
+                  tags$span(
                     "No centering",
-                    style = "font-weight: normal; margin-right: 15px;"
-                  )
-                ),
-                tags$div(
-                  title = "All variables that define products: Centers all variables (both continuous and categorical) that are involved in interaction terms. Simplifies interpretation of main effects when interactions are present.",
-                  tags$label(
-                    tags$input(type = "radio", name = "centering", value = "1"),
+                    title = "No centering: Uses variables in their original scale. Appropriate when variables are already centered or when you want to interpret effects at zero values of predictors."
+                  ),
+                  tags$span(
                     "All variables that define products",
-                    style = "font-weight: normal; margin-right: 15px;"
+                    title = "All variables that define products: Centers all variables (both continuous and categorical) that are involved in interaction terms. Simplifies interpretation of main effects when interactions are present."
+                  ),
+                  tags$span(
+                    "Only continuous variables that define products",
+                    title = "Only continuous variables that define products: Centers only continuous variables in interaction terms, leaving categorical variables uncentered. Useful when you want to preserve the original scale of categorical variables."
                   )
                 ),
-                tags$div(
-                  title = "Only continuous variables that define products: Centers only continuous variables in interaction terms, leaving categorical variables uncentered. Useful when you want to preserve the original scale of categorical variables.",
-                  tags$label(
-                    tags$input(type = "radio", name = "centering", value = "2"),
-                    "Only continuous variables that define products",
-                    style = "font-weight: normal;"
-                  )
-                )
+                choiceValues = c("0", "1", "2"),
+                selected = "0"
               )
             )
           )
@@ -210,24 +196,21 @@ ui <- fluidPage(
               ),
               tags$div(
                 tags$label("Bootstrap Confidence Interval Method:", style = "font-weight: bold;"),
-                tags$div(
-                  style = "margin-top: 5px;",
-                  tags$div(
-                    title = "Percentile bootstrap: Uses the percentiles (e.g., 2.5th and 97.5th) of the bootstrap distribution to form confidence intervals. Simpler and more straightforward. Generally recommended for most analyses.",
-                    tags$label(
-                      tags$input(type = "radio", name = "bootstrap_ci_method", value = "0", checked = "checked"),
+                radioButtons(
+                  inputId = "bootstrap_ci_method",
+                  label = NULL,
+                  choiceNames = list(
+                    tags$span(
                       "Percentile bootstrap",
-                      style = "font-weight: normal; margin-right: 15px;"
+                      title = "Percentile bootstrap: Uses the percentiles (e.g., 2.5th and 97.5th) of the bootstrap distribution to form confidence intervals. Simpler and more straightforward. Generally recommended for most analyses."
+                    ),
+                    tags$span(
+                      "Bias-corrected bootstrap",
+                      title = "Bias-corrected bootstrap: Adjusts for bias in the bootstrap distribution. Can be more accurate than percentile bootstrap but may be less stable with small samples. Use when you suspect bias in the distribution."
                     )
                   ),
-                  tags$div(
-                    title = "Bias-corrected bootstrap: Adjusts for bias in the bootstrap distribution. Can be more accurate than percentile bootstrap but may be less stable with small samples. Use when you suspect bias in the distribution.",
-                    tags$label(
-                      tags$input(type = "radio", name = "bootstrap_ci_method", value = "1"),
-                      "Bias-corrected bootstrap",
-                      style = "font-weight: normal;"
-                    )
-                  )
+                  choiceValues = c("0", "1"),
+                  selected = "0"
                 )
               )
             ),
