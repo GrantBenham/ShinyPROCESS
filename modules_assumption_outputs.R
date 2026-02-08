@@ -470,27 +470,29 @@
           is_outlier = is_outlier
         )
         
-        ggplot(plot_data, aes(x = fitted, y = residuals)) +
-          geom_point(aes(color = is_outlier), alpha = 0.6) +
-          scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
-          geom_smooth(method = "loess", se = FALSE, color = "blue") +
-          geom_hline(yintercept = 0, linetype = "dashed") +
-          theme_minimal() +
-          labs(title = "Residuals vs Fitted (Logistic Regression)",
-               x = "Fitted probabilities",
-               y = "Pearson residuals",
-               subtitle = subtitle_text,
-               color = "Influential (Cook's D)") +
-          theme(
-            text = element_text(size = 14),
-            axis.title = element_text(size = 16),
-            axis.text = element_text(size = 14),
-            plot.title = element_text(size = 18, hjust = 0.5),
-            plot.subtitle = element_text(size = 12, hjust = 0.5),
-            legend.position = "none",
-            axis.line = element_line(color = "black", linewidth = 0.5),
-            axis.ticks = element_line(color = "black", linewidth = 0.5)
-          )
+        suppressMessages(
+          ggplot(plot_data, aes(x = fitted, y = residuals)) +
+            geom_point(aes(color = is_outlier), alpha = 0.6) +
+            scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+            geom_smooth(method = "loess", se = FALSE, color = "blue") +
+            geom_hline(yintercept = 0, linetype = "dashed") +
+            theme_minimal() +
+            labs(title = "Residuals vs Fitted (Logistic Regression)",
+                 x = "Fitted probabilities",
+                 y = "Pearson residuals",
+                 subtitle = subtitle_text,
+                 color = "Influential (Cook's D)") +
+            theme(
+              text = element_text(size = 14),
+              axis.title = element_text(size = 16),
+              axis.text = element_text(size = 14),
+              plot.title = element_text(size = 18, hjust = 0.5),
+              plot.subtitle = element_text(size = 12, hjust = 0.5),
+              legend.position = "none",
+              axis.line = element_line(color = "black", linewidth = 0.5),
+              axis.ticks = element_line(color = "black", linewidth = 0.5)
+            )
+        )
       } else {
         model <- lm(model_formula, data = rv$original_dataset)
         
@@ -505,24 +507,26 @@
           is_outlier = is_outlier
         )
         
-        ggplot(plot_data, aes(x = fitted, y = residuals)) +
-          geom_point(aes(color = is_outlier), alpha = 0.6) +
-          scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
-          geom_smooth(method = "loess", se = FALSE, color = "blue") +
-          geom_hline(yintercept = 0, linetype = "dashed") +
-          theme_minimal() +
-          labs(title = "Residuals vs Fitted",
-               x = "Fitted values",
-               y = "Residuals") +
-          theme(
-            text = element_text(size = 14),
-            axis.title = element_text(size = 16),
-            axis.text = element_text(size = 14),
-            plot.title = element_text(size = 18, hjust = 0.5),
-            legend.position = "none",
-            axis.line = element_line(color = "black", linewidth = 0.5),
-            axis.ticks = element_line(color = "black", linewidth = 0.5)
-          )
+        suppressMessages(
+          ggplot(plot_data, aes(x = fitted, y = residuals)) +
+            geom_point(aes(color = is_outlier), alpha = 0.6) +
+            scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+            geom_smooth(method = "loess", se = FALSE, color = "blue") +
+            geom_hline(yintercept = 0, linetype = "dashed") +
+            theme_minimal() +
+            labs(title = "Residuals vs Fitted",
+                 x = "Fitted values",
+                 y = "Residuals") +
+            theme(
+              text = element_text(size = 14),
+              axis.title = element_text(size = 16),
+              axis.text = element_text(size = 14),
+              plot.title = element_text(size = 18, hjust = 0.5),
+              legend.position = "none",
+              axis.line = element_line(color = "black", linewidth = 0.5),
+              axis.ticks = element_line(color = "black", linewidth = 0.5)
+            )
+        )
       }
     }, error = function(e) {
       plot.new()
@@ -567,23 +571,25 @@
           is_outlier = is_outlier
         )
         
-        ggplot(plot_data, aes(x = fitted, y = sqrt_abs_resid)) +
-          geom_point(aes(color = is_outlier), alpha = 0.6) +
-          scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
-          geom_smooth(method = "loess", se = FALSE, color = "blue") +
-          theme_minimal() +
-          labs(title = "Scale-Location Plot",
-               x = "Fitted values",
-               y = expression(sqrt("|Standardized residuals|"))) +
-          theme(
-            text = element_text(size = 14),
-            axis.title = element_text(size = 16),
-            axis.text = element_text(size = 14),
-            plot.title = element_text(size = 18, hjust = 0.5),
-            legend.position = "none",
-            axis.line = element_line(color = "black", linewidth = 0.5),
-            axis.ticks = element_line(color = "black", linewidth = 0.5)
-          )
+        suppressMessages(
+          ggplot(plot_data, aes(x = fitted, y = sqrt_abs_resid)) +
+            geom_point(aes(color = is_outlier), alpha = 0.6) +
+            scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+            geom_smooth(method = "loess", se = FALSE, color = "blue") +
+            theme_minimal() +
+            labs(title = "Scale-Location Plot",
+                 x = "Fitted values",
+                 y = expression(sqrt("|Standardized residuals|"))) +
+            theme(
+              text = element_text(size = 14),
+              axis.title = element_text(size = 16),
+              axis.text = element_text(size = 14),
+              plot.title = element_text(size = 18, hjust = 0.5),
+              legend.position = "none",
+              axis.line = element_line(color = "black", linewidth = 0.5),
+              axis.ticks = element_line(color = "black", linewidth = 0.5)
+            )
+        )
       }
     }, error = function(e) {
       plot.new()

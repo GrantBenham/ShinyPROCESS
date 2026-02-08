@@ -163,7 +163,7 @@ diagnostic_report <- function(model) {
       
       if(length(terms) > 1) {
         # Calculate VIF for all predictors
-        vif_values <- suppressWarnings(car::vif(model))
+        vif_values <- suppressWarnings(suppressMessages(car::vif(model)))
         
         # Format VIF results
         sprintf("VIF for predictors: %s", 
