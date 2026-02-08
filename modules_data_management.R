@@ -468,6 +468,8 @@
       ""
     }
     
+    print(paste("DEBUG: mediator_list_ui renderUI - restore_pending:", restore_pending, "expected_count:", expected_count, "selected_count:", selected_count))
+    
     tagList(
       # Number of mediators dropdown
       selectInput("mediator_count", 
@@ -493,6 +495,7 @@
       }
     )
   })
+  outputOptions(output, "mediator_list_ui", suspendWhenHidden = FALSE)
   
   # Output reactive to indicate if dataset is loaded (for UI conditional rendering)
   output$dataset_loaded <- reactive({
@@ -503,6 +506,13 @@
   # Observer to clear all mediator inputs when mediator_count changes
   # This ensures a clean slate when user changes the number of mediators
   observeEvent(input$mediator_count, {
+    # CRITICAL: Check cooldown FIRST before any other checks
+    # This prevents clearing mediators immediately after they're restored
+    if(isTRUE(rv$mediator_restore_cooldown)) {
+      print("DEBUG: Mediator count changed during cooldown period - skipping clear to prevent loop")
+      return()
+    }
+    
     # Skip if we're in the middle of clearing (model change)
     if(isTRUE(rv$is_clearing)) {
       return()
@@ -665,6 +675,7 @@
     
     selectors
   })
+  outputOptions(output, "variable_selectors", suspendWhenHidden = FALSE)
   
   # Output to track if outcome is continuous
   output$outcome_is_continuous <- reactive({

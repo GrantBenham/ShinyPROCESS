@@ -56,7 +56,10 @@ server <- function(input, output, session) {
     previous_predictor_var = NULL,
     previous_outcome_var = NULL,
     previous_moderator_var = NULL,
-    previous_moderator2_var = NULL
+    previous_moderator2_var = NULL,
+    # Cooldown period after mediator restoration to prevent observer from clearing
+    mediator_restore_cooldown = FALSE,
+    mediator_restore_cooldown_time = NULL
   )
   
   # Load PROCESS function

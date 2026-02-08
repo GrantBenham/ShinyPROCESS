@@ -167,6 +167,15 @@ observeEvent(input$load_settings_file, {
       return()
     }
     
+    # Step 3.5: Ensure Variable Selection section is visible before restoration
+    # This prevents hidden UI from delaying mediator_count/mediator inputs
+    shinyjs::runjs("
+      (function() {
+        var details = document.getElementById('details_select_vars');
+        if (details) { details.open = true; }
+      })();
+    ")
+    
     # Step 4: Set model first (this triggers clearing)
     # Store settings first
     rv$settings_to_load <- settings
@@ -196,6 +205,12 @@ observeEvent(input$load_settings_file, {
 # Observer to restore settings after model clearing completes
 # This observer waits for: 1) settings to be pending, 2) clearing to complete, 3) model to be set
 observe({
+  # CRITICAL: Skip if mediators are being restored - the mediator observer will handle that
+  # This prevents the main observer from retriggering and clearing mediators
+  if(isTRUE(rv$restore_mediators_pending)) {
+    return()
+  }
+  
   # Only proceed if we have pending settings to load AND clearing is complete
   if(isTRUE(rv$load_settings_pending) && !isTRUE(rv$is_clearing) && !is.null(rv$settings_to_load)) {
     settings <- rv$settings_to_load
@@ -305,19 +320,19 @@ observe({
           print(paste("DEBUG: Expected mediator count:", rv$expected_mediator_count))
           print(paste("DEBUG: Mediator vars to restore:", paste(settings$mediator_vars[settings$mediator_vars != ""], collapse=", ")))
           
-          # Wait a moment for mediator_list_ui to re-render with the expected_mediator_count
-          # Then update mediator_count - this will trigger the observer, but it should skip clearing
-          # because restore_mediators_pending is TRUE
-          invalidateLater(200, session)
-          isolate({
-            tryCatch({
-              updateSelectInput(session, "mediator_count", selected = settings$mediator_count)
-              print(paste("DEBUG: Restored mediator_count:", settings$mediator_count))
-            }, error = function(e) {
-              print(paste("DEBUG: Error updating mediator_count:", e$message))
-              # If updateSelectInput fails, the mediator_list_ui might not be rendered yet
-              # The restore observer will retry after delay
-            })
+          # CRITICAL: Set cooldown BEFORE setting restore flags to prevent observer from clearing
+          rv$mediator_restore_cooldown <- TRUE
+          rv$mediator_restore_cooldown_time <- Sys.time()
+          print("DEBUG: Cooldown set BEFORE setting restore flags to prevent observer from clearing")
+          
+          # Try to update mediator_count immediately (renderUI should also set it)
+          # If it fails, the mediator restoration observer will retry
+          tryCatch({
+            updateSelectInput(session, "mediator_count", selected = as.character(settings$mediator_count))
+            print(paste("DEBUG: Attempted to update mediator_count to:", settings$mediator_count))
+          }, error = function(e) {
+            print(paste("DEBUG: mediator_count update failed (will retry):", e$message))
+            # The mediator restoration observer will retry after delay
           })
         }
         
@@ -485,159 +500,65 @@ observe({
   }
 })
 
-# Separate observer to restore mediators after mediator_count change propagates
-# This waits for the mediator_count change to complete and UI to regenerate before restoring individual mediators
+# Event-driven mediator restoration (restore only after mediator_count is set)
+observeEvent(input$mediator_count, {
+  if(!isTRUE(rv$restore_mediators_pending) ||
+     is.null(rv$mediator_vars_to_restore) ||
+     is.null(rv$original_dataset)) {
+    return()
+  }
+
+  expected_count <- sum(rv$mediator_vars_to_restore != "" & !is.na(rv$mediator_vars_to_restore))
+  current_count <- if(!is.null(input$mediator_count) && input$mediator_count != "" &&
+                      !is.na(as.numeric(input$mediator_count))) {
+    as.integer(input$mediator_count)
+  } else {
+    0
+  }
+
+  if(expected_count == 0 || current_count != expected_count) {
+    return()
+  }
+
+  vars <- names(rv$original_dataset)
+  restored_count <- 0
+
+  for(i in 1:min(expected_count, length(rv$mediator_vars_to_restore))) {
+    if(rv$mediator_vars_to_restore[i] != "" && rv$mediator_vars_to_restore[i] %in% vars) {
+      var_name <- paste0("mediator_m", i)
+      updateSelectInput(session, var_name,
+                        choices = c("Select variable" = "", vars),
+                        selected = rv$mediator_vars_to_restore[i])
+      restored_count <- restored_count + 1
+    }
+  }
+
+  if(restored_count == expected_count) {
+    rv$restore_mediators_pending <- FALSE
+    rv$mediator_vars_to_restore <- NULL
+    rv$expected_mediator_count <- NULL
+    rv$mediator_restore_retry_count <- NULL
+    rv$load_settings_pending <- FALSE
+    rv$settings_to_load <- NULL
+
+    showNotification("Analysis settings loaded successfully!", type = "default", duration = 3)
+    print("DEBUG: Settings restoration completed (including mediators and labels)")
+  }
+}, ignoreInit = TRUE)
+
+# Observer to clear cooldown after the delay period
 observe({
-  if(isTRUE(rv$restore_mediators_pending) && !is.null(rv$mediator_vars_to_restore) && !is.null(rv$original_dataset)) {
-    # CRITICAL: Check if we're still loading settings - if not, give up to prevent infinite loops
-    if(!isTRUE(rv$load_settings_pending)) {
-      print("DEBUG: load_settings_pending is FALSE - clearing mediator restore flags to prevent infinite loop")
-      rv$restore_mediators_pending <- FALSE
-      rv$mediator_vars_to_restore <- NULL
-      rv$expected_mediator_count <- NULL
-      return()
-    }
-    
-    # Initialize retry counter if it doesn't exist
-    if(is.null(rv$mediator_restore_retry_count)) {
-      rv$mediator_restore_retry_count <- 0
-    }
-    
-    # Maximum retries to prevent infinite loops (10 seconds total with 500ms intervals)
-    max_retries <- 20L
-    if(rv$mediator_restore_retry_count >= max_retries) {
-      print(paste("DEBUG: Maximum retries (", max_retries, ") reached - clearing mediator restore flags"))
-      rv$restore_mediators_pending <- FALSE
-      rv$mediator_vars_to_restore <- NULL
-      rv$expected_mediator_count <- NULL
-      rv$mediator_restore_retry_count <- NULL
-      return()
-    }
-    
-    # Get the expected count from the stored mediator vars (non-empty entries)
-    expected_count_from_vars <- sum(rv$mediator_vars_to_restore != "" & !is.na(rv$mediator_vars_to_restore))
-    
-    # Check if mediator_count is set in the UI - if not, wait for UI to render
-    current_count <- if(!is.null(input$mediator_count) && input$mediator_count != "" && !is.na(as.numeric(input$mediator_count))) {
-      as.integer(input$mediator_count)
+  if(isTRUE(rv$mediator_restore_cooldown) && !is.null(rv$mediator_restore_cooldown_time)) {
+    # Check if 10 seconds have passed
+    elapsed <- as.numeric(difftime(Sys.time(), rv$mediator_restore_cooldown_time, units = "secs"))
+    if(elapsed >= 10) {
+      rv$mediator_restore_cooldown <- FALSE
+      rv$mediator_restore_cooldown_time <- NULL
+      print("DEBUG: Cooldown period ended (10 seconds elapsed) - mediator_count observer can now clear if needed")
     } else {
-      0
+      # Check again in 1 second
+      invalidateLater(1000, session)
     }
-    
-    # Use expected_count_from_vars as the target count
-    # This is the number of non-empty mediator vars we want to restore
-    expected_count <- expected_count_from_vars
-    
-    # If mediator_count is not set yet, wait for UI to render and mediator_count to be updated
-    if(current_count == 0 && expected_count > 0) {
-      rv$mediator_restore_retry_count <- rv$mediator_restore_retry_count + 1
-      print(paste("DEBUG: mediator_count not set yet (expected", expected_count, "), waiting for UI to render... (retry", rv$mediator_restore_retry_count, "/", max_retries, ")"))
-      invalidateLater(500, session)
-      return()
-    }
-    
-    # If mediator_count is set but doesn't match expected, wait a bit more for it to update
-    # BUT: If the mismatch persists and we're not loading settings anymore, give up
-    if(current_count > 0 && current_count != expected_count && expected_count > 0) {
-      rv$mediator_restore_retry_count <- rv$mediator_restore_retry_count + 1
-      print(paste("DEBUG: mediator_count is", current_count, "but expected", expected_count, ", waiting for update... (retry", rv$mediator_restore_retry_count, "/", max_retries, ")"))
-      invalidateLater(300, session)
-      return()
-    }
-    
-    # Reset retry counter when we proceed to the next step
-    rv$mediator_restore_retry_count <- 0
-    
-    # Wait for mediator_count change to propagate and UI to regenerate
-    # The mediator_count observer clears mediators, then the UI regenerates the dropdown boxes
-    # We need to wait for both to complete before restoring values
-    invalidateLater(1200, session)
-    
-    isolate({
-      # Double-check conditions after delay
-      if(isTRUE(rv$restore_mediators_pending) && !is.null(rv$mediator_vars_to_restore) && !is.null(rv$original_dataset)) {
-        vars <- names(rv$original_dataset)
-        
-        # Get the current mediator count from the input (should match expected_count now)
-        current_count_after_delay <- if(!is.null(input$mediator_count) && input$mediator_count != "" && !is.na(as.numeric(input$mediator_count))) {
-          as.integer(input$mediator_count)
-        } else {
-          0
-        }
-        
-        # Use expected_count (from vars) as the target, but verify current_count matches
-        print(paste("DEBUG: Attempting to restore mediators - current_count:", current_count_after_delay, "expected_count:", expected_count, "mediator_vars length:", length(rv$mediator_vars_to_restore)))
-        
-        # Only restore mediators if we have vars to restore and current_count matches expected
-        if(expected_count > 0 && current_count_after_delay == expected_count) {
-          print(paste("DEBUG: Restoring", expected_count, "mediator(s) after mediator_count change"))
-          
-          # Try to restore each mediator, with error handling in case UI isn't ready
-          restored_count <- 0
-          for(i in 1:min(expected_count, length(rv$mediator_vars_to_restore))) {
-            if(rv$mediator_vars_to_restore[i] != "" && rv$mediator_vars_to_restore[i] %in% vars) {
-              var_name <- paste0("mediator_m", i)
-              tryCatch({
-                updateSelectInput(session, var_name,
-                                 choices = c("Select variable" = "", vars),
-                                 selected = rv$mediator_vars_to_restore[i])
-                print(paste("DEBUG: Successfully restored", var_name, "=", rv$mediator_vars_to_restore[i]))
-                restored_count <- restored_count + 1
-              }, error = function(e) {
-                print(paste("DEBUG: Error restoring", var_name, "- UI may not be ready yet:", e$message))
-                # If this fails, we'll retry in the next cycle
-              })
-            }
-          }
-          
-          if(restored_count == expected_count) {
-            # All mediators restored successfully
-            rv$restore_mediators_pending <- FALSE
-            rv$mediator_vars_to_restore <- NULL
-            rv$expected_mediator_count <- NULL
-            rv$mediator_restore_retry_count <- NULL
-            print(paste("DEBUG: Mediator restoration completed - all", restored_count, "mediator(s) restored"))
-          } else {
-            # Some mediators failed to restore, retry after delay (with retry counter)
-            rv$mediator_restore_retry_count <- if(is.null(rv$mediator_restore_retry_count)) 0 else rv$mediator_restore_retry_count + 1
-            if(rv$mediator_restore_retry_count < max_retries) {
-              print(paste("DEBUG: Only", restored_count, "of", expected_count, "mediators restored, retrying... (retry", rv$mediator_restore_retry_count, "/", max_retries, ")"))
-              invalidateLater(500, session)
-            } else {
-              print("DEBUG: Maximum retries reached during mediator restoration - clearing flags")
-              rv$restore_mediators_pending <- FALSE
-              rv$mediator_vars_to_restore <- NULL
-              rv$expected_mediator_count <- NULL
-              rv$mediator_restore_retry_count <- NULL
-            }
-          }
-        } else {
-          print(paste("DEBUG: Skipping mediator restoration - current_count:", current_count_after_delay, "expected_count:", expected_count))
-          # If current_count doesn't match expected, retry after delay (with retry counter)
-          if(current_count_after_delay != expected_count && expected_count > 0) {
-            rv$mediator_restore_retry_count <- if(is.null(rv$mediator_restore_retry_count)) 0 else rv$mediator_restore_retry_count + 1
-            if(rv$mediator_restore_retry_count < max_retries) {
-              print(paste("DEBUG: mediator_count mismatch - retrying... (retry", rv$mediator_restore_retry_count, "/", max_retries, ")"))
-              invalidateLater(500, session)
-            } else {
-              # Give up and clear flags
-              rv$restore_mediators_pending <- FALSE
-              rv$mediator_vars_to_restore <- NULL
-              rv$expected_mediator_count <- NULL
-              rv$mediator_restore_retry_count <- NULL
-              print("DEBUG: Mediator restoration failed - maximum retries reached, clearing flags")
-            }
-          } else {
-            # Give up and clear flags
-            rv$restore_mediators_pending <- FALSE
-            rv$mediator_vars_to_restore <- NULL
-            rv$expected_mediator_count <- NULL
-            rv$mediator_restore_retry_count <- NULL
-            print("DEBUG: Mediator restoration failed - clearing flags")
-          }
-        }
-      }
-    })
   }
 })
 
@@ -695,19 +616,28 @@ observe({
         # so when auto-label observer runs, it will see predictor_changed = FALSE
         invalidateLater(300, session)
         isolate({
-          # Now clear load_settings_pending - at this point:
-          # 1. Variables are restored
-          # 2. rv$previous_*_var values are set to restored variables
-          # 3. Labels are restored from JSON
-          # 4. Auto-label observer will see predictor_changed = FALSE (because previous matches current)
-          #    and labels don't match variables, so it won't update them
-          rv$load_settings_pending <- FALSE
-          rv$settings_to_load <- NULL
-          print("DEBUG: load_settings_pending cleared - auto-label observer can now run")
+          # CRITICAL: Don't clear load_settings_pending here if model requires mediators!
+          # The mediator restoration observer will clear it after mediators are restored.
+          # If model doesn't require mediators, clear it now.
+          current_model <- if(!is.null(input$process_model) && input$process_model != "") {
+            as.numeric(input$process_model)
+          } else {
+            NULL
+          }
+          
+          # If model doesn't require mediators, safe to clear now
+          if(is.null(current_model) || current_model < 4 || current_model > 92) {
+            rv$load_settings_pending <- FALSE
+            rv$settings_to_load <- NULL
+            print("DEBUG: load_settings_pending cleared - no mediators required")
+            showNotification("Analysis settings loaded successfully!", type = "default", duration = 3)
+            print("DEBUG: Settings restoration completed (including labels)")
+          } else {
+            # Model requires mediators - wait for mediator restoration observer to clear it
+            print("DEBUG: Waiting for mediators to restore before clearing load_settings_pending")
+            # Don't show notification yet - mediator observer will show it when done
+          }
         })
-        
-        showNotification("Analysis settings loaded successfully!", type = "default", duration = 3)
-        print("DEBUG: Settings restoration completed (including labels)")
       }
     })
   }

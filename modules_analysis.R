@@ -18,10 +18,54 @@
 # HELPER FUNCTION: Run PROCESS Analysis (Shared by both original and outliers-removed)
 # ============================================================================
 run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outliers_info = NULL) {
+  tryCatch({
   # Clear any previous validation errors at the start
   rv$validation_error <- NULL
   
   print(paste("DEBUG: ===== run_process_analysis STARTED (outliers_removed =", remove_outliers, ") ====="))
+
+  # Extra diagnostics for vector-length issues in logical checks
+  debug_input <- function(name, value) {
+    value_len <- if(is.null(value)) 0 else length(value)
+    value_type <- if(is.null(value)) "NULL" else class(value)[1]
+    value_preview <- tryCatch({
+      if(is.null(value)) "NULL" else paste(head(as.character(value), 3), collapse = ", ")
+    }, error = function(e) "<unprintable>")
+    print(paste("DEBUG: INPUT", name, "- type:", value_type, "len:", value_len, "value:", value_preview))
+  }
+  is_nonempty_scalar <- function(value) {
+    !is.null(value) && length(value) == 1 && nzchar(as.character(value))
+  }
+  debug_input("input$process_model", input$process_model)
+  debug_input("input$predictor_var", input$predictor_var)
+  debug_input("input$outcome_var", input$outcome_var)
+  debug_input("input$moderator_var", input$moderator_var)
+  debug_input("input$moderator2_var", input$moderator2_var)
+  debug_input("input$mediator_count", input$mediator_count)
+  debug_input("input$covariates", input$covariates)
+  debug_input("input$use_bootstrap", input$use_bootstrap)
+  debug_input("input$bootstrap_ci_method", input$bootstrap_ci_method)
+  debug_input("input$pairwise_contrasts", input$pairwise_contrasts)
+  debug_input("input$xmint", input$xmint)
+  debug_input("input$xmtest", input$xmtest)
+  debug_input("input$probe_interactions", input$probe_interactions)
+  debug_input("input$conditioning_values", input$conditioning_values)
+  debug_input("input$probe_threshold", input$probe_threshold)
+  debug_input("input$covmy", input$covmy)
+  debug_input("input$covcoeff", input$covcoeff)
+  debug_input("input$effsize", input$effsize)
+  debug_input("input$stand", input$stand)
+  debug_input("input$normal", input$normal)
+  debug_input("input$matrices", input$matrices)
+  debug_input("input$ssquares", input$ssquares)
+  debug_input("input$modelres", input$modelres)
+  debug_input("input$total", input$total)
+  debug_input("input$plot", input$plot)
+  debug_input("input$describe", input$describe)
+  debug_input("input$listmiss", input$listmiss)
+  debug_input("input$diagnose", input$diagnose)
+  debug_input("input$seed", input$seed)
+  debug_input("input$decimals", input$decimals)
   
   # Basic validation
   shiny::validate(
@@ -39,14 +83,14 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
   # Moderation models require moderator
   if(model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74, 83:92)) {
     shiny::validate(
-      need(!is.null(input$moderator_var) && input$moderator_var != "", 
+      need(is_nonempty_scalar(input$moderator_var), 
            "Moderator variable (W) is required for this model")
     )
     
     # Models with second moderator require it to be selected
     if(model_num %in% models_with_second_moderator) {
       shiny::validate(
-        need(!is.null(input$moderator2_var) && input$moderator2_var != "", 
+        need(is_nonempty_scalar(input$moderator2_var), 
              "Second moderator variable (Z) is required for this model")
       )
     }
@@ -116,7 +160,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
   # Model 5: First and Second Stage Moderation
   if(model_num == 5) {
     shiny::validate(
-      need(!is.null(input$moderator_var) && input$moderator_var != "", 
+      need(is_nonempty_scalar(input$moderator_var), 
            "Model 5 requires moderator variable W")
     )
   }
@@ -138,20 +182,20 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
   models_with_moderators_disabled <- c(4, 6, 80:82)
   
   all_vars <- character(0)
-  if(!is.null(input$predictor_var) && input$predictor_var != "") {
+  if(is_nonempty_scalar(input$predictor_var)) {
     all_vars <- c(all_vars, input$predictor_var)
   }
-  if(!is.null(input$outcome_var) && input$outcome_var != "") {
+  if(is_nonempty_scalar(input$outcome_var)) {
     all_vars <- c(all_vars, input$outcome_var)
   }
   if((model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) &&
      !(model_num %in% models_with_moderators_disabled)) {
-    if(!is.null(input$moderator_var) && input$moderator_var != "") {
+    if(is_nonempty_scalar(input$moderator_var)) {
       all_vars <- c(all_vars, input$moderator_var)
     }
   }
   if(model_num %in% models_with_second_moderator) {
-    if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+    if(is_nonempty_scalar(input$moderator2_var)) {
       all_vars <- c(all_vars, input$moderator2_var)
     }
   }
@@ -171,8 +215,8 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     
     if(model_num == 74) {
       if(length(duplicate_vars) == 1 && 
-         !is.null(input$predictor_var) && input$predictor_var != "" &&
-         !is.null(input$moderator_var) && input$moderator_var != "" &&
+         is_nonempty_scalar(input$predictor_var) &&
+         is_nonempty_scalar(input$moderator_var) &&
          input$predictor_var == input$moderator_var &&
          duplicate_vars[1] == input$predictor_var) {
         print("DEBUG: Model 74 - X=W is allowed, proceeding with analysis")
@@ -211,10 +255,10 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
       all_vars_for_complete <- c(all_vars_for_complete, mediator_vars_current)
     }
-    if(!is.null(input$moderator_var) && input$moderator_var != "") {
+    if(is_nonempty_scalar(input$moderator_var)) {
       all_vars_for_complete <- c(all_vars_for_complete, input$moderator_var)
     }
-    if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+    if(is_nonempty_scalar(input$moderator2_var)) {
       all_vars_for_complete <- c(all_vars_for_complete, input$moderator2_var)
     }
     if(!is.null(input$covariates) && length(input$covariates) > 0) {
@@ -236,14 +280,14 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       model = as.numeric(input$process_model),
       centering = input$centering,
       use_bootstrap = input$use_bootstrap,
-      boot_samples = if(input$use_bootstrap) input$boot_samples else NULL,
+      boot_samples = if(isTRUE(input$use_bootstrap)) input$boot_samples else NULL,
       hc_method = input$hc_method,
       conf_level = input$conf_level,
       dataset_name = tools::file_path_sans_ext(basename(input$data_file$name)),
       original_n = nrow(rv$original_dataset),
       outliers_removed = remove_outliers,
-      outliers_count = if(remove_outliers && !is.null(outliers_info)) outliers_info$count else 0,
-      outliers_threshold = if(remove_outliers && !is.null(outliers_info)) {
+    outliers_count = if(isTRUE(remove_outliers) && !is.null(outliers_info)) outliers_info$count else 0,
+    outliers_threshold = if(isTRUE(remove_outliers) && !is.null(outliers_info)) {
         outliers_info$threshold
       } else {
         if(is_binary_variable(rv$original_dataset, input$outcome_var)) {
@@ -252,7 +296,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
           input$residual_threshold
         }
       },
-      outliers_method = if(remove_outliers && !is.null(outliers_info)) {
+    outliers_method = if(isTRUE(remove_outliers) && !is.null(outliers_info)) {
         outliers_info$method
       } else {
         if(is_binary_variable(rv$original_dataset, input$outcome_var)) {
@@ -265,7 +309,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       outcome_var = input$outcome_var,
       mediator_vars = mediator_vars_collected(),
       moderator_var = input$moderator_var,
-      moderator2_var = if(!is.null(input$moderator2_var) && input$moderator2_var != "") input$moderator2_var else NULL,
+    moderator2_var = if(is_nonempty_scalar(input$moderator2_var)) input$moderator2_var else NULL,
       covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else NULL,
       probe_interactions = if(!is.null(input$probe_interactions)) input$probe_interactions else FALSE,
       probe_threshold = if(!is.null(input$probe_threshold)) input$probe_threshold else "p < .10",
@@ -275,8 +319,8 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     
     # Early validation check for W and Z same variable
     if(model_num %in% models_with_second_moderator) {
-      if(!is.null(input$moderator_var) && !is.null(input$moderator2_var) && 
-         input$moderator_var != "" && input$moderator2_var != "" &&
+      if(is_nonempty_scalar(input$moderator_var) && 
+         is_nonempty_scalar(input$moderator2_var) &&
          input$moderator_var == input$moderator2_var) {
         showNotification(
           "Error: W and Z moderators must be different variables. Please select different variables for the first and second moderators.",
@@ -294,8 +338,8 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     
     # Build PROCESS arguments
     # Handle centering - ensure we have a valid numeric value
-    center_value <- if(!is.null(input$centering) && input$centering != "" && length(input$centering) > 0) {
-      as.numeric(input$centering)
+    center_value <- if(!is.null(input$centering) && length(input$centering) > 0 && input$centering[1] != "") {
+      as.numeric(input$centering[1])
     } else {
       0
     }
@@ -303,7 +347,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     if(is.null(center_value) || length(center_value) == 0 || is.na(center_value)) {
       center_value <- 0
     }
-    if(model_num == 4 && input$xmint) {
+    if(model_num == 4 && isTRUE(input$xmint)) {
       center_value <- 0
     }
     
@@ -314,10 +358,10 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       model = model_num,
       center = center_value,
       conf = input$conf_level,
-      modelbt = if(input$use_bootstrap) 1 else 0,
-      boot = if(input$use_bootstrap) input$boot_samples else 0,
+      modelbt = if(isTRUE(input$use_bootstrap)) 1 else 0,
+      boot = if(isTRUE(input$use_bootstrap)) input$boot_samples else 0,
       bc = {
-        if(input$use_bootstrap && !is.null(input$bootstrap_ci_method) && 
+        if(isTRUE(input$use_bootstrap) && !is.null(input$bootstrap_ci_method) && 
            input$bootstrap_ci_method != "" && length(input$bootstrap_ci_method) > 0) {
           bc_val <- as.numeric(input$bootstrap_ci_method)
           if(is.null(bc_val) || length(bc_val) == 0 || is.na(bc_val)) 0 else bc_val
@@ -326,7 +370,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
         }
       },
       hc = if(input$hc_method == "none") 5 else as.numeric(input$hc_method),
-      covcoeff = if(input$covcoeff) 1 else 0,
+      covcoeff = if(isTRUE(input$covcoeff)) 1 else 0,
       cov = if(!is.null(input$covariates) && length(input$covariates) > 0 && 
                  !all(input$covariates == "")) {
         input$covariates
@@ -346,7 +390,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
         }
         process_args$m <- mediator_arg
         
-        if(model_num %in% c(4, 6) && input$pairwise_contrasts && length(current_mediators) > 1) {
+        if(model_num %in% c(4, 6) && isTRUE(input$pairwise_contrasts) && length(current_mediators) > 1) {
           process_args$contrast <- 1
         }
       }
@@ -354,7 +398,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     
     # Add moderators
     if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74, 83:92)) {
-      if(!is.null(input$moderator_var) && input$moderator_var != "") {
+      if(is_nonempty_scalar(input$moderator_var)) {
         process_args$w <- input$moderator_var
         # Always set jn=1 for moderation models when probing is enabled to ensure JN plot data is generated
         # Check if probe_interactions is enabled (handle NULL from old JSON files)
@@ -368,8 +412,8 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
           process_args$jn <- 1
           # Set moments based on conditioning_values if probe_interactions is enabled
           # Default to "1" (percentiles) if conditioning_values is NULL or empty
-          cond_val <- if(!is.null(input$conditioning_values) && length(input$conditioning_values) > 0 && input$conditioning_values != "") {
-            input$conditioning_values
+        cond_val <- if(!is.null(input$conditioning_values) && length(input$conditioning_values) > 0 && input$conditioning_values[1] != "") {
+          input$conditioning_values[1]
           } else {
             "1"  # Default to percentiles
           }
@@ -378,7 +422,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       }
       
       if(model_num %in% models_with_second_moderator) {
-        if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+        if(is_nonempty_scalar(input$moderator2_var)) {
           process_args$z <- input$moderator2_var
         }
       }
@@ -413,7 +457,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
             rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and the outcome (Y).", input$outcome_var)
             return(NULL)
           }
-          if(!is.null(input$moderator_var) && input$moderator_var != "" && input$moderator_var %in% input$covariates) {
+          if(is_nonempty_scalar(input$moderator_var) && input$moderator_var %in% input$covariates) {
             showNotification(
               sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (W). Please remove it from one of these roles.", input$moderator_var),
               type = "error",
@@ -422,7 +466,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
             rv$validation_error <- sprintf("Variable '%s' cannot be used as both a covariate and a moderator (W).", input$moderator_var)
             return(NULL)
           }
-          if(!is.null(input$moderator2_var) && input$moderator2_var != "" && input$moderator2_var %in% input$covariates) {
+          if(is_nonempty_scalar(input$moderator2_var) && input$moderator2_var %in% input$covariates) {
             showNotification(
               sprintf("Error: When 'Covariance matrix for Y' is checked, variable '%s' cannot be used as both a covariate and a moderator (Z). Please remove it from one of these roles.", input$moderator2_var),
               type = "error",
@@ -448,15 +492,15 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       }
       process_args$covmy <- 1
     }
-    if(input$describe) process_args$describe <- 1
-    if(input$listmiss) process_args$listmiss <- 1
-    if(input$diagnose) process_args$diagnose <- 1
+    if(isTRUE(input$describe)) process_args$describe <- 1
+    if(isTRUE(input$listmiss)) process_args$listmiss <- 1
+    if(isTRUE(input$diagnose)) process_args$diagnose <- 1
     if(isTRUE(input$ssquares)) process_args$ssquares <- 1
     if(isTRUE(input$modelres)) process_args$modelres <- 1
     
     # xmint handling
-    if(model_num == 4 && input$xmint) {
-      if(input$xmtest) {
+    if(model_num == 4 && isTRUE(input$xmint)) {
+      if(isTRUE(input$xmtest)) {
         stop("Error: 'Allow X by M interaction' and 'Test for X by M interaction' cannot both be enabled. When 'Allow X by M interaction' is enabled, Model 4 is converted to Model 74, which makes the test option unavailable. Please disable one of these options.")
       }
       process_args$xmint <- 1
@@ -504,7 +548,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     }
     
     if(probe_interactions_enabled_for_intprobe) {
-      probe_text <- if(!is.null(input$probe_threshold) && input$probe_threshold != "") {
+      probe_text <- if(is_nonempty_scalar(input$probe_threshold)) {
         input$probe_threshold
       } else {
         "p < .10"
@@ -522,8 +566,11 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
         process_args$intprobe <- probe_val
       }
     }
-    if(!is.na(input$seed) && !is.null(input$seed) && input$seed >= 1) process_args$seed <- input$seed
-    if(input$decimals != 4) process_args$decimals <- paste0("9.", input$decimals)
+    seed_value <- if(!is.null(input$seed) && length(input$seed) > 0) input$seed[1] else NA
+    if(!is.na(seed_value) && seed_value >= 1) process_args$seed <- seed_value
+    if(!is.null(input$decimals) && length(input$decimals) > 0 && input$decimals != 4) {
+      process_args$decimals <- paste0("9.", input$decimals)
+    }
     
     # Debug: Print all process_args to identify any NULL or empty values
     print("DEBUG: ===== PROCESS ARGUMENTS BEFORE EXECUTION =====")
@@ -533,13 +580,24 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
         print(paste("DEBUG: process_args$", arg_name, " = NULL", sep = ""))
       } else if(length(arg_value) == 0) {
         print(paste("DEBUG: process_args$", arg_name, " = (length 0)", sep = ""))
-      } else if(is.character(arg_value) && arg_value == "") {
+      } else if(is.character(arg_value) && length(arg_value) == 1 && arg_value == "") {
         print(paste("DEBUG: process_args$", arg_name, " = '' (empty string)", sep = ""))
       } else {
         print(paste("DEBUG: process_args$", arg_name, " = ", paste(arg_value, collapse = ", "), sep = ""))
       }
     }
     print("DEBUG: ===== END PROCESS ARGUMENTS =====")
+
+    # Additional context for debugging analysis failures
+    print(paste("DEBUG: complete_cases count =", n_complete, "of", nrow(analysis_dataset)))
+    print(paste("DEBUG: all_vars_for_complete =", paste(all_vars_for_complete, collapse = ", ")))
+    print(paste("DEBUG: mediator_vars_current =", {
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        paste(mediator_vars_current, collapse = ", ")
+      } else {
+        "NONE"
+      }
+    }))
     
     # Run PROCESS
     tryCatch({
@@ -547,7 +605,13 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       options(width = 115)
       pdf(NULL)
       process_output <- capture.output({
-        result <- do.call(process, process_args)
+        result <- withCallingHandlers(
+          do.call(process, process_args),
+          warning = function(w) {
+            print(paste("DEBUG: WARNING during PROCESS execution:", conditionMessage(w)))
+            invokeRestart("muffleWarning")
+          }
+        )
       })
       dev.off()
       options(width = old_width$width)
@@ -555,6 +619,23 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       # Store results including bootstrap data and plot data if available
       bootstrap_data <- NULL
       plot_data <- NULL
+
+      # Debug: summarize result object
+      print(paste("DEBUG: PROCESS result class =", paste(class(result), collapse = ", ")))
+      print(paste("DEBUG: PROCESS result length =", if(is.null(result)) 0 else length(result)))
+      if(is.list(result)) {
+        print(paste("DEBUG: PROCESS result names =", paste(names(result), collapse = ", ")))
+      }
+      if(is.data.frame(result)) {
+        print(paste("DEBUG: PROCESS result data.frame dims =", nrow(result), "x", ncol(result)))
+      } else if(is.matrix(result)) {
+        print(paste("DEBUG: PROCESS result matrix dims =", nrow(result), "x", ncol(result)))
+      }
+      print(paste("DEBUG: PROCESS output length =", length(process_output)))
+      if(length(process_output) > 0) {
+        print(paste("DEBUG: PROCESS output first line =", process_output[1]))
+        print(paste("DEBUG: PROCESS output last line =", process_output[length(process_output)]))
+      }
       
       if(is_mod_model && !is.null(result)) {
         if(is.list(result)) {
@@ -588,7 +669,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
             plot_data <- plot_data[rowSums(is.na(plot_data) | plot_data == 99999) < ncol(plot_data), ]
           }
         }
-      } else if(input$use_bootstrap && !is.null(result)) {
+      } else if(isTRUE(input$use_bootstrap) && !is.null(result)) {
         if(is.data.frame(result)) {
           bootstrap_data <- result
         } else if(is.list(result) && length(result) > 0) {
@@ -619,11 +700,24 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       return(results_list)
     }, error = function(e) {
       print(paste("DEBUG: ERROR in PROCESS execution:", e$message))
+      print("DEBUG: Stack trace (sys.calls):")
+      print(sys.calls())
       showNotification(paste("Error running PROCESS analysis:", e$message), type = "error", duration = 10)
       rv$analysis_results <- NULL
       rv$validation_error <- conditionMessage(e)
       return(NULL)
     })
+  })
+  }, error = function(e) {
+    print(paste("DEBUG: UNCAUGHT ERROR in run_process_analysis:", e$message))
+    print("DEBUG: Stack trace (traceback):")
+    traceback()
+    print("DEBUG: Stack trace (sys.calls):")
+    print(sys.calls())
+    showNotification(paste("Error running PROCESS analysis:", e$message), type = "error", duration = 10)
+    rv$analysis_results <- NULL
+    rv$validation_error <- conditionMessage(e)
+    return(NULL)
   })
 }
 
@@ -635,6 +729,11 @@ original_analysis <- eventReactive(input$run_analysis, {
   result <- run_process_analysis(rv$original_dataset, remove_outliers = FALSE, outliers_info = NULL)
   if(!is.null(result)) {
     rv$analysis_results <- result
+  } else {
+    print("DEBUG: original_analysis() returned NULL")
+    if(!is.null(rv$validation_error)) {
+      print(paste("DEBUG: rv$validation_error =", rv$validation_error))
+    }
   }
   result
 })
@@ -664,6 +763,11 @@ outliers_analysis <- eventReactive(input$run_analysis_no_outliers, {
   result <- run_process_analysis(reduced_data, remove_outliers = TRUE, outliers_info = outliers_info)
   if(!is.null(result)) {
     rv$analysis_results <- result
+  } else {
+    print("DEBUG: outliers_analysis() returned NULL")
+    if(!is.null(rv$validation_error)) {
+      print(paste("DEBUG: rv$validation_error =", rv$validation_error))
+    }
   }
   result
 }, ignoreNULL = TRUE)
