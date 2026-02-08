@@ -609,6 +609,17 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       old_width <- options("width")
       options(width = 115)
       pdf(NULL)
+      # Workaround: PROCESS logistic branch can reference dfres without defining it.
+      # Only set if Y is binary and dfres is not already defined by PROCESS.
+      if(is_binary_variable(process_data, input$outcome_var)) {
+        if(!exists("dfres", envir = environment(process), inherits = FALSE)) {
+          assign("dfres", nrow(process_data), envir = environment(process))
+          dbg(paste("DEBUG: Set dfres in PROCESS env to", nrow(process_data), "for binary outcome"))
+        } else {
+          dbg("DEBUG: dfres already exists in PROCESS env; skipping fallback")
+        }
+      }
+
       process_output <- capture.output({
         result <- withCallingHandlers(
           do.call(process, process_args),
