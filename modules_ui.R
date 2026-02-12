@@ -7,7 +7,7 @@
 ui <- fluidPage(
   useShinyjs(),
   tags$style(type="text/css", "body { max-width: 1800px; margin: auto; }"),
-  titlePanel("PROCESS V5 Analysis with Hayes PROCESS for R"),
+  titlePanel("gbPROCESS - R Shiny App for Hayes PROCESS Analysis"),
   
   sidebarLayout(
     sidebarPanel(
