@@ -12,3 +12,5 @@ IMPLEMENTATION_INSTRUCTIONS.md
 *.R.checkpoint*
 *.md
 *_backup
+Archived files/**
+Archived\ files/**
