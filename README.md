@@ -23,7 +23,7 @@ This application uses a modular architecture for improved maintainability and or
 
 ### Main Application File
 
-**`gbPROCESS.R`** (~2,557 lines)
+**`gbPROCESS.R`** (~2,588 lines)
 - Entry point for the Shiny application
 - Loads libraries and sources all modules
 - Defines reactive values (`rv`) for state management
@@ -32,19 +32,19 @@ This application uses a modular architecture for improved maintainability and or
 
 ### Module Files
 
-**`modules_assumptions.R`** (~491 lines)
+**`modules_assumptions.R`** (~523 lines)
 - Assumption checking helper functions
 - Functions: `is_binary_variable()`, `is_continuous_variable()`, `identify_outliers_assumption()`, `check_normality()`, `test_homoscedasticity()`, `diagnostic_report()`, `generate_assumption_checks_html()`, etc.
 - **Dependencies**: `car` package (VIF, ncvTest), `ggplot2` (Q-Q plots)
 
-**`modules_ui.R`** (~553 lines)
+**`modules_ui.R`** (~660 lines)
 - Complete UI definition (`fluidPage` structure)
 - All sidebar and main panel components
 - Tab definitions (Assumption Checks, Analysis Results, Plots)
 - Conditional panels and styling
 - **Dependencies**: `shiny`, `bslib`, `shinyjs`
 
-**`modules_data_management.R`** (~719 lines)
+**`modules_data_management.R`** (~734 lines)
 - File upload handling (CSV, SAV)
 - Variable selection observers
 - Model change detection and clearing logic
@@ -53,7 +53,7 @@ This application uses a modular architecture for improved maintainability and or
 - UI conditional output reactives
 - **Dependencies**: `shiny`, `haven` (SPSS files), `shinyjs`
 
-**`modules_assumption_outputs.R`** (~798 lines)
+**`modules_assumption_outputs.R`** (~847 lines)
 - Assumption check output renderers
 - `identify_outliers()` reactive
 - `outlier_summary()` reactive
@@ -62,7 +62,7 @@ This application uses a modular architecture for improved maintainability and or
 - Download handler for assumption checks
 - **Dependencies**: `modules_assumptions.R`, `ggplot2`
 
-**`modules_analysis.R`** (~747 lines)
+**`modules_analysis.R`** (~945 lines)
 - Core analysis execution logic
 - `run_process_analysis()` function (shared by both analysis types)
 - `original_analysis()` eventReactive
@@ -71,7 +71,7 @@ This application uses a modular architecture for improved maintainability and or
 - Observers for analysis completion
 - **Dependencies**: `process.R`, `modules_assumptions.R`
 
-**`modules_results.R`** (~469 lines)
+**`modules_results.R`** (~508 lines)
 - Results display and download functionality
 - `create_bivariate_correlations()` function
 - `create_missing_data_breakdown()` function
@@ -82,7 +82,7 @@ This application uses a modular architecture for improved maintainability and or
 - Button state observers
 - **Dependencies**: `modules_analysis.R`
 
-**`modules_save_load.R`** (~701 lines)
+**`modules_save_load.R`** (~645 lines)
 - Save/load analysis settings to/from JSON files
 - Validates variables exist in current dataset when loading
 - Handles model changes and variable restoration
@@ -90,7 +90,7 @@ This application uses a modular architecture for improved maintainability and or
 
 ### External Files
 
-**`process.R`** (~7,582 lines)
+**`process.R`** (~7,581 lines)
 - Core PROCESS macro functionality (Hayes' PROCESS V5)
 - Sourced by the main application
 - **Note**: This is the original PROCESS macro - do not modify
@@ -261,6 +261,8 @@ Expand and configure the following sections as needed:
    - Validate that all variables in the JSON file exist in the current dataset
    - Show an error message listing any missing variables if validation fails
    - Restore all settings (model, variables, options, plot labels) if validation passes
+
+**Note**: On model changes triggered by JSON load, the app skips input clearing to avoid wiping restored values during the same update cycle. This helps prevent first-load timing issues after restarting the R session.
 
 **Note**: The save/load buttons are automatically disabled until a dataset is loaded. If you try to load a JSON file with variables that don't exist in the current dataset, you'll see a clear error message listing the missing variables.
 
