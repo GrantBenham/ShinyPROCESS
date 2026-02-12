@@ -75,6 +75,13 @@
       rv$validation_error <- NULL
       rv$previous_model <- input$process_model  # Store current model as previous for next change
     })
+
+    # If settings are being loaded, skip clearing inputs.
+    # This avoids wiping restored values mid-restore.
+    if(isTRUE(rv$load_settings_pending)) {
+      dbg("DEBUG: Model change clearing skipped - load_settings_pending is TRUE")
+      return()
+    }
     
     dbg("DEBUG - Model changed, resetting all variables to initial state")
     
