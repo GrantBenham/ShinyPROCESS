@@ -286,7 +286,7 @@ server <- function(input, output, session) {
                  color = if(input$use_color_lines) "blue" else "black") +
         geom_hline(yintercept = 0, linetype = "dashed") +
         theme_minimal() +
-        labs(title = paste("Johnson-Neyman Plot (probe threshold:", probe_threshold_text, ")"),
+        labs(title = "Johnson–Neyman Plot",
              x = x_label_text,
              y = y_label_text) +
         theme(
