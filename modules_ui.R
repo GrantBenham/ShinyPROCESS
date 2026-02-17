@@ -4,6 +4,20 @@
 # This module contains the complete UI definition for the gbPROCESS application
 # Extracted from gbPROCESS.R as part of Stage 2 modularization
 
+process_model_choices <- if(exists("VALID_USER_MODELS", inherits = TRUE)) {
+  c(
+    "Select model" = "",
+    setNames(as.character(VALID_USER_MODELS), as.character(VALID_USER_MODELS))
+  )
+} else {
+  # Fallback to previous static list if specs are unavailable
+  c(
+    "Select model" = "",
+    setNames(as.character(c(1:22, 28:29, 58:73, 75:76, 80:92)),
+             c(1:22, 28:29, 58:73, 75:76, 80:92))
+  )
+}
+
 ui <- fluidPage(
   useShinyjs(),
   tags$style(type="text/css", "body { max-width: 1800px; margin: auto; }"),
@@ -54,9 +68,7 @@ ui <- fluidPage(
       tags$div(
         title = "Select the PROCESS model number that matches your research question. Model 74 is not directly selectable - use Model 4 with 'Allow X by M interaction' enabled. Changing the model clears all variable selections and previous results.",
         selectInput("process_model", "PROCESS Model Number",
-                    choices = c("Select model" = "", 
-                              setNames(as.character(c(1:22, 28:29, 58:73, 75:76, 80:92)),
-                              c(1:22, 28:29, 58:73, 75:76, 80:92))),
+                    choices = process_model_choices,
                     selected = "")
       ),
       

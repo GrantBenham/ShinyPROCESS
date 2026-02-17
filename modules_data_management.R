@@ -13,6 +13,58 @@
 # - UI conditional output reactives (is_moderation_model, is_plot_model, etc.)
 # ============================================================================
 
+  # Helper: fetch model spec row for a model number
+  get_model_spec <- function(model_num) {
+    if(is.null(model_num) || is.na(model_num)) {
+      return(NULL)
+    }
+    if(!exists("process_model_specs", inherits = TRUE)) {
+      return(NULL)
+    }
+    spec_tbl <- get("process_model_specs", inherits = TRUE)
+    spec <- spec_tbl[spec_tbl$model == model_num, , drop = FALSE]
+    if(nrow(spec) == 1) spec else NULL
+  }
+
+  # Helpers: model capability lookups (spec-driven with fallback behavior)
+  model_has_m <- function(model_num) {
+    spec <- get_model_spec(model_num)
+    if(!is.null(spec)) return(isTRUE(spec$has_m))
+    !is.null(model_num) && model_num >= 4 && model_num <= 92
+  }
+
+  model_requires_w <- function(model_num) {
+    spec <- get_model_spec(model_num)
+    if(!is.null(spec)) return(isTRUE(spec$requires_w_input))
+    !is.null(model_num) && model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74, 83:92)
+  }
+
+  model_requires_z <- function(model_num) {
+    spec <- get_model_spec(model_num)
+    if(!is.null(spec)) return(isTRUE(spec$requires_z_input))
+    !is.null(model_num) && model_num %in% c(2, 3)
+  }
+
+  model_supports_plot <- function(model_num) {
+    spec <- get_model_spec(model_num)
+    if(!is.null(spec)) return(isTRUE(spec$supports_plot))
+    !is.null(model_num) && model_num %in% c(1, 3)
+  }
+
+  model_max_mediators <- function(model_num) {
+    spec <- get_model_spec(model_num)
+    if(!is.null(spec) && !is.na(spec$max_mediators) && spec$max_mediators > 0) {
+      return(as.integer(spec$max_mediators))
+    }
+    if(is.null(model_num)) return(0L)
+    if(model_num == 4) return(10L)
+    if(model_num == 6) return(6L)
+    if(model_num == 82) return(4L)
+    if(model_num >= 83 && model_num <= 92) return(2L)
+    if(model_num >= 4 && model_num <= 92) return(10L)
+    0L
+  }
+
   # Update dataset handling
   observeEvent(input$data_file, {
     req(input$data_file)
@@ -210,9 +262,6 @@
     
     # Collect all selected variables - but only check enabled inputs
     # Disabled inputs can't be changed by user, so we only validate enabled ones
-    models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
-    models_with_second_moderator <- c(2, 3)
-    models_with_moderators_disabled <- c(4, 6, 80:82)
     
     all_vars <- character(0)
     
@@ -224,25 +273,22 @@
       all_vars <- c(all_vars, input$outcome_var)
     }
     
-    # Only include moderator_var if current model uses moderators (and it's enabled)
-    if(!is.null(current_model) && 
-       (current_model %in% models_with_moderator || current_model %in% models_with_second_moderator) &&
-       !(current_model %in% models_with_moderators_disabled)) {
+    # Only include moderator_var if current model requires W
+    if(!is.null(current_model) && model_requires_w(current_model)) {
       if(!is.null(input$moderator_var) && input$moderator_var != "") {
         all_vars <- c(all_vars, input$moderator_var)
       }
     }
     
-    # Only include moderator2_var if current model uses second moderator (and it's enabled)
-    if(!is.null(current_model) && current_model %in% models_with_second_moderator) {
+    # Only include moderator2_var if current model requires Z
+    if(!is.null(current_model) && model_requires_z(current_model)) {
       if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
         all_vars <- c(all_vars, input$moderator2_var)
       }
     }
     
-    # Only include mediators if current model uses mediators (models 4-92)
-    # Use mediator_vars_collected() - collects M1, M2, M3... in order
-    if(!is.null(current_model) && current_model >= 4 && current_model <= 92) {
+    # Only include mediators if current model has mediators
+    if(!is.null(current_model) && model_has_m(current_model)) {
       if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
         all_vars <- c(all_vars, mediator_vars_current)
       }
@@ -319,9 +365,7 @@
   output$is_moderation_model <- reactive({
     req(input$process_model)
     model_num <- as.numeric(input$process_model)
-    # Models 1, 2, 3, 5, 14, 15, 58, 59, 74 are moderation models
-    # Model 4 is mediation, not moderation
-    model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
+    model_requires_w(model_num) || model_requires_z(model_num)
   })
   outputOptions(output, "is_moderation_model", suspendWhenHidden = FALSE)
   
@@ -335,23 +379,22 @@
   output$has_second_moderator <- reactive({
     req(input$process_model)
     model_num <- as.numeric(input$process_model)
-    model_num %in% models_with_second_moderator
+    model_requires_z(model_num)
   })
   outputOptions(output, "has_second_moderator", suspendWhenHidden = FALSE)
   
-  # Output to track if model supports plots (only Models 1 and 3)
+  # Output to track if model supports plots
   output$is_plot_model <- reactive({
     req(input$process_model)
     model_num <- as.numeric(input$process_model)
-    model_num %in% c(1, 3)
+    model_supports_plot(model_num)
   })
   outputOptions(output, "is_plot_model", suspendWhenHidden = FALSE)
   
   output$is_mediation_model <- reactive({
     req(input$process_model)
     model_num <- as.numeric(input$process_model)
-    # Models 4, 5, 6, 7, 8, 14 are mediation models (Model 5 has both moderator and mediator)
-    model_num %in% c(4, 5, 6, 7, 8, 14)
+    model_has_m(model_num)
   })
   outputOptions(output, "is_mediation_model", suspendWhenHidden = FALSE)
   
@@ -374,8 +417,8 @@
     }
     
     model_num <- as.numeric(input$process_model)
-    if(model_num < 4 || model_num > 92) {
-      return(NULL)  # No mediators for models 1-3
+    if(!model_has_m(model_num)) {
+      return(NULL)
     }
     
     # Get the number of mediators user wants
@@ -421,24 +464,14 @@
     
     vars <- names(rv$original_dataset)
     model_num <- as.numeric(input$process_model)
-    mediator_enabled <- model_num >= 4 && model_num <= 92
+    mediator_enabled <- model_has_m(model_num)
     
     if(!mediator_enabled) {
       return(NULL)
     }
     
-    # Determine max mediators based on model
-    max_mediators <- if(model_num == 4) {
-      10
-    } else if(model_num == 6) {
-      6
-    } else if(model_num == 82) {
-      4
-    } else if(model_num >= 83 && model_num <= 92) {
-      2
-    } else {
-      10  # Default max for other models
-    }
+    # Determine max mediators based on canonical model specs
+    max_mediators <- model_max_mediators(model_num)
     
     # Create choices for dropdown: "Select..." option + numbers 1 to max_mediators
     count_choices <- c("Select number..." = "", as.character(1:max_mediators))
@@ -549,11 +582,6 @@
     dbg(paste("DEBUG: Mediator count changed to", new_count, "- all mediator inputs cleared"))
   }, ignoreInit = TRUE)  # ignoreInit = TRUE prevents clearing on initial load
   
-  # Define which models require a second moderator (Z)
-  # This list can be easily extended by adding model numbers
-  # Note: Model 74 requires W = X (moderator must equal predictor), not a second moderator Z
-  models_with_second_moderator <- c(2, 3, 9, 10, 58, 59)
-  
   # Dynamically generate variable selectors based on model
   output$variable_selectors <- renderUI({
     # Debug output
@@ -572,21 +600,9 @@
     dbg(paste("DEBUG: variable_selectors - rendering for model", model_num))
     
     # Determine which inputs should be enabled/disabled for this model
-    # Models with one moderator (W): 1, 5, 14, 15, 58, 59, 74, 83-92
-    models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
-    # Models with two moderators (W and Z): 2, 3
-    models_with_second_moderator <- c(2, 3)
-    # Models with moderators disabled: 4, 6, 80-82
-    models_with_moderators_disabled <- c(4, 6, 80:82)
-    
-    # Moderator W is enabled if model uses moderators AND moderators are not disabled for this model
-    # Note: Model 74 is not user-selectable (created automatically from Model 4 with xmint)
-    moderator_enabled <- (model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) && 
-                         !(model_num %in% models_with_moderators_disabled)
-    # Moderator Z is enabled only for models with second moderator
-    moderator2_enabled <- model_num %in% models_with_second_moderator
-    # Mediators are enabled for models 4-92 (disabled only for models 1-3)
-    mediator_enabled <- model_num >= 4 && model_num <= 92
+    moderator_enabled <- model_requires_w(model_num)
+    moderator2_enabled <- model_requires_z(model_num)
+    mediator_enabled <- model_has_m(model_num)
     
     # ALWAYS render ALL inputs, but disable the ones not relevant to current model
     # This ensures updateSelectInput always works because all inputs exist in DOM
@@ -731,4 +747,3 @@
     result
   })
   outputOptions(output, "analysis_ready", suspendWhenHidden = FALSE)
-

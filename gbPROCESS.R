@@ -28,6 +28,9 @@ dbg <- function(...) {
 # Source assumption checks module (helper functions)
 source("modules_assumptions.R", local = TRUE)
 
+# Source canonical model specs (available to UI and server modules)
+source("model_specs.R", local = TRUE)
+
 # Source UI module
 source("modules_ui.R", local = TRUE)
 
@@ -72,7 +75,7 @@ server <- function(input, output, session) {
   
   # Load PROCESS function
   source("process.R", local = TRUE)
-  
+
   # Load save/load settings module
   source("modules_save_load.R", local = TRUE)
   
@@ -87,6 +90,25 @@ server <- function(input, output, session) {
   
   # Load results module
   source("modules_results.R", local = TRUE)
+
+  # Helper for Model-Has-Z checks used by plot/label observers in this file.
+  # Uses canonical specs when available, with a minimal fallback.
+  has_second_moderator_model <- function(model_num) {
+    if(is.null(model_num) || is.na(model_num)) {
+      return(FALSE)
+    }
+    if(exists("model_requires_z", inherits = TRUE)) {
+      return(isTRUE(model_requires_z(model_num)))
+    }
+    if(exists("process_model_specs", inherits = TRUE)) {
+      spec_tbl <- get("process_model_specs", inherits = TRUE)
+      spec <- spec_tbl[spec_tbl$model == model_num, , drop = FALSE]
+      if(nrow(spec) == 1) {
+        return(isTRUE(spec$requires_z_input))
+      }
+    }
+    model_num %in% c(2, 3)
+  }
   
   # DEBUG: Observer to track button clicks
   observeEvent(input$run_analysis, {
@@ -968,7 +990,7 @@ server <- function(input, output, session) {
     }
     
     # For models with second moderator, also check moderator2_var
-    if(current_model %in% models_with_second_moderator) {
+    if(has_second_moderator_model(current_model)) {
       result_mod2 <- if(is.null(results$settings$moderator2_var)) "" else results$settings$moderator2_var
       current_mod2 <- if(is.null(input$moderator2_var) || input$moderator2_var == "") "" else input$moderator2_var
       if(result_mod2 != current_mod2) {
@@ -983,7 +1005,7 @@ server <- function(input, output, session) {
     
     # Determine model type
     model_num <- as.numeric(input$process_model)
-    has_second_mod <- model_num %in% models_with_second_moderator
+    has_second_mod <- has_second_moderator_model(model_num)
 
     if(model3_only && !has_second_mod) {
       return()
@@ -2216,7 +2238,7 @@ server <- function(input, output, session) {
     filename = function() {
       # Determine if this is a conditional effect plot or simple slopes plot
       model_num <- tryCatch(as.numeric(input$process_model), error = function(e) NULL)
-      has_second_mod <- !is.null(model_num) && model_num %in% models_with_second_moderator
+      has_second_mod <- !is.null(model_num) && has_second_moderator_model(model_num)
       if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
         paste0("stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
       } else {
@@ -2240,7 +2262,7 @@ server <- function(input, output, session) {
         results <- analysis_results()
         
         # Determine model type
-        has_second_mod <- model_num %in% models_with_second_moderator
+        has_second_mod <- has_second_moderator_model(model_num)
         
         # For Model 3, use stacked slopes plot helper
         if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
@@ -2492,7 +2514,7 @@ server <- function(input, output, session) {
         
         # For models with second moderator, also auto-populate moderator2_label
         model_num <- as.numeric(input$process_model)
-        if(model_num %in% models_with_second_moderator && 
+        if(has_second_moderator_model(model_num) && 
            !is.null(input$moderator2_var) && input$moderator2_var != "") {
           mod2_changed <- is.null(rv$previous_moderator2_var) || rv$previous_moderator2_var != input$moderator2_var
           mod2_label_empty <- is.null(input$moderator2_label) || input$moderator2_label == ""

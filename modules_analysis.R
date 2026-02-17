@@ -36,6 +36,29 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
   is_nonempty_scalar <- function(value) {
     !is.null(value) && length(value) == 1 && nzchar(as.character(value))
   }
+  model_spec_row <- function(m) {
+    if(is.null(m) || is.na(m) || !exists("process_model_specs", inherits = TRUE)) {
+      return(NULL)
+    }
+    spec_tbl <- get("process_model_specs", inherits = TRUE)
+    spec <- spec_tbl[spec_tbl$model == m, , drop = FALSE]
+    if(nrow(spec) == 1) spec else NULL
+  }
+  model_requires_w_local <- function(m) {
+    spec <- model_spec_row(m)
+    if(!is.null(spec)) return(isTRUE(spec$requires_w_input))
+    m %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74, 83:92)
+  }
+  model_requires_z_local <- function(m) {
+    spec <- model_spec_row(m)
+    if(!is.null(spec)) return(isTRUE(spec$requires_z_input))
+    m %in% c(2, 3)
+  }
+  model_has_m_local <- function(m) {
+    spec <- model_spec_row(m)
+    if(!is.null(spec)) return(isTRUE(spec$has_m))
+    !is.null(m) && m >= 4 && m <= 92
+  }
   debug_input("input$process_model", input$process_model)
   debug_input("input$predictor_var", input$predictor_var)
   debug_input("input$outcome_var", input$outcome_var)
@@ -81,14 +104,14 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
   model_num <- as.numeric(input$process_model)
   
   # Moderation models require moderator
-  if(model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74, 83:92)) {
+  if(model_requires_w_local(model_num)) {
     shiny::validate(
       need(is_nonempty_scalar(input$moderator_var), 
            "Moderator variable (W) is required for this model")
     )
     
     # Models with second moderator require it to be selected
-    if(model_num %in% models_with_second_moderator) {
+    if(model_requires_z_local(model_num)) {
       shiny::validate(
         need(is_nonempty_scalar(input$moderator2_var), 
              "Second moderator variable (Z) is required for this model")
@@ -96,8 +119,8 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     }
   }
   
-  # Models 4-92: All require at least one mediator
-  if(model_num >= 4 && model_num <= 92) {
+  # Models with mediators require at least one mediator
+  if(model_has_m_local(model_num)) {
     mediator_vars_current <- mediator_vars_collected()
     shiny::validate(
       need(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0, 
@@ -177,10 +200,6 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
   
   # Duplicate check: collect all selected variables and check for duplicates
   dbg("DEBUG: ===== Analysis duplicate check STARTED =====")
-  models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
-  models_with_second_moderator <- c(2, 3)
-  models_with_moderators_disabled <- c(4, 6, 80:82)
-  
   all_vars <- character(0)
   if(is_nonempty_scalar(input$predictor_var)) {
     all_vars <- c(all_vars, input$predictor_var)
@@ -188,18 +207,17 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
   if(is_nonempty_scalar(input$outcome_var)) {
     all_vars <- c(all_vars, input$outcome_var)
   }
-  if((model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) &&
-     !(model_num %in% models_with_moderators_disabled)) {
+  if(model_requires_w_local(model_num)) {
     if(is_nonempty_scalar(input$moderator_var)) {
       all_vars <- c(all_vars, input$moderator_var)
     }
   }
-  if(model_num %in% models_with_second_moderator) {
+  if(model_requires_z_local(model_num)) {
     if(is_nonempty_scalar(input$moderator2_var)) {
       all_vars <- c(all_vars, input$moderator2_var)
     }
   }
-  if(model_num >= 4 && model_num <= 92) {
+  if(model_has_m_local(model_num)) {
     current_mediators <- mediator_vars_collected()
     if(!is.null(current_mediators) && length(current_mediators) > 0) {
       all_vars <- c(all_vars, current_mediators)
@@ -318,7 +336,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     )
     
     # Early validation check for W and Z same variable
-    if(model_num %in% models_with_second_moderator) {
+    if(model_requires_z_local(model_num)) {
       if(is_nonempty_scalar(input$moderator_var) && 
          is_nonempty_scalar(input$moderator2_var) &&
          input$moderator_var == input$moderator2_var) {
@@ -380,7 +398,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     )
     
     # Add model-specific variables
-    if(model_num >= 4 && model_num <= 92) {
+    if(model_has_m_local(model_num)) {
       current_mediators <- mediator_vars_collected()
       if(!is.null(current_mediators) && length(current_mediators) > 0) {
         mediator_arg <- if(length(current_mediators) == 1) {
@@ -422,7 +440,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
         }
       }
       
-      if(model_num %in% models_with_second_moderator) {
+      if(model_requires_z_local(model_num)) {
         if(is_nonempty_scalar(input$moderator2_var)) {
           process_args$z <- input$moderator2_var
         }
@@ -942,4 +960,3 @@ analysis_results <- reactive({
   
   rv$analysis_results
 })
-
