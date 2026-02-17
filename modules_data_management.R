@@ -65,6 +65,16 @@
     0L
   }
 
+  model_min_mediators <- function(model_num) {
+    spec <- get_model_spec(model_num)
+    if(!is.null(spec) && !is.na(spec$min_mediators) && spec$min_mediators > 0) {
+      return(as.integer(spec$min_mediators))
+    }
+    if(is.null(model_num)) return(0L)
+    if(model_num >= 4 && model_num <= 92) return(1L)
+    0L
+  }
+
   # Update dataset handling
   observeEvent(input$data_file, {
     req(input$data_file)
@@ -473,31 +483,33 @@
     # Determine max mediators based on canonical model specs
     max_mediators <- model_max_mediators(model_num)
     
-    # Create choices for dropdown: "Select..." option + numbers 1 to max_mediators
-    count_choices <- c("Select number..." = "", as.character(1:max_mediators))
-    names(count_choices)[2:(max_mediators + 1)] <- 1:max_mediators
+    min_mediators <- model_min_mediators(model_num)
+    if(min_mediators < 1) min_mediators <- 1L
+    if(max_mediators < min_mediators) max_mediators <- min_mediators
+    allowed_counts <- as.character(min_mediators:max_mediators)
+    
+    # Create choices for dropdown from allowed range
+    count_choices <- c("Select number..." = "", allowed_counts)
+    names(count_choices)[2:length(count_choices)] <- allowed_counts
     
     # Get current count for determining how many M1, M2, M3... selects to show
     # During restore, use expected_mediator_count if available, otherwise use input$mediator_count
-    current_count <- if(isTRUE(rv$restore_mediators_pending) && !is.null(rv$expected_mediator_count) && rv$expected_mediator_count > 0) {
-      # During restore, use the expected count
-      min(as.integer(rv$expected_mediator_count), max_mediators)
+    current_count <- 0
+    if(isTRUE(rv$restore_mediators_pending) && !is.null(rv$expected_mediator_count) && rv$expected_mediator_count > 0) {
+      restore_count <- as.integer(rv$expected_mediator_count)
+      if(!is.na(restore_count) && restore_count >= min_mediators && restore_count <= max_mediators) {
+        current_count <- restore_count
+      }
     } else if(!is.null(input$mediator_count) && input$mediator_count != "" && !is.na(as.numeric(input$mediator_count)) && as.numeric(input$mediator_count) > 0) {
-      # Normal operation - use input value
-      min(as.integer(input$mediator_count), max_mediators)
-    } else {
-      0
+      input_count <- as.integer(input$mediator_count)
+      if(!is.na(input_count) && input_count >= min_mediators && input_count <= max_mediators) {
+        current_count <- input_count
+      }
     }
     
     # Determine selected value for mediator_count dropdown
     # During restore, use expected_mediator_count, otherwise use input$mediator_count
-    selected_count <- if(isTRUE(rv$restore_mediators_pending) && !is.null(rv$expected_mediator_count) && rv$expected_mediator_count > 0) {
-      as.character(rv$expected_mediator_count)
-    } else if(!is.null(input$mediator_count) && input$mediator_count != "" && !is.na(as.numeric(input$mediator_count)) && as.numeric(input$mediator_count) > 0) {
-      input$mediator_count
-    } else {
-      ""
-    }
+    selected_count <- if(current_count > 0) as.character(current_count) else ""
     
     dbg(paste("DEBUG: mediator_list_ui renderUI - restore_pending:", restore_pending, "expected_count:", expected_count, "selected_count:", selected_count))
     

@@ -143,6 +143,22 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       )
     }
     
+    # Models 80 and 81 require 3-6 mediators
+    if(model_num %in% c(80, 81)) {
+      mediator_count <- length(mediator_vars_current)
+      if(mediator_count < 3 || mediator_count > 6) {
+        if(mediator_count < 3) {
+          error_msg <- paste0("Model ", model_num, " requires between 3 and 6 mediators. You have selected ",
+                             mediator_count, " mediator(s). Please select ", (3 - mediator_count), " more mediator(s).")
+        } else {
+          error_msg <- paste0("Model ", model_num, " requires between 3 and 6 mediators. You have selected ",
+                             mediator_count, " mediators. Please remove ", (mediator_count - 6), " mediator(s).")
+        }
+        showNotification(error_msg, type = "error", duration = 10)
+        shiny::validate(need(FALSE, error_msg))
+      }
+    }
+    
     # Model 82 requires exactly 4 mediators
     if(model_num == 82) {
       mediator_count <- length(mediator_vars_current)
