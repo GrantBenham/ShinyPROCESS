@@ -60,7 +60,7 @@ process_model_specs$max_mediators[process_model_specs$model == 6] <- 6L
 process_model_specs$min_mediators[process_model_specs$model == 82] <- 4L
 process_model_specs$max_mediators[process_model_specs$model == 82] <- 4L
 process_model_specs$min_mediators[process_model_specs$model %in% 83:92] <- 2L
-process_model_specs$max_mediators[process_model_specs$model %in% 83:92] <- 2L
+process_model_specs$max_mediators[process_model_specs$model %in% 83:92] <- 6L
 process_model_specs$min_mediators[process_model_specs$model %in% 80:81] <- 3L
 process_model_specs$max_mediators[process_model_specs$model %in% 80:81] <- 6L
 

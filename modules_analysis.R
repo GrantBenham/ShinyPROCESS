@@ -177,17 +177,17 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       }
     }
     
-    # Models 83-92 require exactly 2 mediators
+    # Models 83-92 require 2-6 mediators
     if(model_num >= 83 && model_num <= 92) {
       mediator_count <- length(mediator_vars_current)
-      if(mediator_count != 2) {
+      if(mediator_count < 2 || mediator_count > 6) {
         if(mediator_count < 2) {
-          error_msg <- paste0("Model ", model_num, " requires exactly 2 mediators. You have selected ", 
+          error_msg <- paste0("Model ", model_num, " requires between 2 and 6 mediators. You have selected ", 
                              mediator_count, " mediator(s). Please select ", (2 - mediator_count), 
                              " more mediator(s).")
         } else {
-          error_msg <- paste0("Model ", model_num, " requires exactly 2 mediators. You have selected ", 
-                             mediator_count, " mediators. Please remove ", (mediator_count - 2), 
+          error_msg <- paste0("Model ", model_num, " requires between 2 and 6 mediators. You have selected ", 
+                             mediator_count, " mediators. Please remove ", (mediator_count - 6), 
                              " mediator(s).")
         }
         showNotification(error_msg, type = "error", duration = 10)
