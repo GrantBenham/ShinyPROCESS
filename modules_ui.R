@@ -652,6 +652,111 @@ ui <- fluidPage(
             condition = "output.is_plot_model === true && output.analysis_ready === false",
             p("Run an analysis to see plots here.")
           )
+        ),
+        tabPanel("User Guide",
+          div(style = "padding: 10px 5px;",
+            h3("ShinyPROCESS User Guide"),
+            p("ShinyPROCESS is a graphical interface for Hayes' PROCESS for R (version 5.0)."),
+            p("This app was developed by Dr. Grant Benham, The University of Texas Rio Grande Valley (grant.benham@utrgv.edu)."),
+            tags$hr(),
+
+            h4("IMPORTANT"),
+            p(
+              tags$strong("Hayes' process.R file is not included in this GitHub repository due to copyright restrictions, but it is required for PROCESS analyses to run.")
+            ),
+            p(
+              "This app is designed for PROCESS for R version 5.0 and therefore requires that version to run the PROCESS analysis. The filename and version number (contained within process.R) are used for verification."
+            ),
+            p(
+              "Download the file and place it in the same folder as ",
+              tags$code("gbPROCESS.R"),
+              "."
+            ),
+            p(
+              tags$strong("PROCESS download: "),
+              tags$a(
+                href = "https://haskayne.ucalgary.ca/CCRAM/resource-hub",
+                target = "_blank",
+                "https://haskayne.ucalgary.ca/CCRAM/resource-hub"
+              )
+            ),
+            p(
+              tags$strong("PROCESS information: "),
+              tags$a(
+                href = "https://processmacro.org/index.html",
+                target = "_blank",
+                "https://processmacro.org/index.html"
+              )
+            ),
+
+            tags$hr(),
+            h4("Workflow"),
+            tags$ol(
+              tags$li(
+                tags$strong("Upload Data"),
+                ": Use the ",
+                tags$code("Choose CSV or SAV File"),
+                " control in the sidebar to load your dataset."
+              ),
+              tags$li(
+                tags$strong("Save Analysis Settings (then Load Later)"),
+                ": Under ",
+                tags$code("Analysis Settings"),
+                ", save your current setup (model number, selected variables, and analysis/plot options) to a JSON file. You can later use the load option to restore those saved settings."
+              ),
+              tags$li(
+                tags$strong("Select Model"),
+                ": Choose a supported PROCESS model under ",
+                tags$code("Model Selection"),
+                ". Unsupported models are hidden."
+              ),
+              tags$li(
+                tags$strong("Select Variables"),
+                ": Use the ",
+                tags$code("Select Variables"),
+                " section to pick X, Y, and model-specific W/Z/M inputs. The app customizes visible inputs based on the selected model and enforces model-specific mediator count limits."
+              ),
+              tags$li(
+                tags$strong("Review Assumption Checks"),
+                ": Assumption outputs update as selected variables change. Review the final interpretation after all required variables are selected."
+              ),
+              tags$li(
+                tags$strong("Configure PROCESS Options"),
+                ": Use the options sections (centering, bootstrap, moderator, advanced, output, and live plot settings). Hover over controls to view tooltips that explain what each option does."
+              ),
+              tags$li(
+                tags$strong("Run Analysis"),
+                ": Choose whether to run the PROCESS analysis using the unaltered loaded dataset or to run the analysis with standardized residual outliers eliminated (if any are identified)."
+              ),
+              tags$li(
+                tags$strong("Review Results and Plots"),
+                ": Results are shown in the Analysis Results tab. Plots are generated only for Models 1 and 3."
+              ),
+              tags$li(
+                tags$strong("Adjust Plot Display (Models 1 and 3)"),
+                ": In ",
+                tags$code("Live Plot Settings"),
+                ", you can edit displayed variable labels, change formatting, and turn confidence intervals on or off. These changes are updated in real time."
+              )
+            ),
+
+            tags$hr(),
+            h4("Saving and Exporting Files"),
+            tags$ul(
+              tags$li(tags$strong("Analysis Settings JSON"), ": Save your current configuration first, then load that saved JSON later to restore the same setup."),
+              tags$li(tags$strong("Assumption Checks HTML"), ": Download the assumption output text from the Assumption Checks tab."),
+              tags$li(tags$strong("Results HTML"), ": Download full PROCESS analysis output from the sidebar."),
+              tags$li(tags$strong("Plots (JPG)"), ": Download available plots in the Plots tab (Models 1 and 3 only)."),
+              tags$li(tags$strong("Reduced Dataset"), ": Download dataset after standardized residual or influential-case removal in CSV or SAV format.")
+            ),
+
+            tags$hr(),
+            h4("Support and Contact"),
+            tags$ul(
+              tags$li(tags$strong("Shiny app questions"), ": contact Dr. Grant Benham at ", tags$code("grant.benham@utrgv.edu")),
+              tags$li(tags$strong("PROCESS macro/methodology questions"), ": consult PROCESS resources and Dr. Andrew F. Hayes.")
+            )
+          )
         )
       )
     )

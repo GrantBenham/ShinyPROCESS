@@ -1,12 +1,26 @@
-# PROCESS V5 Analysis with Hayes PROCESS for R
+# ShinyPROCESS: Interface for Hayes PROCESS for R v5.0
 
 ## Overview
 
-This Shiny application provides a user-friendly interface for conducting moderation and mediation analyses using Hayes' PROCESS macro for R (Version 5). The application supports PROCESS models 1-73 and 75-92 (Model 74 is automatically created from Model 4 when needed), allowing researchers to examine complex relationships between variables including direct effects, indirect effects (mediation), conditional effects (moderation), and their combinations.
+ShinyPROCESS provides a user-friendly interface for conducting moderation and mediation analyses using Hayes' PROCESS for R (Version 5.0). The app currently supports the bundled subset of selectable models `1-22, 28-29, 58-73, 75-76, 80-92` (Model 74 is intentionally not selectable and is created internally from Model 4 when needed).
+
+## Important: Attribution, Licensing, and Required File
+
+- **Shiny app developer**: Dr. Grant Benham, The University of Texas Rio Grande Valley  
+  Contact: `grant.benham@utrgv.edu`
+- **PROCESS macro author**: Dr. Andrew F. Hayes
+- This repository contains the Shiny interface, but **does not include** Hayes' copyrighted `process.R` file.
+- You must download `process.R` (PROCESS for R **version 5.0**) separately and place it in the same folder as `gbPROCESS.R`.
+- Download site: https://haskayne.ucalgary.ca/CCRAM/resource-hub
+- PROCESS information: https://processmacro.org/index.html
+
+Contact policy:
+- Questions about this Shiny app (UI/workflow/integration): contact Dr. Grant Benham.
+- Questions about PROCESS methodology or the PROCESS macro itself: consult PROCESS resources and contact Dr. Hayes as appropriate.
 
 ### Key Features
 
-- **Comprehensive Model Support**: PROCESS models 1-73 and 75-92 from Hayes' framework (Models 0 and 74 are not directly selectable - see Model Selection section for details)
+- **Comprehensive Model Support**: Selectable models `1-22, 28-29, 58-73, 75-76, 80-92` (Model 74 is internal-only via Model 4 + X by M interaction)
 - **Flexible Data Input**: Supports CSV and SPSS (.sav) file formats
 - **Assumption Checking**: Built-in diagnostic tools for regression assumptions
 - **Outlier Detection**: Automatic identification of outliers and influential cases
@@ -90,10 +104,10 @@ This application uses a modular architecture for improved maintainability and or
 
 ### External Files
 
-**`process.R`** (~7,581 lines)
+**`process.R`** (~7,581 lines, required but not included in this repository)
 - Core PROCESS macro functionality (Hayes' PROCESS V5)
-- Sourced by the main application
-- **Note**: This is the original PROCESS macro - do not modify
+- Must be downloaded separately and placed next to `gbPROCESS.R`
+- On startup, the app checks for this file and verifies the version header indicates **5.0**
 
 ### Module Loading Order
 
@@ -103,7 +117,7 @@ The modules are sourced in the following order in `gbPROCESS.R`:
    - `modules_assumptions.R` - Helper functions only
 
 2. **Inside server function** (requires Shiny context):
-   - `process.R` - PROCESS macro
+   - `process.R` - PROCESS macro (loaded only when present and version check passes)
    - `modules_save_load.R` - Save/load functionality
    - `modules_data_management.R` - Data upload and variable selection
    - `modules_assumption_outputs.R` - Assumption check outputs
@@ -153,7 +167,7 @@ install.packages(c("shiny", "bslib", "ggplot2", "stringr", "dplyr",
 ### Step 2: Select Your Model
 
 1. In the **Model Selection** section, click the **"PROCESS Model Number"** dropdown
-2. Select the appropriate model number (1-73, 75-92) for your research question
+2. Select the appropriate model number (`1-22, 28-29, 58-73, 75-76, 80-92`) for your research question
 3. Refer to Hayes' PROCESS documentation or book for model diagrams and descriptions
 4. **Note**: Model 74 is not directly selectable. To use Model 74, select Model 4 and enable "Allow X by M interaction"
 
@@ -282,7 +296,7 @@ This section explains each option organized by UI section headers.
 ### Model Selection
 
 **PROCESS Model Number**
-- Select from models 1-73, 75-92 (Model 74 is not user-selectable - see note below)
+- Select from models `1-22, 28-29, 58-73, 75-76, 80-92` (Model 74 is not user-selectable - see note below)
 - Each model represents a different conceptual framework for examining relationships
 - Model diagrams and descriptions should be referenced from Hayes' PROCESS documentation or book
 - **Important**: Changing the model number clears all variable selections and previous results
@@ -317,8 +331,9 @@ This section explains each option organized by UI section headers.
 - Maximum number depends on model:
   - Model 4: up to 10 mediators
   - Model 6: up to 6 mediators
+  - Models 80-81: 3 to 6 mediators
   - Model 82: up to 4 mediators
-  - Models 83-92: up to 2 mediators
+  - Models 83-92: 2 to 6 mediators
   - Other models: up to 10 mediators (default)
 - **Note**: Changing the number of mediators clears all mediator variable selections
 
@@ -710,6 +725,7 @@ Displays the complete PROCESS analysis output including:
 ## Technical Notes
 
 - **File Format Support**: CSV files should have headers. SPSS files (.sav) preserve variable labels and value labels.
+- **PROCESS File Requirement**: `process.R` (PROCESS for R v5.0) must be present in the app folder. If missing or mismatched, the app shows a warning and blocks analysis execution.
 - **Missing Data**: Cases with missing data on any analysis variable are automatically excluded (listwise deletion).
 - **Variable Types**: The application automatically detects binary variables (0/1 or exactly 2 unique values) and continuous variables.
 - **Model Validation**: The application validates variable selections based on model requirements and prevents duplicate variable selection.
@@ -720,15 +736,20 @@ Displays the complete PROCESS analysis output including:
 
 ## References
 
-This application implements Hayes' PROCESS macro for R (Version 5). For detailed information about PROCESS models, interpretation, and methodology, refer to:
+This application interfaces with Hayes' PROCESS macro for R (Version 5). For detailed information about PROCESS models, interpretation, and methodology, refer to:
 
 - Hayes, A. F. (2018). *Introduction to Mediation, Moderation, and Conditional Process Analysis: A Regression-Based Approach* (2nd ed.). Guilford Press.
-- PROCESS documentation and model diagrams
+- PROCESS resource hub: https://haskayne.ucalgary.ca/CCRAM/resource-hub
+- PROCESS website: https://processmacro.org/index.html
 
 ---
 
 ## Support
 
-For issues, questions, or feature requests related to this Shiny application, please contact the application developer.
+For issues, questions, or feature requests related to this Shiny app interface, contact:
 
-For questions about PROCESS methodology, interpretation, or model selection, refer to Hayes' book or the PROCESS documentation.
+- **Dr. Grant Benham**
+- The University of Texas Rio Grande Valley
+- `grant.benham@utrgv.edu`
+
+For questions about PROCESS methodology, model logic, or the `process.R` macro itself, refer to PROCESS resources and Dr. Andrew F. Hayes.
