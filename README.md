@@ -7,6 +7,7 @@ ShinyPROCESS provides a user-friendly interface for conducting moderation and me
 ## Installation and Setup (Start Here)
 
 This section is written for first-time users.
+Tested on R 4.5.1 (Windows 11).
 
 ### Option A (Recommended): Reproducible setup with `renv`
 
@@ -27,6 +28,7 @@ Notes:
 - `renv::restore()` installs package versions from `renv.lock`.
 - `renv` does not automatically install/change your R version.
 - If your R version is newer than the lockfile version, restore may still work, but occasional package-version conflicts are possible.
+- If prompted by `renv` to activate the project, select `1` ("Activate the project and use the project library").
 
 ### Option B (Manual): Install packages without `renv`
 
