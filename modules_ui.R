@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # UI DEFINITION MODULE
 # ============================================================================
 # This module contains the complete UI definition for the gbPROCESS application
@@ -111,15 +111,15 @@ ui <- fluidPage(
                 choiceNames = list(
                   tags$span(
                     "Conservative (4/n)",
-                    title = "Conservative threshold: 4/n (where n = sample size). This is the recommended default. Automatically adjusts for sample size - smaller samples use higher thresholds. More conservative (flags fewer cases as influential)."
+                    title = "Conservative threshold: 4/n (where n = sample size). This is the recommended default and adjusts for sample size. It is usually stricter and flags more cases as influential than a threshold of 1.0."
                   ),
                   tags$span(
                     "Liberal (1.0)",
-                    title = "Liberal threshold: Fixed value of 1.0. More liberal (flags more cases as influential). Use when you want a more sensitive screen for influential cases."
+                    title = "Liberal threshold: Fixed value of 1.0. This is less strict and usually flags fewer cases as influential than 4/n."
                   ),
                   tags$span(
                     "Custom",
-                    title = "Custom threshold: Specify your own threshold between 0 and 1. Lower values are more conservative (flag more cases). Allows fine-tuning based on your specific analysis needs."
+                    title = "Custom threshold: Specify your own threshold between 0 and 1. Lower values are stricter and flag more cases as influential. Allows fine-tuning based on your analysis needs."
                   )
                 ),
                 choiceValues = c("conservative", "liberal", "custom"),
@@ -129,7 +129,7 @@ ui <- fluidPage(
             conditionalPanel(
               condition = "input.cooks_threshold_type == 'custom'",
               tags$div(
-                title = "Enter a custom Cook's Distance threshold between 0 and 1. Lower values are more conservative (flag more cases as influential).",
+                title = "Enter a custom Cook's Distance threshold between 0 and 1. Lower values are stricter and flag more cases as influential.",
                 numericInput("cooks_threshold_custom", "Custom Cook's Distance Threshold", 
                             value = 0.01, min = 0, max = 1, step = 0.001)
               )
@@ -238,7 +238,7 @@ ui <- fluidPage(
                       title = "Uses the 16th, 50th (median), and 84th percentiles of the moderator distribution. This affects conditional effects in the text output and the visualization data used for plots. More robust to outliers and non-normal distributions. Recommended when the moderator distribution is skewed or has outliers."
                     ),
                     tags$span(
-                      "Moments (Mean ±1 SD)",
+                      "Moments (Mean +/- 1 SD)",
                       title = "Uses the mean and one standard deviation above and below the mean. This affects conditional effects in the text output and the visualization data used for plots. More interpretable and commonly used in reporting."
                     )
                   ),
@@ -769,3 +769,4 @@ ui <- fluidPage(
     )
   )
 )
+
