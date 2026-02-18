@@ -23,7 +23,7 @@ Contact policy:
 - **Comprehensive Model Support**: Selectable models `1-22, 28-29, 58-73, 75-76, 80-92` (Model 74 is internal-only via Model 4 + X by M interaction)
 - **Flexible Data Input**: Supports CSV and SPSS (.sav) file formats
 - **Assumption Checking**: Built-in diagnostic tools for regression assumptions
-- **Outlier Detection**: Automatic identification of outliers and influential cases
+- **Flagged-Case Detection by Outcome Type**: Uses standardized residual outliers for continuous outcomes and Cook's distance influential cases for binary outcomes
 - **Bootstrap Confidence Intervals**: Support for percentile and bias-corrected bootstrap methods
 - **Visualization**: Simple slopes plots, conditional effect plots, and Johnson-Neyman plots for moderation models
 - **Export Options**: Download results as HTML files and filtered datasets
@@ -236,7 +236,9 @@ Expand and configure the following sections as needed:
 ### Step 6: Run Your Analysis
 
 1. Click **"With Original Dataset"** to run the analysis with all cases
-2. OR click **"With Outliers Removed"** (if available) to run the analysis after removing outliers/influential cases identified in Step 4
+2. OR click **"With Outliers Removed"** (if available) to run the analysis after removing flagged cases identified in Step 4:
+   - Continuous outcomes: standardized residual outliers
+   - Binary outcomes: Cook's distance influential cases
 3. Wait for the analysis to complete (progress indicators will show)
 4. View results in the **"Analysis Results"** tab
 
@@ -256,7 +258,7 @@ Expand and configure the following sections as needed:
 ### Step 8: Download Results
 
 1. Click **"Results output (html)"** to download a formatted HTML file with all analysis results
-2. If you ran analysis with outliers removed, you can also download the filtered dataset:
+2. If you ran analysis with flagged cases removed, you can also download the filtered dataset:
    - Choose format (CSV or SPSS .sav)
    - Click **"Dataset Without Outliers"**
 
@@ -351,6 +353,11 @@ This section explains each option organized by UI section headers.
 ### Assumption Checks
 
 This section allows you to configure how outliers and influential cases are identified.
+
+**Scope note**:
+- Flagged-case removal in this app is based on model diagnostics (standardized residuals for continuous outcomes; Cook's distance for binary outcomes).
+- The app does **not** currently include automatic univariate outlier detection/removal.
+- For univariate screening, use the violin plots in the Assumption Checks tab and optional PROCESS diagnostics output.
 
 **For Continuous Outcomes:**
 

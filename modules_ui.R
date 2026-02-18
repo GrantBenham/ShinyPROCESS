@@ -726,7 +726,7 @@ ui <- fluidPage(
               ),
               tags$li(
                 tags$strong("Run Analysis"),
-                ": Choose whether to run the PROCESS analysis using the unaltered loaded dataset or to run the analysis with standardized residual outliers eliminated (if any are identified)."
+                ": Choose whether to run the PROCESS analysis with your original dataset or with flagged cases removed (standardized residual outliers for continuous outcomes; Cook's distance influential cases for binary outcomes, if identified)."
               ),
               tags$li(
                 tags$strong("Review Results and Plots"),
@@ -741,13 +741,20 @@ ui <- fluidPage(
             ),
 
             tags$hr(),
+            h4("Outlier Scope"),
+            tags$ul(
+              tags$li("Flagged-case removal in this app is based on model diagnostics (standardized residuals for continuous outcomes; Cook's distance for binary outcomes)."),
+              tags$li("The app does not currently include automatic univariate outlier detection/removal. Use violin plots in Assumption Checks to review distributions and optional PROCESS diagnostics output for more detail.")
+            ),
+
+            tags$hr(),
             h4("Saving and Exporting Files"),
             tags$ul(
               tags$li(tags$strong("Analysis Settings JSON"), ": Save your current configuration first, then load that saved JSON later to restore the same setup."),
               tags$li(tags$strong("Assumption Checks HTML"), ": Download the assumption output text from the Assumption Checks tab."),
               tags$li(tags$strong("Results HTML"), ": Download full PROCESS analysis output from the sidebar."),
               tags$li(tags$strong("Plots (JPG)"), ": Download available plots in the Plots tab (Models 1 and 3 only)."),
-              tags$li(tags$strong("Reduced Dataset"), ": Download dataset after standardized residual or influential-case removal in CSV or SAV format.")
+              tags$li(tags$strong("Reduced Dataset"), ": Download a dataset with flagged cases removed (standardized residual outliers for continuous outcomes; Cook's distance influential cases for binary outcomes) in CSV or SAV format.")
             ),
 
             tags$hr(),
