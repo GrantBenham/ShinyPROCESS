@@ -25,6 +25,69 @@ dbg <- function(...) {
   }
 }
 
+# Check PROCESS file availability/version from the first N lines.
+check_process_file <- function(path = "process.R", expected_version = "5.0", scan_lines = 80L) {
+  if(!file.exists(path)) {
+    return(list(
+      ready = FALSE,
+      status = "missing",
+      detected_version = NULL,
+      message = "PROCESS file not found."
+    ))
+  }
+  
+  header_lines <- tryCatch({
+    readLines(path, n = scan_lines, warn = FALSE)
+  }, error = function(e) {
+    character(0)
+  })
+  
+  if(length(header_lines) == 0) {
+    return(list(
+      ready = FALSE,
+      status = "unreadable",
+      detected_version = NULL,
+      message = "PROCESS file exists but could not be read."
+    ))
+  }
+  
+  # Look for lines like "PROCESS for R version 5.0"
+  version_line_idx <- grep("PROCESS\\s+for\\s+R\\s+version", header_lines, ignore.case = TRUE)
+  detected_version <- NULL
+  if(length(version_line_idx) > 0) {
+    first_match <- header_lines[version_line_idx[1]]
+    version_match <- regmatches(first_match, regexpr("[0-9]+\\.[0-9]+", first_match))
+    if(length(version_match) > 0 && !is.na(version_match[1])) {
+      detected_version <- version_match[1]
+    }
+  }
+  
+  if(is.null(detected_version)) {
+    return(list(
+      ready = FALSE,
+      status = "unknown_version",
+      detected_version = NULL,
+      message = "Could not confirm PROCESS for R version from the file header."
+    ))
+  }
+  
+  if(!identical(detected_version, expected_version)) {
+    return(list(
+      ready = FALSE,
+      status = "wrong_version",
+      detected_version = detected_version,
+      message = paste0("Detected PROCESS for R version ", detected_version, ", expected version ", expected_version, ".")
+    ))
+  }
+  
+  list(
+    ready = TRUE,
+    status = "ok",
+    detected_version = detected_version,
+    message = paste0("PROCESS for R version ", detected_version, " detected.")
+  )
+}
+
 # Source assumption checks module (helper functions)
 source("modules_assumptions.R", local = TRUE)
 
@@ -70,11 +133,24 @@ server <- function(input, output, session) {
     previous_moderator2_var = NULL,
     # Cooldown period after mediator restoration to prevent observer from clearing
     mediator_restore_cooldown = FALSE,
-    mediator_restore_cooldown_time = NULL
+    mediator_restore_cooldown_time = NULL,
+    process_ready = FALSE,
+    process_status = NULL,
+    process_detected_version = NULL
   )
   
-  # Load PROCESS function
-  source("process.R", local = TRUE)
+  # Validate and load PROCESS function
+  process_check <- check_process_file(path = "process.R", expected_version = "5.0", scan_lines = 80L)
+  process_ready_flag <- isTRUE(process_check$ready)
+  rv$process_ready <- process_ready_flag
+  rv$process_status <- process_check$status
+  rv$process_detected_version <- process_check$detected_version
+  
+  if(process_ready_flag) {
+    source("process.R", local = TRUE)
+  } else {
+    dbg(paste("DEBUG: PROCESS check failed:", process_check$message))
+  }
 
   # Load save/load settings module
   source("modules_save_load.R", local = TRUE)
@@ -132,6 +208,48 @@ server <- function(input, output, session) {
   observeEvent(input$run_analysis, {
     dbg("DEBUG: Run Analysis button clicked!")
     dbg(paste("DEBUG: Button click count:", input$run_analysis))
+  })
+
+  # Expose PROCESS readiness to UI and show warning content when needed
+  output$process_ready <- reactive({
+    isTRUE(rv$process_ready)
+  })
+  outputOptions(output, "process_ready", suspendWhenHidden = FALSE)
+  
+  output$process_warning <- renderUI({
+    if(isTRUE(rv$process_ready)) {
+      return(NULL)
+    }
+    
+    detected_text <- if(!is.null(rv$process_detected_version)) {
+      paste0("Detected version: ", rv$process_detected_version, ". ")
+    } else {
+      ""
+    }
+    
+    HTML(paste0(
+      "<div style='padding:16px; border:2px solid #b71c1c; background:#ffebee; color:#7f0000; border-radius:8px; margin-bottom:12px;'>",
+      "<h4 style='margin-top:0;'>PROCESS for R v5.0 Required</h4>",
+      "<p style='margin-bottom:8px;'>ShinyPROCESS requires <strong>process.R (PROCESS for R version 5.0)</strong> in the same folder as <code>gbPROCESS.R</code>. ",
+      detected_text, "Version is read from the header text in <code>process.R</code>. ",
+      "You may still browse inputs, but analysis execution is blocked until a valid file is available.</p>",
+      "<p style='margin-bottom:4px;'>Download PROCESS for R from: ",
+      "<a href='https://haskayne.ucalgary.ca/CCRAM/resource-hub' target='_blank'>https://haskayne.ucalgary.ca/CCRAM/resource-hub</a></p>",
+      "<p style='margin-bottom:0;'>More information: ",
+      "<a href='https://processmacro.org/index.html' target='_blank'>https://processmacro.org/index.html</a></p>",
+      "</div>"
+    ))
+  })
+  
+  # Disable run controls unless PROCESS v5.0 is ready
+  observe({
+    if(isTRUE(rv$process_ready)) {
+      shinyjs::enable("run_analysis")
+      shinyjs::enable("run_analysis_no_outliers")
+    } else {
+      shinyjs::disable("run_analysis")
+      shinyjs::disable("run_analysis_no_outliers")
+    }
   })
   
   observeEvent(input$run_analysis_no_outliers, {

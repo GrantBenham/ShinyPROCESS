@@ -26,6 +26,10 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       width = 3,
+      conditionalPanel(
+        condition = "output.process_ready !== true",
+        htmlOutput("process_warning")
+      ),
       h4("Upload Data"),
       div(
         id = "file_input_div",
