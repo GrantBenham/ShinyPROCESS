@@ -109,6 +109,28 @@ create_formatted_output <- function(analysis_results) {
   process_output <- analysis_results$output
   
   
+  # Model-role helpers for summary display (spec-driven with safe fallback)
+  model_uses_w <- function(model_num) {
+    if(!is.null(model_num) && !is.na(model_num) && exists("process_model_specs", inherits = TRUE)) {
+      spec_tbl <- get("process_model_specs", inherits = TRUE)
+      spec <- spec_tbl[spec_tbl$model == as.integer(model_num), , drop = FALSE]
+      if(nrow(spec) == 1) {
+        return(isTRUE(spec$requires_w_input))
+      }
+    }
+    model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
+  }
+  model_uses_z <- function(model_num) {
+    if(!is.null(model_num) && !is.na(model_num) && exists("process_model_specs", inherits = TRUE)) {
+      spec_tbl <- get("process_model_specs", inherits = TRUE)
+      spec <- spec_tbl[spec_tbl$model == as.integer(model_num), , drop = FALSE]
+      if(nrow(spec) == 1) {
+        return(isTRUE(spec$requires_z_input))
+      }
+    }
+    model_num %in% c(2, 3)
+  }
+
   # Start with summary
   output_text <- c(
     "<strong>ANALYSIS SUMMARY</strong>",
@@ -134,12 +156,13 @@ create_formatted_output <- function(analysis_results) {
       sprintf("Mediator variable(s): %s", paste(settings$mediator_vars, collapse = ", "))
     },
     # Only show moderator variables for models that use them
+    summary_model_num <- if(!is.null(settings$model)) as.numeric(settings$model) else NA_real_,
     if(!is.null(settings$moderator_var) && settings$moderator_var != "" && 
-       settings$model %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)) {
+       model_uses_w(summary_model_num)) {
       sprintf("Moderator variable: %s", settings$moderator_var)
     },
     if(!is.null(settings$moderator2_var) && settings$moderator2_var != "" &&
-       settings$model %in% c(5, 58, 59, 74)) {
+       model_uses_z(summary_model_num)) {
       sprintf("Second Moderator variable: %s", settings$moderator2_var)
     },
     if(!is.null(settings$covariates)) {
