@@ -69,6 +69,13 @@ If this returns `character(0)`, required packages are installed.
 - App launches but errors on startup:
   - Restart RStudio, reopen the project, and rerun the setup commands above.
 
+### Shinylive Runtime Notes
+
+- Local R Shiny can auto-load `process.R` v5.0 from the app root (same folder as `gbPROCESS.R`).
+- Shinylive requires uploading `process.R` each session using the in-app upload control.
+- Uploaded `process.R` is session-only and is not persisted by the app.
+- Use `tools/export_shinylive.R` for browser export; it hard-stops if root `process.R` exists and restores `runtime.txt` after export.
+
 ## Important: Attribution, Licensing, and Required File
 
 - **Shiny app developer**: Dr. Grant Benham, The University of Texas Rio Grande Valley  

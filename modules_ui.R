@@ -18,6 +18,14 @@ process_model_choices <- if(exists("VALID_USER_MODELS", inherits = TRUE)) {
   )
 }
 
+# Shinylive workaround for Chromium download behavior:
+# remove the HTML5 "download" attribute so downloadHandler responses resolve correctly.
+downloadButton <- function(...) {
+  tag <- shiny::downloadButton(...)
+  tag$attribs$download <- NULL
+  tag
+}
+
 ui <- fluidPage(
   useShinyjs(),
   tags$style(type="text/css", "body { max-width: 1800px; margin: auto; }"),
@@ -35,6 +43,7 @@ ui <- fluidPage(
         id = "file_input_div",
         fileInput("data_file", "Choose CSV or SAV File", accept = c(".csv", ".sav"))
       ),
+      htmlOutput("process_status_line"),
       
       # Save/Load Analysis Settings
       h4("Analysis Settings"),

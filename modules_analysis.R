@@ -25,7 +25,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
   # Block analysis when PROCESS is unavailable or wrong version
   if(!isTRUE(rv$process_ready)) {
     showNotification(
-      "PROCESS for R v5.0 is required. Please place process.R (version 5.0) in this app folder.",
+      "PROCESS for R v5.0 is required. Place process.R (version 5.0) in this app folder or upload process.R using the warning panel.",
       type = "error",
       duration = 10
     )

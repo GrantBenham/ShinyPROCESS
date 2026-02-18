@@ -16,3 +16,5 @@ Archived files/**
 Archived\ files/**
 .vscode/settings.json
 process.R
+process_rename.R
+docs/
