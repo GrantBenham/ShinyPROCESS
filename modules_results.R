@@ -53,8 +53,9 @@ create_bivariate_correlations <- function(data, predictor_var, outcome_var, sett
     pearson_p <- pearson_test$p.value
     pearson_ci <- pearson_test$conf.int
     
+    has_ties <- any(duplicated(complete_data[[predictor_var]])) || any(duplicated(complete_data[[outcome_var]]))
     spearman_test <- cor.test(complete_data[[predictor_var]], complete_data[[outcome_var]], 
-                              method = "spearman")
+                              method = "spearman", exact = FALSE)
     spearman_rho <- spearman_test$estimate
     spearman_p <- spearman_test$p.value
     
@@ -68,6 +69,7 @@ create_bivariate_correlations <- function(data, predictor_var, outcome_var, sett
       sprintf("<strong>Spearman's ρ:</strong> %.4f, p %s",
               spearman_rho,
               ifelse(spearman_p < .001, "< .001", sprintf("= %.3f", spearman_p))),
+      if(has_ties) "<em>Note: Spearman p-value uses a standard approximation because repeated values (ties) were present.</em>",
       sprintf("<em>Sample size: %d cases (listwise deletion for these two variables)</em>", n),
       ""
     )
