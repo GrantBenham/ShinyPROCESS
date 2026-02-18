@@ -109,6 +109,24 @@ server <- function(input, output, session) {
     }
     model_num %in% c(2, 3)
   }
+
+  # Helper for plot-support checks in this file (spec-driven with fallback).
+  supports_plot_model <- function(model_num) {
+    if(is.null(model_num) || is.na(model_num)) {
+      return(FALSE)
+    }
+    if(exists("model_supports_plot", inherits = TRUE)) {
+      return(isTRUE(model_supports_plot(model_num)))
+    }
+    if(exists("process_model_specs", inherits = TRUE)) {
+      spec_tbl <- get("process_model_specs", inherits = TRUE)
+      spec <- spec_tbl[spec_tbl$model == as.integer(model_num), , drop = FALSE]
+      if(nrow(spec) == 1) {
+        return(isTRUE(spec$supports_plot))
+      }
+    }
+    model_num %in% c(1, 3)
+  }
   
   # DEBUG: Observer to track button clicks
   observeEvent(input$run_analysis, {
@@ -948,7 +966,7 @@ server <- function(input, output, session) {
     # Only allow plots for Models 1 and 3
     req(input$process_model)
     model_num <- as.numeric(input$process_model)
-    if(!model_num %in% c(1, 3)) {
+    if(!supports_plot_model(model_num)) {
       plot.new()
       text(0.5, 0.5, "Plots are only available for Models 1 and 3.", cex = 1.2)
       return()
@@ -2013,7 +2031,7 @@ server <- function(input, output, session) {
     # Only allow plots for Models 1 and 3
     req(input$process_model)
     model_num <- as.numeric(input$process_model)
-    if(!model_num %in% c(1, 3)) {
+    if(!supports_plot_model(model_num)) {
       plot.new()
       text(0.5, 0.5, "Plots are only available for Models 1 and 3.", cex = 1.2)
       return()
@@ -2082,7 +2100,7 @@ server <- function(input, output, session) {
     # Only allow plots for Models 1 and 3
     req(input$process_model)
     model_num <- as.numeric(input$process_model)
-    if(!model_num %in% c(1, 3)) {
+    if(!supports_plot_model(model_num)) {
       plot.new()
       text(0.5, 0.5, "Plots are only available for Models 1 and 3.", cex = 1.2)
       return()
@@ -2130,7 +2148,7 @@ server <- function(input, output, session) {
     # Only allow plots for Models 1 and 3
     req(input$process_model)
     model_num <- as.numeric(input$process_model)
-    if(!model_num %in% c(1, 3)) {
+    if(!supports_plot_model(model_num)) {
       plot.new()
       text(0.5, 0.5, "Plots are only available for Models 1 and 3.", cex = 1.2)
       return()
@@ -2210,7 +2228,7 @@ server <- function(input, output, session) {
         # Only allow downloads for Models 1 and 3
         req(input$process_model)
         model_num <- as.numeric(input$process_model)
-        if(!model_num %in% c(1, 3)) {
+        if(!supports_plot_model(model_num)) {
           stop("Plots are only available for Models 1 and 3.")
         }
         
@@ -2251,7 +2269,7 @@ server <- function(input, output, session) {
         # Only allow downloads for Models 1 and 3
         req(input$process_model)
         model_num <- as.numeric(input$process_model)
-        if(!model_num %in% c(1, 3)) {
+        if(!supports_plot_model(model_num)) {
           stop("Plots are only available for Models 1 and 3.")
         }
         
