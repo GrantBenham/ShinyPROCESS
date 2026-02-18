@@ -194,22 +194,45 @@ diagnostic_report <- function(model) {
   })
 }
 
+# Spec-driven helpers for assumptions validation (with fallback)
+assumptions_model_spec_row <- function(model_num) {
+  if(is.null(model_num) || is.na(model_num) || !exists("process_model_specs", inherits = TRUE)) {
+    return(NULL)
+  }
+  spec_tbl <- get("process_model_specs", inherits = TRUE)
+  spec <- spec_tbl[spec_tbl$model == as.integer(model_num), , drop = FALSE]
+  if(nrow(spec) == 1) spec else NULL
+}
+
+assumptions_requires_w <- function(model_num) {
+  spec <- assumptions_model_spec_row(model_num)
+  if(!is.null(spec)) return(isTRUE(spec$requires_w_input))
+  model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74, 83:92)
+}
+
+assumptions_requires_z <- function(model_num) {
+  spec <- assumptions_model_spec_row(model_num)
+  if(!is.null(spec)) return(isTRUE(spec$requires_z_input))
+  model_num %in% c(2, 3)
+}
+
+assumptions_has_m <- function(model_num) {
+  spec <- assumptions_model_spec_row(model_num)
+  if(!is.null(spec)) return(isTRUE(spec$has_m))
+  !is.null(model_num) && model_num >= 4 && model_num <= 92
+}
+
 # Helper function to get required variables description for a model
 get_required_vars_description <- function(model_num) {
-  # Models with one moderator (W): 1, 5, 14, 15, 58, 59, 74, 83-92
-  models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
-  # Models with two moderators (W and Z): 2, 3
-  models_with_second_moderator <- c(2, 3)
-  
   required <- c("Predictor (X)", "Outcome (Y)")
   
-  if(model_num %in% models_with_second_moderator) {
+  if(assumptions_requires_z(model_num)) {
     required <- c(required, "Moderator (W)", "Second Moderator (Z)")
-  } else if(model_num %in% models_with_moderator) {
+  } else if(assumptions_requires_w(model_num)) {
     required <- c(required, "Moderator (W)")
   }
   
-  if(model_num >= 4 && model_num <= 92) {
+  if(assumptions_has_m(model_num)) {
     required <- c(required, "at least one Mediator")
   }
   
@@ -226,13 +249,8 @@ check_required_vars_for_assumptions <- function(model_num, predictor_var, outcom
     return(list(valid = FALSE, message = paste0("This model requires: ", paste(required_desc, collapse = ", "), ".")))
   }
   
-  # Models with one moderator (W): 1, 5, 14, 15, 58, 59, 74, 83-92
-  models_with_moderator <- c(1, 5, 14, 15, 58, 59, 74, 83:92)
-  # Models with two moderators (W and Z): 2, 3
-  models_with_second_moderator <- c(2, 3)
-  
   # Check for moderator if required
-  if(model_num %in% models_with_moderator || model_num %in% models_with_second_moderator) {
+  if(assumptions_requires_w(model_num)) {
     if(is.null(moderator_var) || moderator_var == "") {
       required_desc <- get_required_vars_description(model_num)
       return(list(valid = FALSE, message = paste0("This model requires: ", paste(required_desc, collapse = ", "), ".")))
@@ -240,15 +258,15 @@ check_required_vars_for_assumptions <- function(model_num, predictor_var, outcom
   }
   
   # Check for second moderator if required
-  if(model_num %in% models_with_second_moderator) {
+  if(assumptions_requires_z(model_num)) {
     if(is.null(moderator2_var) || moderator2_var == "") {
       required_desc <- get_required_vars_description(model_num)
       return(list(valid = FALSE, message = paste0("This model requires: ", paste(required_desc, collapse = ", "), ".")))
     }
   }
   
-  # Models 4-92: All require at least one mediator
-  if(model_num >= 4 && model_num <= 92) {
+  # Mediator models require at least one mediator
+  if(assumptions_has_m(model_num)) {
     if(is.null(mediator_vars) || length(mediator_vars) == 0) {
       required_desc <- get_required_vars_description(model_num)
       return(list(valid = FALSE, message = paste0("This model requires: ", paste(required_desc, collapse = ", "), ".")))
