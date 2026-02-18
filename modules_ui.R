@@ -697,6 +697,14 @@ ui <- fluidPage(
                 "https://processmacro.org/index.html"
               )
             ),
+            p(
+              tags$strong("Runtime note: "),
+              "In local R Shiny, placing ",
+              tags$code("process.R"),
+              " in the app folder can satisfy this requirement automatically. In Shinylive (browser build), upload ",
+              tags$code("process.R"),
+              " each launch/session."
+            ),
 
             tags$hr(),
             h4("Workflow"),
@@ -705,7 +713,7 @@ ui <- fluidPage(
                 tags$strong("Upload Data"),
                 ": Use the ",
                 tags$code("Choose CSV or SAV File"),
-                " control in the sidebar to load your dataset."
+                " control in the sidebar to load your dataset. The PROCESS status box under Upload Data shows whether PROCESS is ready."
               ),
               tags$li(
                 tags$strong("Save Analysis Settings (then Load Later)"),

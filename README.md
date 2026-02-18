@@ -75,6 +75,23 @@ If this returns `character(0)`, required packages are installed.
 - Shinylive requires uploading `process.R` each session using the in-app upload control.
 - Uploaded `process.R` is session-only and is not persisted by the app.
 - Use `tools/export_shinylive.R` for browser export; it hard-stops if root `process.R` exists and restores `runtime.txt` after export.
+- Repeatable update steps are documented in `SHINYLIVE_UPDATE_WORKFLOW.txt`.
+
+### Sharing the Browser Version (No R Required for End Users)
+
+If you want others to run the app without installing R/RStudio, share the **Shinylive export** (the `docs/` output), not the R project.
+
+Important:
+- Shinylive files must be served over `http://` (not opened with `file://`).
+- End users should expect to upload `process.R` v5.0 in each browser session before running analysis.
+
+Recommended sharing methods:
+1. Host the exported `docs/` folder on any static web host and send users the URL.
+2. Send users the exported folder plus a lightweight local web-server method for their OS.
+
+If users only receive files and no hosting:
+- They cannot reliably run by double-clicking files directly.
+- They need a local static server, then open the local URL in a browser.
 
 ## Important: Attribution, Licensing, and Required File
 
