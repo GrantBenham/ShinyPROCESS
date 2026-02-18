@@ -434,6 +434,10 @@ ui <- fluidPage(
         tabPanel("Assumption Checks",
           div(style = "margin-bottom: 20px;",
             h4("Detailed Assumption Check Results"),
+            p(style = "margin-top: 8px; color: #555;",
+              "Assumption checks are based on the variables currently selected and update as selections change. ",
+              "For final interpretation, review these checks after all required variables for the selected model are specified."
+            ),
             conditionalPanel(
               condition = "output.all_vars_selected_for_assumptions",
               div(style = "margin-top: 10px;",
