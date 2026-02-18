@@ -22,9 +22,13 @@ if(!requireNamespace("jsonlite", quietly = TRUE)) {
 # Save Analysis Settings Handler
 output$save_settings <- downloadHandler(
   filename = function() {
+    # Prevent execution if no dataset loaded
+    req(rv$original_dataset)
     paste0("process_settings_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".json")
   },
   content = function(file) {
+    # Prevent execution if no dataset loaded
+    req(rv$original_dataset)
     # Collect all current input values
     settings <- list(
       # Metadata
@@ -87,10 +91,10 @@ output$save_settings <- downloadHandler(
       covmy = if(!is.null(input$covmy)) input$covmy else FALSE,
       
       # PROCESS Options - Probing Moderation
-      probe_interactions = if(!is.null(input$probe_interactions)) input$probe_interactions else FALSE,
+      probe_interactions = if(!is.null(input$probe_interactions)) input$probe_interactions else TRUE,
       probe_threshold = if(!is.null(input$probe_threshold)) input$probe_threshold else "p < .10",
       conditioning_values = if(!is.null(input$conditioning_values)) input$conditioning_values else "1",
-      jn = if(!is.null(input$jn)) input$jn else FALSE,
+      show_jn_regions = if(!is.null(input$show_jn_regions)) input$show_jn_regions else TRUE,
       
       # Plot Options
       slopes_title = if(!is.null(input$slopes_title)) input$slopes_title else "Simple Slopes Plot",
@@ -113,8 +117,14 @@ output$save_settings <- downloadHandler(
   contentType = "application/json"
 )
 
+# Note: Save/load buttons are now conditionally rendered using conditionalPanel
+# in modules_ui.R based on output$dataset_loaded reactive from modules_data_management.R
+# This ensures buttons are completely hidden (not just disabled) when no dataset is loaded
+
 # Load Analysis Settings Handler
 observeEvent(input$load_settings_file, {
+  # Prevent execution if no dataset loaded
+  req(rv$original_dataset)
   req(input$load_settings_file)
   
   # Step 0: Validate file type
@@ -124,7 +134,7 @@ observeEvent(input$load_settings_file, {
     return()
   }
   
-  # Step 1: Validate dataset is loaded
+  # Step 1: Validate dataset is loaded (redundant check since button is disabled, but good for safety)
   if(is.null(rv$original_dataset)) {
     showNotification("Please load a dataset first before loading settings.", type = "error", duration = 5)
     return()
@@ -157,18 +167,31 @@ observeEvent(input$load_settings_file, {
       return()
     }
     
+    # Step 3.5: Ensure Variable Selection section is visible before restoration
+    # This prevents hidden UI from delaying mediator_count/mediator inputs
+    shinyjs::runjs("
+      (function() {
+        var details = document.getElementById('details_select_vars');
+        if (details) { details.open = true; }
+      })();
+    ")
+    
     # Step 4: Set model first (this triggers clearing)
     # Store settings first
     rv$settings_to_load <- settings
     
     if(!is.null(settings$process_model) && settings$process_model != "") {
+      # CRITICAL: Set load_settings_pending BEFORE updating model
+      # This allows the model change observer to skip clearing mediators
+      rv$load_settings_pending <- TRUE
+      
       # Set the model - this will trigger the model change observer which sets rv$is_clearing <- TRUE
+      # The model change observer will see load_settings_pending and skip clearing mediators
       updateSelectInput(session, "process_model", selected = settings$process_model)
       
-      # Mark as pending - the restore observer will wait for is_clearing to become FALSE
+      # The restore observer will wait for is_clearing to become FALSE
       # The model change observer will set is_clearing to TRUE, then after 500ms it becomes FALSE
-      rv$load_settings_pending <- TRUE
-      print("DEBUG: Model set, settings marked as pending, waiting for clearing to complete")
+      dbg("DEBUG: Model set, settings marked as pending, waiting for clearing to complete")
     } else {
       # No model to set, restore immediately (no clearing needed)
       rv$load_settings_pending <- TRUE
@@ -182,6 +205,12 @@ observeEvent(input$load_settings_file, {
 # Observer to restore settings after model clearing completes
 # This observer waits for: 1) settings to be pending, 2) clearing to complete, 3) model to be set
 observe({
+  # CRITICAL: Skip if mediators are being restored - the mediator observer will handle that
+  # This prevents the main observer from retriggering and clearing mediators
+  if(isTRUE(rv$restore_mediators_pending)) {
+    return()
+  }
+  
   # Only proceed if we have pending settings to load AND clearing is complete
   if(isTRUE(rv$load_settings_pending) && !isTRUE(rv$is_clearing) && !is.null(rv$settings_to_load)) {
     settings <- rv$settings_to_load
@@ -219,18 +248,18 @@ observe({
           current_model <- if(is.null(input$process_model) || input$process_model == "") NULL else input$process_model
           if(is.null(current_model) || current_model != settings$process_model) {
             # Model doesn't match, abort restoration
-            print("DEBUG: Model mismatch, aborting restoration")
+            dbg("DEBUG: Model mismatch, aborting restoration")
             return()
           }
         }
         settings <- rv$settings_to_load
         vars <- names(rv$original_dataset)
         
-        print("DEBUG: Restoring variables from saved settings")
-        print(paste("DEBUG: predictor_var to restore:", settings$predictor_var))
-        print(paste("DEBUG: outcome_var to restore:", settings$outcome_var))
-        print(paste("DEBUG: moderator_var to restore:", settings$moderator_var))
-        print(paste("DEBUG: moderator2_var to restore:", settings$moderator2_var))
+        dbg("DEBUG: Restoring variables from saved settings")
+        dbg(paste("DEBUG: predictor_var to restore:", settings$predictor_var))
+        dbg(paste("DEBUG: outcome_var to restore:", settings$outcome_var))
+        dbg(paste("DEBUG: moderator_var to restore:", settings$moderator_var))
+        dbg(paste("DEBUG: moderator2_var to restore:", settings$moderator2_var))
         
         # Restore variables (in correct order)
         if(!is.null(settings$predictor_var) && settings$predictor_var != "" && settings$predictor_var %in% vars) {
@@ -240,7 +269,7 @@ observe({
           # CRITICAL: Set previous_predictor_var to the restored value so auto-label observer
           # doesn't think the variable changed and overwrite JSON labels
           rv$previous_predictor_var <- settings$predictor_var
-          print(paste("DEBUG: Restored predictor_var:", settings$predictor_var))
+          dbg(paste("DEBUG: Restored predictor_var:", settings$predictor_var))
         }
         
         if(!is.null(settings$outcome_var) && settings$outcome_var != "" && settings$outcome_var %in% vars) {
@@ -249,7 +278,7 @@ observe({
                            selected = settings$outcome_var)
           # CRITICAL: Set previous_outcome_var to the restored value
           rv$previous_outcome_var <- settings$outcome_var
-          print(paste("DEBUG: Restored outcome_var:", settings$outcome_var))
+          dbg(paste("DEBUG: Restored outcome_var:", settings$outcome_var))
         }
         
         if(!is.null(settings$moderator_var) && settings$moderator_var != "" && settings$moderator_var %in% vars) {
@@ -258,7 +287,7 @@ observe({
                            selected = settings$moderator_var)
           # CRITICAL: Set previous_moderator_var to the restored value
           rv$previous_moderator_var <- settings$moderator_var
-          print(paste("DEBUG: Restored moderator_var:", settings$moderator_var))
+          dbg(paste("DEBUG: Restored moderator_var:", settings$moderator_var))
         }
         
         if(!is.null(settings$moderator2_var) && settings$moderator2_var != "" && settings$moderator2_var %in% vars) {
@@ -267,21 +296,44 @@ observe({
                            selected = settings$moderator2_var)
           # CRITICAL: Set previous_moderator2_var to the restored value
           rv$previous_moderator2_var <- settings$moderator2_var
-          print(paste("DEBUG: Restored moderator2_var:", settings$moderator2_var))
+          dbg(paste("DEBUG: Restored moderator2_var:", settings$moderator2_var))
         } else {
           # If no moderator2_var in settings, clear it
           rv$previous_moderator2_var <- NULL
         }
         
         # Restore mediator count FIRST, then individual mediators
-        if(!is.null(settings$mediator_count) && settings$mediator_count != "") {
-          updateSelectInput(session, "mediator_count", selected = settings$mediator_count)
-          print(paste("DEBUG: Restored mediator_count:", settings$mediator_count))
-          
-          # Store mediator vars to restore after mediator_count change propagates
-          # The separate observer below will handle restoring individual mediators
+        if(!is.null(settings$mediator_count) && settings$mediator_count != "" && 
+           !is.null(settings$mediator_vars) && length(settings$mediator_vars) > 0) {
+          # CRITICAL: Set restore flags BEFORE updating mediator_count
+          # This allows the mediator_count observer to skip clearing if we're restoring
           rv$mediator_vars_to_restore <- settings$mediator_vars
           rv$restore_mediators_pending <- TRUE
+          # Store the expected mediator count so restore observer knows what to expect
+          # This also triggers mediator_list_ui to re-render with the correct selected value
+          rv$expected_mediator_count <- if(!is.null(settings$mediator_count) && settings$mediator_count != "" && !is.na(as.numeric(settings$mediator_count))) {
+            as.integer(settings$mediator_count)
+          } else {
+            sum(settings$mediator_vars != "" & !is.na(settings$mediator_vars))
+          }
+          dbg(paste("DEBUG: Set restore flags, about to restore mediator_count:", settings$mediator_count))
+          dbg(paste("DEBUG: Expected mediator count:", rv$expected_mediator_count))
+          dbg(paste("DEBUG: Mediator vars to restore:", paste(settings$mediator_vars[settings$mediator_vars != ""], collapse=", ")))
+          
+          # CRITICAL: Set cooldown BEFORE setting restore flags to prevent observer from clearing
+          rv$mediator_restore_cooldown <- TRUE
+          rv$mediator_restore_cooldown_time <- Sys.time()
+          dbg("DEBUG: Cooldown set BEFORE setting restore flags to prevent observer from clearing")
+          
+          # Try to update mediator_count immediately (renderUI should also set it)
+          # If it fails, the mediator restoration observer will retry
+          tryCatch({
+            updateSelectInput(session, "mediator_count", selected = as.character(settings$mediator_count))
+            dbg(paste("DEBUG: Attempted to update mediator_count to:", settings$mediator_count))
+          }, error = function(e) {
+            dbg(paste("DEBUG: mediator_count update failed (will retry):", e$message))
+            # The mediator restoration observer will retry after delay
+          })
         }
         
         if(!is.null(settings$covariates) && length(settings$covariates) > 0) {
@@ -289,7 +341,7 @@ observe({
           valid_covariates <- settings$covariates[settings$covariates %in% vars]
           if(length(valid_covariates) > 0) {
             updateSelectInput(session, "covariates", choices = vars, selected = valid_covariates)
-            print(paste("DEBUG: Restored covariates:", paste(valid_covariates, collapse=", ")))
+            dbg(paste("DEBUG: Restored covariates:", paste(valid_covariates, collapse=", ")))
           }
         }
         
@@ -393,8 +445,12 @@ observe({
     if(!is.null(settings$conditioning_values)) {
       updateRadioButtons(session, "conditioning_values", selected = settings$conditioning_values)
     }
-    if(!is.null(settings$jn)) {
-      updateCheckboxInput(session, "jn", value = settings$jn)
+    if(!is.null(settings$show_jn_regions)) {
+      updateCheckboxInput(session, "show_jn_regions", value = settings$show_jn_regions)
+    }
+    # Legacy support: if old JSON has 'jn' instead of 'show_jn_regions', convert it
+    if(is.null(settings$show_jn_regions) && !is.null(settings$jn)) {
+      updateCheckboxInput(session, "show_jn_regions", value = settings$jn)
     }
     
     # Restore Plot Options
@@ -425,11 +481,11 @@ observe({
     
     # Store labels to restore later (after variables are set and auto-label observer has run)
     # We'll restore them in a separate observer with a delay
-    print("DEBUG: ===== STORING LABELS FROM JSON FOR LATER RESTORATION =====")
-    print(paste("DEBUG: JSON x_label:", if(!is.null(settings$x_label)) settings$x_label else "NULL"))
-    print(paste("DEBUG: JSON y_label:", if(!is.null(settings$y_label)) settings$y_label else "NULL"))
-    print(paste("DEBUG: JSON moderator_label:", if(!is.null(settings$moderator_label)) settings$moderator_label else "NULL"))
-    print(paste("DEBUG: JSON moderator2_label:", if(!is.null(settings$moderator2_label)) settings$moderator2_label else "NULL"))
+    dbg("DEBUG: ===== STORING LABELS FROM JSON FOR LATER RESTORATION =====")
+    dbg(paste("DEBUG: JSON x_label:", if(!is.null(settings$x_label)) settings$x_label else "NULL"))
+    dbg(paste("DEBUG: JSON y_label:", if(!is.null(settings$y_label)) settings$y_label else "NULL"))
+    dbg(paste("DEBUG: JSON moderator_label:", if(!is.null(settings$moderator_label)) settings$moderator_label else "NULL"))
+    dbg(paste("DEBUG: JSON moderator2_label:", if(!is.null(settings$moderator2_label)) settings$moderator2_label else "NULL"))
     
     rv$labels_to_restore <- list(
       x_label = if(!is.null(settings$x_label)) settings$x_label else NULL,
@@ -438,33 +494,71 @@ observe({
       moderator2_label = if(!is.null(settings$moderator2_label)) settings$moderator2_label else NULL
     )
     rv$restore_labels_pending <- TRUE
-    print("DEBUG: Labels stored, restore_labels_pending set to TRUE")
+    dbg("DEBUG: Labels stored, restore_labels_pending set to TRUE")
       }
     })
   }
 })
 
-# Separate observer to restore mediators after mediator_count change propagates
-# This waits for the mediator_count change to complete before restoring individual mediators
+# Event-driven mediator restoration (restore only after mediator_count is set)
+observeEvent(input$mediator_count, {
+  if(!isTRUE(rv$restore_mediators_pending) ||
+     is.null(rv$mediator_vars_to_restore) ||
+     is.null(rv$original_dataset)) {
+    return()
+  }
+
+  expected_count <- sum(rv$mediator_vars_to_restore != "" & !is.na(rv$mediator_vars_to_restore))
+  current_count <- if(!is.null(input$mediator_count) && input$mediator_count != "" &&
+                      !is.na(as.numeric(input$mediator_count))) {
+    as.integer(input$mediator_count)
+  } else {
+    0
+  }
+
+  if(expected_count == 0 || current_count != expected_count) {
+    return()
+  }
+
+  vars <- names(rv$original_dataset)
+  restored_count <- 0
+
+  for(i in 1:min(expected_count, length(rv$mediator_vars_to_restore))) {
+    if(rv$mediator_vars_to_restore[i] != "" && rv$mediator_vars_to_restore[i] %in% vars) {
+      var_name <- paste0("mediator_m", i)
+      updateSelectInput(session, var_name,
+                        choices = c("Select variable" = "", vars),
+                        selected = rv$mediator_vars_to_restore[i])
+      restored_count <- restored_count + 1
+    }
+  }
+
+  if(restored_count == expected_count) {
+    rv$restore_mediators_pending <- FALSE
+    rv$mediator_vars_to_restore <- NULL
+    rv$expected_mediator_count <- NULL
+    rv$mediator_restore_retry_count <- NULL
+    rv$load_settings_pending <- FALSE
+    rv$settings_to_load <- NULL
+
+    showNotification("Analysis settings loaded successfully!", type = "default", duration = 3)
+    dbg("DEBUG: Settings restoration completed (including mediators and labels)")
+  }
+}, ignoreInit = TRUE)
+
+# Observer to clear cooldown after the delay period
 observe({
-  if(isTRUE(rv$restore_mediators_pending) && !is.null(rv$mediator_vars_to_restore) && !is.null(rv$original_dataset)) {
-    # Wait a moment for mediator_count change to propagate (mediator_count observer clears mediators)
-    invalidateLater(400, session)
-    
-    isolate({
-      vars <- names(rv$original_dataset)
-      
-      for(i in 1:min(10, length(rv$mediator_vars_to_restore))) {
-        if(rv$mediator_vars_to_restore[i] != "") {
-          updateSelectInput(session, paste0("mediator_m", i),
-                           choices = c("Select variable" = "", vars),
-                           selected = rv$mediator_vars_to_restore[i])
-        }
-      }
-      
-      rv$restore_mediators_pending <- FALSE
-      rv$mediator_vars_to_restore <- NULL
-    })
+  if(isTRUE(rv$mediator_restore_cooldown) && !is.null(rv$mediator_restore_cooldown_time)) {
+    # Check if 10 seconds have passed
+    elapsed <- as.numeric(difftime(Sys.time(), rv$mediator_restore_cooldown_time, units = "secs"))
+    if(elapsed >= 10) {
+      rv$mediator_restore_cooldown <- FALSE
+      rv$mediator_restore_cooldown_time <- NULL
+      dbg("DEBUG: Cooldown period ended (10 seconds elapsed) - mediator_count observer can now clear if needed")
+    } else {
+      # Check again in 1 second
+      invalidateLater(1000, session)
+    }
   }
 })
 
@@ -481,40 +575,40 @@ observe({
       if(isTRUE(rv$restore_labels_pending) && !is.null(rv$labels_to_restore)) {
         labels <- rv$labels_to_restore
         
-        print("DEBUG: ===== RESTORING PLOT LABELS FROM JSON =====")
-        print(paste("DEBUG: JSON x_label value:", labels$x_label))
-        print(paste("DEBUG: JSON y_label value:", labels$y_label))
-        print(paste("DEBUG: JSON moderator_label value:", labels$moderator_label))
-        print(paste("DEBUG: Current x_label before restore:", input$x_label))
-        print(paste("DEBUG: Current y_label before restore:", input$y_label))
-        print(paste("DEBUG: Current moderator_label before restore:", input$moderator_label))
-        print(paste("DEBUG: load_settings_pending:", rv$load_settings_pending))
-        print(paste("DEBUG: restore_labels_pending:", rv$restore_labels_pending))
+        dbg("DEBUG: ===== RESTORING PLOT LABELS FROM JSON =====")
+        dbg(paste("DEBUG: JSON x_label value:", labels$x_label))
+        dbg(paste("DEBUG: JSON y_label value:", labels$y_label))
+        dbg(paste("DEBUG: JSON moderator_label value:", labels$moderator_label))
+        dbg(paste("DEBUG: Current x_label before restore:", input$x_label))
+        dbg(paste("DEBUG: Current y_label before restore:", input$y_label))
+        dbg(paste("DEBUG: Current moderator_label before restore:", input$moderator_label))
+        dbg(paste("DEBUG: load_settings_pending:", rv$load_settings_pending))
+        dbg(paste("DEBUG: restore_labels_pending:", rv$restore_labels_pending))
         
         if(!is.null(labels$x_label)) {
           updateTextInput(session, "x_label", value = labels$x_label)
-          print(paste("DEBUG: Restored x_label to:", labels$x_label))
+          dbg(paste("DEBUG: Restored x_label to:", labels$x_label))
         }
         if(!is.null(labels$y_label)) {
           updateTextInput(session, "y_label", value = labels$y_label)
-          print(paste("DEBUG: Restored y_label to:", labels$y_label))
+          dbg(paste("DEBUG: Restored y_label to:", labels$y_label))
         }
         if(!is.null(labels$moderator_label)) {
           updateTextInput(session, "moderator_label", value = labels$moderator_label)
-          print(paste("DEBUG: Restored moderator_label to:", labels$moderator_label))
+          dbg(paste("DEBUG: Restored moderator_label to:", labels$moderator_label))
         }
         if(!is.null(labels$moderator2_label)) {
           updateTextInput(session, "moderator2_label", value = labels$moderator2_label)
-          print(paste("DEBUG: Restored moderator2_label to:", labels$moderator2_label))
+          dbg(paste("DEBUG: Restored moderator2_label to:", labels$moderator2_label))
         }
         
         # Clear restore_labels_pending flag first
         rv$restore_labels_pending <- FALSE
         rv$labels_to_restore <- NULL
-        print("DEBUG: Labels restoration flags cleared")
-        print(paste("DEBUG: Final x_label value:", input$x_label))
-        print(paste("DEBUG: Final y_label value:", input$y_label))
-        print(paste("DEBUG: Final moderator_label value:", input$moderator_label))
+        dbg("DEBUG: Labels restoration flags cleared")
+        dbg(paste("DEBUG: Final x_label value:", input$x_label))
+        dbg(paste("DEBUG: Final y_label value:", input$y_label))
+        dbg(paste("DEBUG: Final moderator_label value:", input$moderator_label))
         
         # Wait a bit more before clearing load_settings_pending to ensure labels are fully set
         # and auto-label observer doesn't run immediately
@@ -522,20 +616,30 @@ observe({
         # so when auto-label observer runs, it will see predictor_changed = FALSE
         invalidateLater(300, session)
         isolate({
-          # Now clear load_settings_pending - at this point:
-          # 1. Variables are restored
-          # 2. rv$previous_*_var values are set to restored variables
-          # 3. Labels are restored from JSON
-          # 4. Auto-label observer will see predictor_changed = FALSE (because previous matches current)
-          #    and labels don't match variables, so it won't update them
-          rv$load_settings_pending <- FALSE
-          rv$settings_to_load <- NULL
-          print("DEBUG: load_settings_pending cleared - auto-label observer can now run")
+          # CRITICAL: Don't clear load_settings_pending here if model requires mediators!
+          # The mediator restoration observer will clear it after mediators are restored.
+          # If model doesn't require mediators, clear it now.
+          current_model <- if(!is.null(input$process_model) && input$process_model != "") {
+            as.numeric(input$process_model)
+          } else {
+            NULL
+          }
+          
+          # If model doesn't require mediators, safe to clear now
+          if(is.null(current_model) || current_model < 4 || current_model > 92) {
+            rv$load_settings_pending <- FALSE
+            rv$settings_to_load <- NULL
+            dbg("DEBUG: load_settings_pending cleared - no mediators required")
+            showNotification("Analysis settings loaded successfully!", type = "default", duration = 3)
+            dbg("DEBUG: Settings restoration completed (including labels)")
+          } else {
+            # Model requires mediators - wait for mediator restoration observer to clear it
+            dbg("DEBUG: Waiting for mediators to restore before clearing load_settings_pending")
+            # Don't show notification yet - mediator observer will show it when done
+          }
         })
-        
-        showNotification("Analysis settings loaded successfully!", type = "default", duration = 3)
-        print("DEBUG: Settings restoration completed (including labels)")
       }
     })
   }
 })
+
