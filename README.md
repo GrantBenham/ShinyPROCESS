@@ -4,6 +4,69 @@
 
 ShinyPROCESS provides a user-friendly interface for conducting moderation and mediation analyses using Hayes' PROCESS for R (Version 5.0). The app currently supports the bundled subset of selectable models `1-22, 28-29, 58-73, 75-76, 80-92` (Model 74 is intentionally not selectable and is created internally from Model 4 when needed).
 
+## Installation and Setup (Start Here)
+
+This section is written for first-time users.
+
+### Option A (Recommended): Reproducible setup with `renv`
+
+Use this option if you want the best chance of matching the developer-tested package versions.
+
+1. Download or clone this repository.
+2. Download Hayes' `process.R` (version 5.0) and place it in the same folder as `gbPROCESS.R`.
+3. Open this project folder in RStudio.
+4. In the RStudio Console, run:
+
+```r
+install.packages("renv")
+renv::restore()
+shiny::runApp("gbPROCESS.R")
+```
+
+Notes:
+- `renv::restore()` installs package versions from `renv.lock`.
+- `renv` does not automatically install/change your R version.
+- If your R version is newer than the lockfile version, restore may still work, but occasional package-version conflicts are possible.
+
+### Option B (Manual): Install packages without `renv`
+
+Use this if you do not want to use `renv`. This may still work, but version differences can cause issues.
+
+1. Download or clone this repository.
+2. Download Hayes' `process.R` (version 5.0) and place it in the same folder as `gbPROCESS.R`.
+3. Open this project folder in RStudio.
+4. In the RStudio Console, run:
+
+```r
+install.packages(c(
+  "shiny", "bslib", "ggplot2", "stringr", "dplyr",
+  "shinyjs", "car", "haven", "jsonlite", "gridExtra"
+))
+shiny::runApp("gbPROCESS.R")
+```
+
+Optional dependency check:
+
+```r
+needed <- c("shiny", "bslib", "ggplot2", "stringr", "dplyr",
+            "shinyjs", "car", "haven", "jsonlite", "gridExtra")
+setdiff(needed, rownames(installed.packages()))
+```
+
+If this returns `character(0)`, required packages are installed.
+
+### Common Setup Problems and Fixes
+
+- App shows PROCESS missing/version warning:
+  - Confirm file name is exactly `process.R`.
+  - Confirm it is in the same folder as `gbPROCESS.R`.
+  - Confirm first lines indicate PROCESS for R version `5.0`.
+- `renv::restore()` fails on one or more packages:
+  - Copy the exact error and retry in a clean R session.
+  - If using a much newer R version, try the manual install path.
+- App launches but errors on startup:
+  - Restart RStudio, reopen the project, and rerun the setup commands above.
+
 ## Important: Attribution, Licensing, and Required File
 
 - **Shiny app developer**: Dr. Grant Benham, The University of Texas Rio Grande Valley  
