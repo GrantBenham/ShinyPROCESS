@@ -1,1 +1,1 @@
-shinylive
+rshiny

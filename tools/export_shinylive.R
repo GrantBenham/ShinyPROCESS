@@ -5,7 +5,7 @@
 # - Build from a temporary minimal app directory (only required files)
 # - Temporarily set runtime.txt to shinylive
 # - Export app to docs/
-# - Restore runtime.txt on exit
+# - Restore runtime.txt to rshiny on exit (safe local default)
 
 main <- function() {
   app_root <- normalizePath(".", winslash = "/", mustWork = TRUE)
@@ -54,16 +54,9 @@ main <- function() {
     writeLines("rshiny", runtime_path, useBytes = TRUE)
   }
   
-  original_runtime <- tryCatch({
-    lines <- readLines(runtime_path, warn = FALSE)
-    if (length(lines) == 0) "rshiny" else lines[[1]]
-  }, error = function(e) {
-    "rshiny"
-  })
-  
   on.exit({
-    writeLines(original_runtime, runtime_path, useBytes = TRUE)
-    message("runtime.txt restored to: ", original_runtime)
+    writeLines("rshiny", runtime_path, useBytes = TRUE)
+    message("runtime.txt restored to: rshiny")
   }, add = TRUE)
   
   writeLines("shinylive", runtime_path, useBytes = TRUE)
