@@ -207,6 +207,9 @@ server <- function(input, output, session) {
   
   # Load results module
   source("modules_results.R", local = TRUE)
+  
+  # Load model diagrams parser scaffold module (no UI wiring yet)
+  source("modules_model_diagrams.R", local = TRUE)
 
   # Helper for Model-Has-Z checks used by plot/label observers in this file.
   # Uses canonical specs when available, with a minimal fallback.
