@@ -18,12 +18,34 @@ process_model_choices <- if(exists("VALID_USER_MODELS", inherits = TRUE)) {
   )
 }
 
-# Shinylive workaround for Chromium download behavior:
-# remove the HTML5 "download" attribute so downloadHandler responses resolve correctly.
-downloadButton <- function(...) {
-  tag <- shiny::downloadButton(...)
-  tag$attribs$download <- NULL
-  tag
+# Runtime-aware download button helper:
+# - Shinylive (Chromium): remove HTML5 "download" attribute to avoid failed downloads.
+# - Local R Shiny: keep default shiny::downloadButton behavior.
+is_shinylive_runtime <- local({
+  runtime_val <- tryCatch({
+    if(!file.exists("runtime.txt")) {
+      return("rshiny")
+    }
+    lines <- readLines("runtime.txt", n = 1L, warn = FALSE)
+    if(length(lines) == 0) {
+      return("rshiny")
+    }
+    val <- tolower(trimws(lines[[1]]))
+    sub("^\ufeff", "", val)
+  }, error = function(e) {
+    "rshiny"
+  })
+  identical(runtime_val, "shinylive")
+})
+
+downloadButton <- if(is_shinylive_runtime) {
+  function(...) {
+    tag <- shiny::downloadButton(...)
+    tag$attribs$download <- NULL
+    tag
+  }
+} else {
+  shiny::downloadButton
 }
 
 ui <- fluidPage(
