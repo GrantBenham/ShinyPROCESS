@@ -225,6 +225,11 @@ create_formatted_output <- function(analysis_results) {
         "Standard Errors: OLS"
       }
     },
+    if(!is.null(settings$stand) && isTRUE(settings$stand)) {
+      "Coefficient type: Standardized coefficients"
+    } else {
+      "Coefficient type: Unstandardized coefficients"
+    },
     if(!is.null(settings$stand) && isTRUE(settings$stand)) "Standardized coefficients: Yes",
     if(!is.null(settings$normal) && isTRUE(settings$normal)) "Normal theory tests: Yes",
     if(!is.null(settings$pairwise_contrasts) && isTRUE(settings$pairwise_contrasts)) "Pairwise contrasts of indirect effects: Yes",
