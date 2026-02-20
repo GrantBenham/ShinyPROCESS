@@ -440,8 +440,8 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       }
     }
     
-    # Add moderators
-    if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74, 83:92)) {
+    # Add moderators (driven by canonical model specs via local helper checks)
+    if(model_requires_w_local(model_num) || model_requires_z_local(model_num) || model_num == 74) {
       if(is_nonempty_scalar(input$moderator_var)) {
         process_args$w <- input$moderator_var
         # Always set jn=1 for moderation models when probing is enabled to ensure JN plot data is generated
@@ -565,8 +565,11 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     }
     if(isTRUE(input$total)) process_args$total <- 1
     
-    # Check if this is a moderation model
-    is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
+    # Check if this is a moderation model (driven by canonical model specs)
+    is_mod_model <- model_requires_w_local(model_num) ||
+      model_requires_z_local(model_num) ||
+      model_num == 74 ||
+      (model_num == 4 && isTRUE(input$xmint))
     
     # For moderation models, set plot=2 and save=2 to get plot data
     if(is_mod_model) {
