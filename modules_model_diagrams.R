@@ -771,13 +771,36 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         }
       }
       add_node(y_var, 0.75, 0.00, "y")
-    } else if(model_num %in% c(2L, 3L)) {
+    } else if(model_num == 2L) {
       add_node(x_var, -0.75, 0.00, "x")
       if(length(w_var) > 0) add_node(w_var, -0.75, 0.20, "mod")
-      if(length(z_var) > 0) add_node(z_var, -0.75, -0.10, "mod")
+      if(length(z_var) > 0) add_node(z_var, -0.75, -0.20, "mod")
       if(nrow(int_edges) > 0) {
         int_terms <- unique(int_edges$from)
-        y_pos <- seq(-0.40, -0.85, length.out = length(int_terms))
+        y_pos <- seq(-0.44, -0.89, length.out = length(int_terms))
+        for(i in seq_along(int_terms)) {
+          int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
+          int_lbl <- format_interaction_label(int_lbl, settings)
+          y_here <- y_pos[[i]]
+          # Model 2 request: move X x W interaction node down a little.
+          int_parts <- toupper(trimws(unlist(strsplit(int_lbl, "\\s+[xX]\\s+"))))
+          if(length(int_parts) >= 2 &&
+             toupper(x_var) %in% int_parts &&
+             length(w_var) > 0 &&
+             toupper(w_var) %in% int_parts) {
+            y_here <- y_here - 0.08
+          }
+          add_node(int_lbl, -0.75, y_here, "int")
+        }
+      }
+      add_node(y_var, 0.75, 0.00, "y")
+    } else if(model_num == 3L) {
+      add_node(x_var, -0.75, 0.00, "x")
+      if(length(w_var) > 0) add_node(w_var, -0.75, 0.20, "mod")
+      if(length(z_var) > 0) add_node(z_var, -0.75, -0.20, "mod")
+      if(nrow(int_edges) > 0) {
+        int_terms <- unique(int_edges$from)
+        y_pos <- seq(-0.46, -1.02, length.out = length(int_terms))
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
@@ -1002,6 +1025,12 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.50)
       set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.50)
     }
+    if(model_num == 3L) {
+      # Model 3 baseline pass: keep Y-target coefficients at line midpoints.
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.50)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.50)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.50)
+    }
 
     if(model_num == 5L) {
       if(length(mediators) >= 2) {
@@ -1096,8 +1125,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
     }
   }
-  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L)) {
-    # For Models 1 and 2, place labels by center-to-center geometry (not clipped box edges).
+  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L, 3L)) {
+    # For Models 1-3, place labels by center-to-center geometry (not clipped box edges).
     edge_plot$x_label <- edge_plot$x_from + edge_plot$t_label * (edge_plot$x_to - edge_plot$x_from)
     edge_plot$y_label <- edge_plot$y_from + edge_plot$t_label * (edge_plot$y_to - edge_plot$y_from)
   } else {
