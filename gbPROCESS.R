@@ -2471,7 +2471,8 @@ server <- function(input, output, session) {
   # Download handlers for plots
   output$download_jn <- downloadHandler(
     filename = function() {
-      paste0("jn_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+      model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
+      paste0("model_", model_txt, "_jn_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
     },
     contentType = "image/jpeg",
     content = function(file) {
@@ -2507,11 +2508,12 @@ server <- function(input, output, session) {
     filename = function() {
       # Determine if this is a conditional effect plot or simple slopes plot
       model_num <- tryCatch(as.numeric(input$process_model), error = function(e) NULL)
+      model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
       has_second_mod <- !is.null(model_num) && has_second_moderator_model(model_num)
       if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
-        paste0("stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+        paste0("model_", model_txt, "_stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
       } else {
-        paste0("simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+        paste0("model_", model_txt, "_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
       }
     },
     contentType = "image/jpeg",
@@ -2590,7 +2592,8 @@ server <- function(input, output, session) {
   
   output$download_stacked_slopes <- downloadHandler(
     filename = function() {
-      paste0("stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+      model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
+      paste0("model_", model_txt, "_stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
     },
     contentType = "image/jpeg",
     content = function(file) {
@@ -2655,7 +2658,8 @@ server <- function(input, output, session) {
   
   output$download_conditional_effect <- downloadHandler(
     filename = function() {
-      paste0("conditional_effect_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+      model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
+      paste0("model_", model_txt, "_conditional_effect_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
     },
     contentType = "image/jpeg",
     content = function(file) {

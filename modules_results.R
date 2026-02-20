@@ -443,7 +443,8 @@ output$analysis_output <- renderUI({
 # Download handlers
 output$download_results <- downloadHandler(
   filename = function() {
-    paste0("process_results_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".html")
+    model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
+    paste0("model_", model_txt, "_process_results_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".html")
   },
   content = function(file) {
     req(analysis_results())
@@ -482,7 +483,8 @@ observe({
 output$download_filtered_data <- downloadHandler(
   filename = function() {
     ext <- if(input$filtered_data_format == "sav") "sav" else "csv"
-    paste0("filtered_dataset_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", ext)
+    model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
+    paste0("model_", model_txt, "_filtered_dataset_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", ext)
   },
   content = function(file) {
     req(rv$original_dataset, input$outcome_var, input$predictor_var)

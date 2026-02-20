@@ -826,7 +826,8 @@
   # Download handler for assumption checks
   output$download_assumptions <- downloadHandler(
     filename = function() {
-      paste0("assumption_checks_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".html")
+      model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
+      paste0("model_", model_txt, "_assumption_checks_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".html")
     },
     content = function(file) {
       req(rv$original_dataset, input$outcome_var, input$predictor_var)

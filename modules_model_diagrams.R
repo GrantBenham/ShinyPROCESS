@@ -515,6 +515,61 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   z_var <- if(!is.null(settings$moderator2_var) && nzchar(settings$moderator2_var)) settings$moderator2_var else character(0)
   int_edges <- edges[edges$path_kind == "interaction" | grepl("^int_[0-9]+$", edges$from), , drop = FALSE]
 
+  if(identical(diagram_type, "conceptual")) {
+    # Conceptual diagrams intentionally show structure only (no interaction terms, no moderator main-effect paths).
+    concept_edges <- edges[0, , drop = FALSE]
+    add_concept_edge <- function(from_nm, to_nm, kind_nm) {
+      match_rows <- edges[edges$from == from_nm & edges$to == to_nm, , drop = FALSE]
+      if(nrow(match_rows) > 0) {
+        row <- match_rows[1, , drop = FALSE]
+      } else {
+        row <- edges[1, , drop = FALSE]
+        row[,] <- NA
+        row$from <- from_nm
+        row$to <- to_nm
+      }
+      row$path_kind <- kind_nm
+      row$estimate_raw <- NA_real_
+      row$estimate_std <- NA_real_
+      row$se <- NA_real_
+      row$p <- NA_real_
+      row$llci <- NA_real_
+      row$ulci <- NA_real_
+      row$stars <- ""
+      row$is_available_raw <- FALSE
+      row$is_available_std <- FALSE
+      concept_edges <<- rbind(concept_edges, row)
+    }
+
+    if(model_num %in% c(1L, 2L, 3L)) {
+      add_concept_edge(x_var, y_var, "direct")
+    } else if(model_num %in% c(4L, 8L, 14L)) {
+      add_concept_edge(x_var, y_var, "direct")
+      if(length(mediators) > 0) {
+        for(m in mediators) {
+          add_concept_edge(x_var, m, "mediator")
+          add_concept_edge(m, y_var, "mediator")
+        }
+      }
+    }
+    edges <- concept_edges
+    int_edges <- edges[0, , drop = FALSE]
+  } else {
+    # Statistical diagrams: map int_* aliases to readable interaction labels.
+    if(nrow(int_edges) > 0) {
+      for(i in seq_len(nrow(int_edges))) {
+        edges$from[edges$from == int_edges$from[[i]]] <- resolve_interaction_label(int_edges$from[[i]], alias_map)
+      }
+      int_edges <- edges[edges$path_kind == "interaction" | grepl("^int_[0-9]+$", edges$from), , drop = FALSE]
+      # Keep any alias-mapped interaction nodes included by role as well:
+      int_edges <- rbind(
+        int_edges,
+        edges[edges$from %in% unname(alias_map), , drop = FALSE]
+      )
+      if(nrow(int_edges) > 0) int_edges <- unique(int_edges)
+    }
+  }
+
   # Support only first scoped set for now.
   if(!(model_num %in% c(1L, 2L, 3L, 4L, 8L, 14L))) {
     return(
@@ -614,24 +669,28 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   edge_plot <- merge(edge_plot, to_xy, by = "to", all.x = TRUE)
   edge_plot <- edge_plot[!is.na(edge_plot$x_from) & !is.na(edge_plot$x_to), , drop = FALSE]
   
-  edge_plot$label <- apply(edge_plot, 1, function(r) {
-    row_df <- as.list(r)
-    row_df$is_available_std <- isTRUE(as.logical(row_df$is_available_std))
-    row_df$is_available_raw <- isTRUE(as.logical(row_df$is_available_raw))
-    row_df$estimate_std <- safe_numeric(row_df$estimate_std)
-    row_df$estimate_raw <- safe_numeric(row_df$estimate_raw)
-    row_df$llci <- safe_numeric(row_df$llci)
-    row_df$ulci <- safe_numeric(row_df$ulci)
-    row_df$p <- safe_numeric(row_df$p)
-    row_df$stars <- as.character(row_df$stars)
-    compose_path_label(
-      row_df,
-      label_mode = label_mode,
-      include_ci = include_ci,
-      include_p = include_p,
-      include_stars = include_stars
-    )
-  })
+  if(identical(diagram_type, "conceptual")) {
+    edge_plot$label <- ""
+  } else {
+    edge_plot$label <- apply(edge_plot, 1, function(r) {
+      row_df <- as.list(r)
+      row_df$is_available_std <- isTRUE(as.logical(row_df$is_available_std))
+      row_df$is_available_raw <- isTRUE(as.logical(row_df$is_available_raw))
+      row_df$estimate_std <- safe_numeric(row_df$estimate_std)
+      row_df$estimate_raw <- safe_numeric(row_df$estimate_raw)
+      row_df$llci <- safe_numeric(row_df$llci)
+      row_df$ulci <- safe_numeric(row_df$ulci)
+      row_df$p <- safe_numeric(row_df$p)
+      row_df$stars <- as.character(row_df$stars)
+      compose_path_label(
+        row_df,
+        label_mode = label_mode,
+        include_ci = include_ci,
+        include_p = include_p,
+        include_stars = include_stars
+      )
+    })
+  }
   
   edge_plot$dx <- edge_plot$x_to - edge_plot$x_from
   edge_plot$dy <- edge_plot$y_to - edge_plot$y_from
@@ -653,6 +712,18 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       if(length(w_var) > 0 && any(nodes$name == w_var)) {
         w_node <- nodes[nodes$name == w_var, , drop = FALSE]
         mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = midx - 0.03, yend = midy + 0.04))
+        if(model_num == 8L && length(mediators) > 0 && any(nodes$name == mediators[[1]])) {
+          m_node <- nodes[nodes$name == mediators[[1]], , drop = FALSE]
+          xm_midx <- (x_node$x + m_node$x) / 2
+          xm_midy <- (x_node$y + m_node$y) / 2
+          mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = xm_midx - 0.02, yend = xm_midy + 0.03))
+        }
+        if(model_num == 14L && length(mediators) > 0 && any(nodes$name == mediators[[1]])) {
+          m_node <- nodes[nodes$name == mediators[[1]], , drop = FALSE]
+          my_midx <- (m_node$x + y_node$x) / 2
+          my_midy <- (m_node$y + y_node$y) / 2
+          mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = my_midx - 0.02, yend = my_midy + 0.03))
+        }
       }
       if(length(z_var) > 0 && any(nodes$name == z_var)) {
         z_node <- nodes[nodes$name == z_var, , drop = FALSE]
@@ -662,30 +733,26 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   }
 
   title_txt <- paste0("Model ", settings$model, " ", if(identical(diagram_type, "conceptual")) "Conceptual" else "Statistical", " Diagram")
-  subtitle_txt <- paste0(
-    "Coefficient mode: ",
-    switch(label_mode,
-           "raw" = "unstandardized",
-           "std" = "standardized",
-           "auto" = parsed$metadata$label_mode_used,
-           parsed$metadata$label_mode_used)
-  )
+  subtitle_txt <- if(identical(diagram_type, "conceptual")) {
+    "Structure only (no coefficients shown)"
+  } else {
+    paste0(
+      "Coefficient mode: ",
+      switch(label_mode,
+             "raw" = "unstandardized",
+             "std" = "standardized",
+             "auto" = parsed$metadata$label_mode_used,
+             parsed$metadata$label_mode_used)
+    )
+  }
   
-  ggplot2::ggplot() +
+  p <- ggplot2::ggplot() +
     ggplot2::geom_segment(
       data = edge_plot,
       ggplot2::aes(x = x_from, y = y_from, xend = x_to, yend = y_to, linetype = path_kind),
       arrow = grid::arrow(length = grid::unit(0.15, "cm")),
       color = "black",
       linewidth = 0.65
-    ) +
-    ggplot2::geom_label(
-      data = edge_plot,
-      ggplot2::aes(x = x_label, y = y_label, label = label),
-      size = 3.3,
-      label.size = 0.2,
-      fill = "white",
-      color = "black"
     ) +
     ggplot2::geom_label(
       data = nodes,
@@ -723,6 +790,19 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       plot.subtitle = ggplot2::element_text(size = 10.5, hjust = 0.5, color = "black")
     ) +
     ggplot2::labs(title = title_txt, subtitle = subtitle_txt)
+
+  if(!identical(diagram_type, "conceptual")) {
+    p <- p + ggplot2::geom_label(
+      data = edge_plot,
+      ggplot2::aes(x = x_label, y = y_label, label = label),
+      size = 3.3,
+      label.size = 0.2,
+      fill = "white",
+      color = "black"
+    )
+  }
+
+  p
 }
 
 conceptual_diagram_plot_obj <- reactive({
@@ -793,7 +873,8 @@ output$model_diagram_notes <- renderUI({
 
 output$download_conceptual_diagram <- downloadHandler(
   filename = function() {
-    paste0("conceptual_diagram_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+    model_txt <- if(!is.null(input$process_model) && nzchar(input$process_model)) input$process_model else "unknown"
+    paste0("model_", model_txt, "_conceptual_diagram_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
   },
   contentType = "image/jpeg",
   content = function(file) {
@@ -805,7 +886,8 @@ output$download_conceptual_diagram <- downloadHandler(
 
 output$download_statistical_diagram <- downloadHandler(
   filename = function() {
-    paste0("statistical_diagram_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+    model_txt <- if(!is.null(input$process_model) && nzchar(input$process_model)) input$process_model else "unknown"
+    paste0("model_", model_txt, "_statistical_diagram_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
   },
   contentType = "image/jpeg",
   content = function(file) {
