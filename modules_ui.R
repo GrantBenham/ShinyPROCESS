@@ -689,7 +689,7 @@ ui <- fluidPage(
             condition = "output.analysis_ready === true",
             div(style = "margin-bottom: 15px;",
               h4("Model Diagram"),
-              p("Black-and-white path diagram generated from current analysis output."),
+              p("Black-and-white conceptual and statistical diagrams generated from current analysis output."),
               fluidRow(
                 column(
                   3,
@@ -725,15 +725,28 @@ ui <- fluidPage(
                 column(
                   3,
                   downloadButton(
-                    "download_model_diagram",
-                    "Download Diagram (JPG)",
+                    "download_conceptual_diagram",
+                    "Download Conceptual (JPG)",
+                    class = "btn-success",
+                    style = "background-color: #90EE90; border-color: #90EE90; color: #000; margin-top: 24px;"
+                  )
+                ),
+                column(
+                  3,
+                  downloadButton(
+                    "download_statistical_diagram",
+                    "Download Statistical (JPG)",
                     class = "btn-success",
                     style = "background-color: #90EE90; border-color: #90EE90; color: #000; margin-top: 24px;"
                   )
                 )
               )
             ),
-            plotOutput("model_diagram_plot", height = "700px", width = "100%"),
+            h5("Conceptual Diagram"),
+            plotOutput("conceptual_diagram_plot", height = "520px", width = "100%"),
+            br(),
+            h5("Statistical Diagram"),
+            plotOutput("statistical_diagram_plot", height = "700px", width = "100%"),
             htmlOutput("model_diagram_notes")
           ),
           conditionalPanel(
