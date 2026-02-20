@@ -706,8 +706,17 @@ ui <- fluidPage(
                   4,
                     tags$div(
                       style = "padding-top: 4px;",
-                      checkboxInput("diagram_show_mod_main_effects", "Show moderator main effects", value = TRUE),
-                      checkboxInput("diagram_show_interactions", "Show interaction terms", value = TRUE),
+                      selectInput(
+                        "diagram_coef_digits",
+                        "Diagram Decimal Places (b, CI)",
+                        choices = c("3" = "3", "2" = "2"),
+                        selected = "3"
+                      ),
+                      conditionalPanel(
+                        condition = "output.diagram_show_mod_controls === true",
+                        checkboxInput("diagram_show_mod_main_effects", "Show moderator main effects", value = TRUE),
+                        checkboxInput("diagram_show_interactions", "Show interaction terms", value = TRUE)
+                      ),
                       checkboxInput("diagram_include_stars", "Include significance stars", value = TRUE),
                       checkboxInput("diagram_include_ci", "Include confidence intervals", value = FALSE),
                     checkboxInput("diagram_include_p", "Include p-values", value = FALSE)

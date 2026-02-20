@@ -385,6 +385,16 @@ compute_diagram_eligibility <- function(settings) {
     ))
   }
 
+  if(model_num == 6L && n_m != 2) {
+    return(list(
+      eligible = FALSE,
+      reason = paste0(
+        "Model 6 diagram generation requires exactly 2 mediators. ",
+        "Current analysis has ", n_m, " mediator(s)."
+      )
+    ))
+  }
+
   list(eligible = TRUE, reason = "")
 }
 
@@ -431,7 +441,8 @@ map_interaction_label <- function(raw_label, label_map) {
 }
 
 compose_path_label <- function(edge_row, label_mode = "auto",
-                               include_ci = FALSE, include_p = FALSE, include_stars = TRUE) {
+                               include_ci = FALSE, include_p = FALSE, include_stars = TRUE,
+                               coef_digits = 3) {
   use_mode <- label_mode
   if(identical(use_mode, "auto")) {
     if(isTRUE(edge_row$is_available_std)) {
@@ -445,13 +456,17 @@ compose_path_label <- function(edge_row, label_mode = "auto",
   prefix <- if(identical(use_mode, "std")) "beta" else "b"
   
   if(is.na(est)) return("")
-  
-  label <- paste0(prefix, " = ", sprintf("%.3f", est))
+
+  digits <- suppressWarnings(as.integer(coef_digits))
+  if(is.na(digits) || !(digits %in% c(2L, 3L))) digits <- 3L
+  fmt <- paste0("%.", digits, "f")
+
+  label <- paste0(prefix, " = ", sprintf(fmt, est))
   if(isTRUE(include_stars) && nzchar(edge_row$stars)) {
     label <- paste0(label, edge_row$stars)
   }
   if(isTRUE(include_ci) && !is.na(edge_row$llci) && !is.na(edge_row$ulci)) {
-    label <- paste0(label, "\n[", sprintf("%.3f", edge_row$llci), ", ", sprintf("%.3f", edge_row$ulci), "]")
+    label <- paste0(label, "\n[", sprintf(fmt, edge_row$llci), ", ", sprintf(fmt, edge_row$ulci), "]")
   }
   if(isTRUE(include_p) && !is.na(edge_row$p)) {
     p_txt <- if(edge_row$p < 0.001) "p < .001" else paste0("p = ", sprintf("%.3f", edge_row$p))
@@ -588,7 +603,7 @@ format_interaction_label <- function(raw_label, settings) {
 build_template_diagram <- function(parsed, settings, diagram_type = c("conceptual", "statistical"),
                                     label_mode = "auto", show_interactions = TRUE, show_moderator_main_effects = TRUE,
                                     include_ci = FALSE, include_p = FALSE, include_stars = TRUE,
-                                    label_map = NULL) {
+                                    label_map = NULL, coef_digits = 3) {
   diagram_type <- match.arg(diagram_type)
   edges <- parsed$paths
   model_num <- suppressWarnings(as.integer(settings$model))
@@ -746,14 +761,13 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
             add_node(mediators[[i]], 0.10, lower_y[[i - 1]], "m")
           }
         }
-      } else if(model_num == 6L && n_m > 0) {
-        if(n_m == 1) {
-          add_node(mediators[[1]], 0.08, 0.52, "m")
-        } else {
-          # Model 6 (2 mediators): symmetric top-mediator layout (Hayes-style).
-          add_node(mediators[[1]], -0.14, 0.52, "m")
-          add_node(mediators[[2]], 0.26, 0.52, "m")
-        }
+      } else if(model_num == 6L && n_m >= 2) {
+        # Model 6 (2 mediators): serial top-row layout.
+        # Place mediator centers at 25% and 75% of the X->Y center-to-center span.
+        x0 <- -0.75
+        x1 <- 0.75
+        add_node(mediators[[1]], x0 + 0.25 * (x1 - x0), 0.52, "m")
+        add_node(mediators[[2]], x0 + 0.75 * (x1 - x0), 0.52, "m")
       } else if(model_num == 14L) {
         if(n_m == 1) {
           add_node(mediators[[1]], 0.00, 0.50, "m")
@@ -872,15 +886,15 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
       add_node(y_var, 0.80, 0.00, "y")
     } else if(model_num == 6L) {
-      # Match statistical layout to conceptual serial/mediator-only structure.
-      add_node(x_var, -0.78, 0.00, "x")
-      add_node(y_var, 0.80, 0.00, "y")
+      # Match statistical layout to conceptual serial structure with two mediators.
+      add_node(x_var, -0.75, 0.00, "x")
+      add_node(y_var, 0.75, 0.00, "y")
       n_m <- length(mediators)
-      if(n_m == 1) {
-        add_node(mediators[[1]], 0.04, 0.58, "m")
-      } else if(n_m >= 2) {
-        add_node(mediators[[1]], -0.12, 0.58, "m")
-        add_node(mediators[[2]], 0.24, 0.58, "m")
+      if(n_m >= 2) {
+        x0 <- -0.75
+        x1 <- 0.75
+        add_node(mediators[[1]], x0 + 0.25 * (x1 - x0), 0.52, "m")
+        add_node(mediators[[2]], x0 + 0.75 * (x1 - x0), 0.52, "m")
       }
     } else if(model_num == 5L) {
       # Model 5 statistical: moderated direct path with parallel mediators.
@@ -1021,7 +1035,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         label_mode = label_mode,
         include_ci = include_ci,
         include_p = include_p,
-        include_stars = include_stars
+        include_stars = include_stars,
+        coef_digits = coef_digits
       )
     })
   }
@@ -1118,13 +1133,11 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     }
 
     if(model_num == 6L && length(mediators) >= 2) {
-      m1_name <- mediators[[1]]
-      m2_name <- mediators[[2]]
-      set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.42)
-      set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.60)
-      set_t(edge_plot$from == m1_name & edge_plot$to == m2_name, 0.50)
-      set_t(edge_plot$from == m1_name & edge_plot$to == y_var, 0.62)
-      set_t(edge_plot$from == m2_name & edge_plot$to == y_var, 0.74)
+      # Model 6: keep all coefficient labels on true centerline midpoints.
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.50)
+      set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.50)
+      set_t(edge_plot$to_role == "m" & edge_plot$from_role == "m", 0.50)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.50)
     }
 
     if(model_num == 7L) {
@@ -1193,8 +1206,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
     }
   }
-  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L, 3L, 4L, 5L)) {
-    # For Models 1-5, place labels by center-to-center geometry (not clipped box edges).
+  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L, 3L, 4L, 5L, 6L)) {
+    # For Models 1-6, place labels by center-to-center geometry (not clipped box edges).
     edge_plot$x_label <- edge_plot$x_from + edge_plot$t_label * (edge_plot$x_to - edge_plot$x_from)
     edge_plot$y_label <- edge_plot$y_from + edge_plot$t_label * (edge_plot$y_to - edge_plot$y_from)
   } else {
@@ -1393,6 +1406,13 @@ diagram_eligibility <- reactive({
   compute_diagram_eligibility(analysis_results()$settings)
 })
 
+output$diagram_show_mod_controls <- reactive({
+  if(is.null(analysis_results())) return(TRUE)
+  model_num <- suppressWarnings(as.integer(analysis_results()$settings$model))
+  !(model_num %in% c(4L, 6L))
+})
+outputOptions(output, "diagram_show_mod_controls", suspendWhenHidden = FALSE)
+
 output$diagram_eligibility_msg <- renderUI({
   req(analysis_results())
   elig <- diagram_eligibility()
@@ -1507,6 +1527,8 @@ statistical_diagram_plot_obj <- reactive({
   include_ci_opt <- if(is.null(input$diagram_include_ci)) FALSE else isTRUE(input$diagram_include_ci)
   include_p_opt <- if(is.null(input$diagram_include_p)) FALSE else isTRUE(input$diagram_include_p)
   include_stars_opt <- if(is.null(input$diagram_include_stars)) TRUE else isTRUE(input$diagram_include_stars)
+  coef_digits_opt <- suppressWarnings(as.integer(input$diagram_coef_digits))
+  if(is.na(coef_digits_opt) || !(coef_digits_opt %in% c(2L, 3L))) coef_digits_opt <- 3L
 
   build_template_diagram(
     parsed = parsed,
@@ -1518,7 +1540,8 @@ statistical_diagram_plot_obj <- reactive({
     include_ci = include_ci_opt,
     include_p = include_p_opt,
     include_stars = include_stars_opt,
-    label_map = diagram_label_map()
+    label_map = diagram_label_map(),
+    coef_digits = coef_digits_opt
   )
 })
 
