@@ -907,8 +907,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       if(length(z_var) > 0) add_node(z_var, -0.92, 0.24, "mod")
       if(nrow(int_edges) > 0) {
         int_terms <- unique(int_edges$from)
-        int_base_x <- if(n_m >= 2) 0.80 else 0.24
-        int_base_y <- if(n_m >= 2) 0.56 else -0.46
+        int_base_x <- if(n_m >= 2) 0.80 else 0.20
+        int_base_y <- if(n_m >= 2) 0.56 else -0.38
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
