@@ -1007,7 +1007,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     n_lines <- length(lines)
     # Calibrated for ggplot::geom_label defaults used in this module.
     # Conceptual diagrams use larger node label text, so scale up box estimates.
-    size_scale <- if(identical(diagram_type, "conceptual")) 1.16 else 1.00
+    size_scale <- if(identical(diagram_type, "conceptual")) 1.22 else 1.00
     hw <- (0.055 + 0.010 * max_chars) * size_scale
     hh <- (0.040 + 0.020 * n_lines) * size_scale
     c(hw = hw, hh = hh)
@@ -1074,6 +1074,18 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       x1 - ux * step,
       y1 - uy * step
     )
+  }
+
+  retract_endpoint <- function(x0, y0, x1, y1, pad = 0) {
+    if(is.na(pad) || pad <= 0) return(c(x0, y0, x1, y1))
+    dx <- x1 - x0
+    dy <- y1 - y0
+    seg_len <- sqrt(dx * dx + dy * dy)
+    if(seg_len <= 1e-9) return(c(x0, y0, x1, y1))
+    step <- min(pad, seg_len * 0.45)
+    ux <- dx / seg_len
+    uy <- dy / seg_len
+    c(x0, y0, x1 - ux * step, y1 - uy * step)
   }
   
   if(identical(diagram_type, "conceptual")) {
@@ -1390,13 +1402,24 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     }
   }
   if(nrow(mod_cue) > 0) {
-    cue_clip <- t(mapply(function(x0, y0, x1, y1) {
-      # Clip only cue start to originating box; end stays exactly on target path.
-      clipped <- clip_segment_to_box(x0, y0, x1, y1)
-      c(clipped[[1]], clipped[[2]], x1, y1)
-    }, mod_cue$x, mod_cue$y, mod_cue$xend, mod_cue$yend))
+    cue_dims <- t(vapply(seq_len(nrow(mod_cue)), function(i) {
+      d2 <- (nodes$x - mod_cue$x[[i]])^2 + (nodes$y - mod_cue$y[[i]])^2
+      j <- which.min(d2)
+      nm <- nodes$name[[j]]
+      dim_row <- node_dims[node_dims$name == nm, , drop = FALSE]
+      c(hw = dim_row$hw[[1]], hh = dim_row$hh[[1]])
+    }, numeric(2)))
+    cue_gap <- 0.0042
+    cue_clip <- t(mapply(function(x0, y0, x1, y1, hw, hh) {
+      # Clip cue start to source box edge.
+      clipped <- clip_segment_to_box(x0, y0, x1, y1, hw0 = hw, hh0 = hh, hw1 = 0, hh1 = 0)
+      # Add a small visible gap before the target path intersection.
+      retract_endpoint(clipped[[1]], clipped[[2]], clipped[[3]], clipped[[4]], pad = cue_gap)
+    }, mod_cue$x, mod_cue$y, mod_cue$xend, mod_cue$yend, cue_dims[, 1], cue_dims[, 2]))
     mod_cue$x <- cue_clip[, 1]
     mod_cue$y <- cue_clip[, 2]
+    mod_cue$xend <- cue_clip[, 3]
+    mod_cue$yend <- cue_clip[, 4]
   }
 
   title_txt <- paste0("Model ", settings$model, " ", if(identical(diagram_type, "conceptual")) "Conceptual" else "Statistical", " Diagram")
@@ -1412,7 +1435,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       ggplot2::aes(x = x_from_draw, y = y_from_draw, xend = x_to_draw, yend = y_to_draw, linetype = path_kind, linewidth = path_kind),
       arrow = grid::arrow(length = grid::unit(0.15, "cm")),
       color = "black",
-      lineend = "round"
+      lineend = "butt"
     ) +
     ggplot2::geom_label(
       data = nodes,
