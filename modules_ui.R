@@ -684,6 +684,67 @@ ui <- fluidPage(
             p("Run an analysis to see plots here.")
           )
         ),
+        tabPanel("Model Diagram",
+          conditionalPanel(
+            condition = "output.analysis_ready === true",
+            div(style = "margin-bottom: 15px;",
+              h4("Model Diagram"),
+              p("Black-and-white path diagram generated from current analysis output."),
+              fluidRow(
+                column(
+                  3,
+                  selectInput(
+                    "diagram_coef_mode",
+                    "Coefficient Mode",
+                    choices = c(
+                      "Auto (recommended)" = "auto",
+                      "Unstandardized" = "raw",
+                      "Standardized (when available)" = "std"
+                    ),
+                    selected = "auto"
+                  )
+                ),
+                column(
+                  3,
+                  checkboxInput("diagram_show_covariates", "Show covariate paths", value = TRUE)
+                ),
+                column(
+                  3,
+                  checkboxInput("diagram_show_interactions", "Show interaction terms", value = TRUE)
+                ),
+                column(
+                  3,
+                  checkboxInput("diagram_include_stars", "Include significance stars", value = TRUE)
+                )
+              ),
+              fluidRow(
+                column(
+                  3,
+                  checkboxInput("diagram_include_ci", "Include confidence intervals", value = FALSE)
+                ),
+                column(
+                  3,
+                  checkboxInput("diagram_include_p", "Include p-values", value = FALSE)
+                ),
+                column(
+                  3,
+                  downloadButton(
+                    "download_model_diagram",
+                    "Download Diagram (JPG)",
+                    class = "btn-success",
+                    style = "background-color: #90EE90; border-color: #90EE90; color: #000; margin-top: 24px;"
+                  )
+                )
+              )
+            ),
+            plotOutput("model_diagram_plot", height = "700px", width = "100%"),
+            htmlOutput("model_diagram_notes")
+          ),
+          conditionalPanel(
+            condition = "output.analysis_ready === false",
+            p("Run an analysis to generate a model diagram.")
+          )
+        ),
         tabPanel("User Guide",
           div(style = "padding: 10px 5px;",
             h3("ShinyPROCESS User Guide"),
