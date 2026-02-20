@@ -357,7 +357,7 @@ diagram_parse_results <- reactive({
   parse_process_for_model_diagram(analysis_results())
 })
 
-SUPPORTED_DIAGRAM_MODELS <- c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L)
+SUPPORTED_DIAGRAM_MODELS <- c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 14L)
 
 compute_diagram_eligibility <- function(settings) {
   model_num <- suppressWarnings(as.integer(settings$model))
