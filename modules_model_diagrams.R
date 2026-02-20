@@ -357,6 +357,67 @@ diagram_parse_results <- reactive({
   parse_process_for_model_diagram(analysis_results())
 })
 
+SUPPORTED_DIAGRAM_MODELS <- c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L)
+
+compute_diagram_eligibility <- function(settings) {
+  model_num <- suppressWarnings(as.integer(settings$model))
+  mediators <- if(!is.null(settings$mediator_vars)) settings$mediator_vars else character(0)
+  n_m <- length(mediators)
+
+  if(is.na(model_num) || !(model_num %in% SUPPORTED_DIAGRAM_MODELS)) {
+    return(list(
+      eligible = FALSE,
+      reason = paste0(
+        "Model diagrams are currently supported for Models ",
+        paste(SUPPORTED_DIAGRAM_MODELS, collapse = ", "),
+        " only."
+      )
+    ))
+  }
+
+  if(n_m > 2) {
+    return(list(
+      eligible = FALSE,
+      reason = paste0(
+        "Diagram generation is limited to a maximum of 2 mediators for supported models. ",
+        "Current analysis has ", n_m, " mediators."
+      )
+    ))
+  }
+
+  list(eligible = TRUE, reason = "")
+}
+
+message_plot <- function(msg) {
+  ggplot2::ggplot() +
+    ggplot2::annotate("text", x = 0, y = 0, label = msg, size = 5.2) +
+    ggplot2::xlim(-1, 1) + ggplot2::ylim(-1, 1) +
+    ggplot2::theme_void() +
+    ggplot2::theme(
+      plot.background = ggplot2::element_rect(fill = "white", color = NA),
+      panel.background = ggplot2::element_rect(fill = "white", color = NA)
+    )
+}
+
+build_default_label_map <- function(settings) {
+  out <- character(0)
+  if(!is.null(settings$predictor_var) && nzchar(settings$predictor_var)) out[[settings$predictor_var]] <- settings$predictor_var
+  if(!is.null(settings$outcome_var) && nzchar(settings$outcome_var)) out[[settings$outcome_var]] <- settings$outcome_var
+  if(!is.null(settings$moderator_var) && nzchar(settings$moderator_var)) out[[settings$moderator_var]] <- settings$moderator_var
+  if(!is.null(settings$moderator2_var) && nzchar(settings$moderator2_var)) out[[settings$moderator2_var]] <- settings$moderator2_var
+  if(!is.null(settings$mediator_vars) && length(settings$mediator_vars) > 0) {
+    for(m in settings$mediator_vars) {
+      if(!is.null(m) && nzchar(m)) out[[m]] <- m
+    }
+  }
+  out
+}
+
+sanitize_label_text <- function(x, fallback) {
+  val <- trimws(as.character(x))
+  if(!nzchar(val)) fallback else val
+}
+
 compose_path_label <- function(edge_row, label_mode = "auto",
                                include_ci = FALSE, include_p = FALSE, include_stars = TRUE) {
   use_mode <- label_mode
@@ -509,20 +570,22 @@ format_interaction_label <- function(raw_label, settings) {
 
 build_template_diagram <- function(parsed, settings, diagram_type = c("conceptual", "statistical"),
                                     label_mode = "auto", show_interactions = TRUE,
-                                    include_ci = FALSE, include_p = FALSE, include_stars = TRUE) {
+                                    include_ci = FALSE, include_p = FALSE, include_stars = TRUE,
+                                    display_mode = c("full", "simple"),
+                                    label_map = NULL) {
   diagram_type <- match.arg(diagram_type)
+  display_mode <- match.arg(display_mode)
   edges <- parsed$paths
   model_num <- suppressWarnings(as.integer(settings$model))
   alias_map <- parsed$metadata$product_aliases
   if(is.null(alias_map)) alias_map <- character(0)
+  elig <- compute_diagram_eligibility(settings)
+  if(!isTRUE(elig$eligible)) {
+    return(message_plot(elig$reason))
+  }
 
   if(nrow(edges) == 0) {
-    return(
-      ggplot2::ggplot() +
-        ggplot2::annotate("text", x = 0, y = 0, label = "No diagram data available for current analysis", size = 6) +
-        ggplot2::theme_void() +
-        ggplot2::xlim(-1, 1) + ggplot2::ylim(-1, 1)
-    )
+    return(message_plot("No diagram data available for current analysis."))
   }
   
   # Drop covariates entirely from diagram logic.
@@ -539,19 +602,25 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   int_edges <- edges[edges$path_kind == "interaction" | grepl("^int_[0-9]+$", edges$from), , drop = FALSE]
 
   if(identical(diagram_type, "conceptual")) {
-    # Conceptual diagrams intentionally show structure only (no interaction terms, no moderator main-effect paths).
-    concept_edges <- edges[0, , drop = FALSE]
-    add_concept_edge <- function(from_nm, to_nm, kind_nm) {
-      match_rows <- edges[edges$from == from_nm & edges$to == to_nm, , drop = FALSE]
-      if(nrow(match_rows) > 0) {
-        row <- match_rows[1, , drop = FALSE]
-      } else {
+    # Conceptual diagrams show structural paths only.
+    concept_edges <- edges[edges$path_kind %in% c("direct", "mediator"), , drop = FALSE]
+    concept_edges <- unique(concept_edges)
+    if(nrow(concept_edges) == 0 && nzchar(x_var) && nzchar(y_var)) {
+      # Safe fallback for simple moderation models.
+      if(nrow(edges) > 0) {
         row <- edges[1, , drop = FALSE]
-        row[,] <- NA
-        row$from <- from_nm
-        row$to <- to_nm
+      } else {
+        row <- data.frame(
+          model = model_num, outcome_block = y_var, from = x_var, to = y_var, path_kind = "direct",
+          estimate_raw = NA_real_, estimate_std = NA_real_, se = NA_real_, p = NA_real_,
+          llci = NA_real_, ulci = NA_real_, stars = "", label_raw = "", label_std = "",
+          is_available_raw = FALSE, is_available_std = FALSE, parse_source = "fallback", note = "",
+          stringsAsFactors = FALSE
+        )
       }
-      row$path_kind <- kind_nm
+      row$from <- x_var
+      row$to <- y_var
+      row$path_kind <- "direct"
       row$estimate_raw <- NA_real_
       row$estimate_std <- NA_real_
       row$se <- NA_real_
@@ -561,19 +630,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       row$stars <- ""
       row$is_available_raw <- FALSE
       row$is_available_std <- FALSE
-      concept_edges <<- rbind(concept_edges, row)
-    }
-
-    if(model_num %in% c(1L, 2L, 3L)) {
-      add_concept_edge(x_var, y_var, "direct")
-    } else if(model_num %in% c(4L, 8L, 14L)) {
-      add_concept_edge(x_var, y_var, "direct")
-      if(length(mediators) > 0) {
-        for(m in mediators) {
-          add_concept_edge(x_var, m, "mediator")
-          add_concept_edge(m, y_var, "mediator")
-        }
-      }
+      concept_edges <- row
     }
     edges <- concept_edges
     int_edges <- edges[0, , drop = FALSE]
@@ -596,17 +653,16 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         int_edges <- unique(int_edges[, c("from", "to", "path_kind"), drop = FALSE])
       }
     }
+    if(identical(display_mode, "simple")) {
+      # Simplified publication mode: remove moderator main-effect paths and
+      # keep direct, mediation, and interaction effects.
+      edges <- edges[edges$path_kind != "moderator", , drop = FALSE]
+      int_edges <- edges[edges$path_kind == "interaction" | grepl("^.*\\sx\\s.*$", edges$from, ignore.case = TRUE), , drop = FALSE]
+    }
   }
 
-  # Support only first scoped set for now.
-  if(!(model_num %in% c(1L, 2L, 3L, 4L, 8L, 14L))) {
-    return(
-      ggplot2::ggplot() +
-        ggplot2::annotate("text", x = 0, y = 0.05, label = paste0("Model ", model_num, " template not implemented yet"), size = 6) +
-        ggplot2::annotate("text", x = 0, y = -0.10, label = "Supported currently: 1, 2, 3, 4, 8, 14", size = 4.4, color = "gray35") +
-        ggplot2::theme_void() +
-        ggplot2::xlim(-1, 1) + ggplot2::ylim(-1, 1)
-    )
+  if(nrow(edges) == 0) {
+    return(message_plot("No paths available for diagram with current display options."))
   }
 
   # ---------- Nodes by template ----------
@@ -628,30 +684,38 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         nodes$y[nodes$name == w_var] <- 0.45
       }
     }
-    if(model_num %in% c(4L, 8L, 14L)) {
+    if(model_num %in% c(4L, 5L, 6L, 7L, 8L)) {
       n_m <- length(mediators)
       if(model_num == 8L && n_m > 0) {
         # Cleaner layout rule for Model 8:
         # M1 above X->Y; M2+ below X->Y.
         add_node(mediators[[1]], 0.10, 0.52, "m")
         if(n_m >= 2) {
-          lower_y <- if(n_m == 2) -0.36 else seq(-0.36, -0.70, length.out = n_m - 1)
+          lower_y <- if(n_m == 2) -0.38 else seq(-0.38, -0.70, length.out = n_m - 1)
           for(i in 2:n_m) {
             add_node(mediators[[i]], 0.10, lower_y[[i - 1]], "m")
           }
+        }
+      } else if(model_num == 6L && n_m > 0) {
+        if(n_m == 1) {
+          add_node(mediators[[1]], 0.08, 0.52, "m")
+        } else {
+          add_node(mediators[[1]], -0.08, 0.52, "m")
+          add_node(mediators[[2]], 0.28, 0.16, "m")
         }
       } else {
         if(n_m == 1) {
           add_node(mediators[[1]], 0.00, 0.45, "m")
         } else if(n_m == 2) {
           add_node(mediators[[1]], 0.00, 0.52, "m")
-          add_node(mediators[[2]], 0.00, -0.22, "m")
+          add_node(mediators[[2]], 0.00, -0.30, "m")
         } else if(n_m > 2) {
           med_y <- seq(0.55, -0.30, length.out = n_m)
           for(i in seq_along(mediators)) add_node(mediators[[i]], 0.00, med_y[[i]], "m")
         }
       }
-      if(length(w_var) > 0 && model_num %in% c(8L, 14L)) add_node(w_var, -0.45, 0.55, "mod")
+      if(length(w_var) > 0 && model_num %in% c(5L, 7L, 8L)) add_node(w_var, -0.45, 0.55, "mod")
+      if(length(z_var) > 0) add_node(z_var, -0.55, 0.22, "mod")
     }
   } else {
     # Statistical templates
@@ -721,6 +785,26 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         }
       }
       add_node(y_var, 0.80, 0.00, "y")
+    } else if(model_num %in% c(5L, 6L, 7L)) {
+      add_node(x_var, -0.78, 0.00, "x")
+      add_node(y_var, 0.80, 0.00, "y")
+      n_m <- length(mediators)
+      if(n_m == 1) {
+        add_node(mediators[[1]], 0.04, 0.58, "m")
+      } else if(n_m >= 2) {
+        add_node(mediators[[1]], 0.04, 0.60, "m")
+        add_node(mediators[[2]], 0.04, -0.40, "m")
+      }
+      if(length(w_var) > 0) add_node(w_var, -0.92, -0.30, "mod")
+      if(length(z_var) > 0) add_node(z_var, -0.92, 0.24, "mod")
+      if(nrow(int_edges) > 0) {
+        int_terms <- unique(int_edges$from)
+        for(i in seq_along(int_terms)) {
+          int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
+          int_lbl <- format_interaction_label(int_lbl, settings)
+          add_node(int_lbl, -0.45, -0.84 - 0.20 * (i - 1), "int")
+        }
+      }
     } else if(model_num == 14L) {
       add_node(x_var, -0.75, 0.00, "x")
       if(length(mediators) > 0) add_node(mediators[[1]], 0.00, 0.55, "m")
@@ -738,6 +822,14 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   }
 
   nodes <- unique(nodes)
+  if(!is.null(label_map) && length(label_map) > 0) {
+    node_labels <- vapply(nodes$name, function(nm) {
+      if(nm %in% names(label_map)) sanitize_label_text(label_map[[nm]], nm) else nm
+    }, character(1))
+    nodes$label <- node_labels
+  } else {
+    nodes$label <- nodes$name
+  }
   if(nrow(nodes) == 0) {
     return(ggplot2::ggplot() + ggplot2::annotate("text", x = 0, y = 0, label = "No template nodes available", size = 6) + ggplot2::theme_void())
   }
@@ -889,7 +981,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = midx, yend = midy))
         }
         if(model_num == 8L && length(mediators) > 0) {
-          cue_t <- if(length(mediators) == 1) 0.44 else seq(0.34, 0.54, length.out = length(mediators))
+          cue_t <- if(length(mediators) == 1) 0.44 else seq(0.30, 0.68, length.out = length(mediators))
           for(m in mediators) {
             if(any(nodes$name == m)) {
               m_node <- nodes[nodes$name == m, , drop = FALSE]
@@ -941,7 +1033,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     ) +
     ggplot2::geom_label(
       data = nodes,
-      ggplot2::aes(x = x, y = y, label = name),
+      ggplot2::aes(x = x, y = y, label = label),
       size = if(identical(diagram_type, "conceptual")) 5.4 else 4.8,
       label.size = 0.45,
       fill = "white",
@@ -1008,27 +1100,138 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   p
 }
 
+diagram_settings_key <- function(settings) {
+  paste(
+    as.character(settings$model),
+    as.character(settings$predictor_var),
+    as.character(settings$outcome_var),
+    paste(as.character(settings$mediator_vars), collapse = "|"),
+    as.character(settings$moderator_var),
+    as.character(settings$moderator2_var),
+    sep = "||"
+  )
+}
+
+diagram_label_map <- reactiveVal(character(0))
+diagram_key <- reactiveVal("")
+
+observeEvent(analysis_results(), {
+  settings <- analysis_results()$settings
+  key <- diagram_settings_key(settings)
+  if(!identical(key, diagram_key())) {
+    diagram_label_map(build_default_label_map(settings))
+    diagram_key(key)
+  }
+}, ignoreInit = FALSE)
+
+diagram_eligibility <- reactive({
+  req(analysis_results())
+  compute_diagram_eligibility(analysis_results()$settings)
+})
+
+output$diagram_eligibility_msg <- renderUI({
+  req(analysis_results())
+  elig <- diagram_eligibility()
+  if(isTRUE(elig$eligible)) return(NULL)
+  HTML(
+    paste0(
+      "<div style='margin:8px 0 14px 0; padding:10px; border:1px solid #f0ad4e; background:#fcf8e3; color:#8a6d3b;'>",
+      "<strong>Diagram unavailable:</strong> ",
+      elig$reason,
+      "</div>"
+    )
+  )
+})
+
+output$diagram_label_editor <- renderUI({
+  req(analysis_results())
+  settings <- analysis_results()$settings
+  current_map <- diagram_label_map()
+
+  fields <- list()
+  if(!is.null(settings$predictor_var) && nzchar(settings$predictor_var)) {
+    fields <- c(fields, list(list(id = "diagram_lbl_x", title = "X label", var = settings$predictor_var)))
+  }
+  if(!is.null(settings$outcome_var) && nzchar(settings$outcome_var)) {
+    fields <- c(fields, list(list(id = "diagram_lbl_y", title = "Y label", var = settings$outcome_var)))
+  }
+  if(!is.null(settings$moderator_var) && nzchar(settings$moderator_var)) {
+    fields <- c(fields, list(list(id = "diagram_lbl_w", title = "W label", var = settings$moderator_var)))
+  }
+  if(!is.null(settings$moderator2_var) && nzchar(settings$moderator2_var)) {
+    fields <- c(fields, list(list(id = "diagram_lbl_z", title = "Z label", var = settings$moderator2_var)))
+  }
+  mediators <- if(!is.null(settings$mediator_vars)) settings$mediator_vars else character(0)
+  if(length(mediators) >= 1) {
+    fields <- c(fields, list(list(id = "diagram_lbl_m1", title = "M1 label", var = mediators[[1]])))
+  }
+  if(length(mediators) >= 2) {
+    fields <- c(fields, list(list(id = "diagram_lbl_m2", title = "M2 label", var = mediators[[2]])))
+  }
+
+  if(length(fields) == 0) return(NULL)
+
+  input_controls <- lapply(fields, function(f) {
+    textInput(
+      inputId = f$id,
+      label = f$title,
+      value = if(f$var %in% names(current_map)) current_map[[f$var]] else f$var,
+      width = "100%"
+    )
+  })
+
+  tags$div(
+    style = "margin: 10px 0 6px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background: #fafafa;",
+    tags$strong("Diagram variable labels"),
+    tags$div(style = "font-size: 12px; color: #555; margin-bottom: 8px;",
+             "Edit labels, then click Regenerate Diagrams to apply."),
+    do.call(fluidRow, list(lapply(input_controls, function(ctrl) column(3, ctrl))))
+  )
+})
+
+observeEvent(input$diagram_regenerate, {
+  req(analysis_results())
+  settings <- analysis_results()$settings
+  current <- diagram_label_map()
+  if(length(current) == 0) current <- build_default_label_map(settings)
+
+  apply_if_present <- function(var_nm, input_id) {
+    if(!is.null(var_nm) && nzchar(var_nm) && !is.null(input[[input_id]])) {
+      current[[var_nm]] <<- sanitize_label_text(input[[input_id]], var_nm)
+    }
+  }
+
+  apply_if_present(settings$predictor_var, "diagram_lbl_x")
+  apply_if_present(settings$outcome_var, "diagram_lbl_y")
+  apply_if_present(settings$moderator_var, "diagram_lbl_w")
+  apply_if_present(settings$moderator2_var, "diagram_lbl_z")
+  mediators <- if(!is.null(settings$mediator_vars)) settings$mediator_vars else character(0)
+  if(length(mediators) >= 1) apply_if_present(mediators[[1]], "diagram_lbl_m1")
+  if(length(mediators) >= 2) apply_if_present(mediators[[2]], "diagram_lbl_m2")
+
+  diagram_label_map(current)
+}, ignoreInit = TRUE)
+
 conceptual_diagram_plot_obj <- reactive({
   req(analysis_results())
   parsed <- diagram_parse_results()
   settings <- analysis_results()$settings
-  
   mode_input <- input$diagram_coef_mode
   if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
-  show_int <- FALSE
-  include_ci_opt <- FALSE
-  include_p_opt <- FALSE
-  include_stars_opt <- FALSE
+  display_mode_input <- input$diagram_display_mode
+  if(is.null(display_mode_input) || !display_mode_input %in% c("full", "simple")) display_mode_input <- "full"
 
   build_template_diagram(
     parsed = parsed,
     settings = settings,
     diagram_type = "conceptual",
     label_mode = mode_input,
-    show_interactions = show_int,
-    include_ci = include_ci_opt,
-    include_p = include_p_opt,
-    include_stars = include_stars_opt
+    show_interactions = FALSE,
+    include_ci = FALSE,
+    include_p = FALSE,
+    include_stars = FALSE,
+    display_mode = display_mode_input,
+    label_map = diagram_label_map()
   )
 })
 
@@ -1036,9 +1239,10 @@ statistical_diagram_plot_obj <- reactive({
   req(analysis_results())
   parsed <- diagram_parse_results()
   settings <- analysis_results()$settings
-
   mode_input <- input$diagram_coef_mode
   if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
+  display_mode_input <- input$diagram_display_mode
+  if(is.null(display_mode_input) || !display_mode_input %in% c("full", "simple")) display_mode_input <- "full"
   show_int <- if(is.null(input$diagram_show_interactions)) TRUE else isTRUE(input$diagram_show_interactions)
   include_ci_opt <- if(is.null(input$diagram_include_ci)) FALSE else isTRUE(input$diagram_include_ci)
   include_p_opt <- if(is.null(input$diagram_include_p)) FALSE else isTRUE(input$diagram_include_p)
@@ -1052,7 +1256,9 @@ statistical_diagram_plot_obj <- reactive({
     show_interactions = show_int,
     include_ci = include_ci_opt,
     include_p = include_p_opt,
-    include_stars = include_stars_opt
+    include_stars = include_stars_opt,
+    display_mode = display_mode_input,
+    label_map = diagram_label_map()
   )
 })
 
@@ -1060,7 +1266,8 @@ observe({
   req(analysis_results())
   parsed <- diagram_parse_results()
   has_std <- isTRUE(analysis_results()$settings$stand) &&
-    any(isTRUE(parsed$paths$is_available_std))
+    nrow(parsed$paths) > 0 &&
+    any(parsed$paths$is_available_std %in% TRUE)
   choices <- if(has_std) {
     c(
       "Unstandardized coefficients" = "raw",
@@ -1122,6 +1329,8 @@ output$download_statistical_diagram <- downloadHandler(
 
 observe({
   has_results <- !is.null(analysis_results())
-  shinyjs::toggleState("download_conceptual_diagram", condition = has_results)
-  shinyjs::toggleState("download_statistical_diagram", condition = has_results)
+  elig <- if(has_results) diagram_eligibility() else list(eligible = FALSE)
+  can_download <- has_results && isTRUE(elig$eligible)
+  shinyjs::toggleState("download_conceptual_diagram", condition = can_download)
+  shinyjs::toggleState("download_statistical_diagram", condition = can_download)
 })

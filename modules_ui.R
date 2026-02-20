@@ -704,6 +704,18 @@ ui <- fluidPage(
                 ),
                 column(
                   3,
+                  selectInput(
+                    "diagram_display_mode",
+                    "Display Mode",
+                    choices = c(
+                      "Full model" = "full",
+                      "Publication simplified" = "simple"
+                    ),
+                    selected = "full"
+                  )
+                ),
+                column(
+                  3,
                   checkboxInput("diagram_show_interactions", "Show interaction terms", value = TRUE)
                 ),
                 column(
@@ -719,6 +731,15 @@ ui <- fluidPage(
                 column(
                   3,
                   checkboxInput("diagram_include_p", "Include p-values", value = FALSE)
+                ),
+                column(
+                  3,
+                  actionButton(
+                    "diagram_regenerate",
+                    "Regenerate Diagrams",
+                    class = "btn-primary",
+                    style = "margin-top: 24px;"
+                  )
                 ),
                 column(
                   3,
@@ -740,6 +761,8 @@ ui <- fluidPage(
                 )
               )
             ),
+            uiOutput("diagram_label_editor"),
+            htmlOutput("diagram_eligibility_msg"),
             h5("Conceptual Diagram"),
             plotOutput("conceptual_diagram_plot", height = "520px", width = "100%"),
             br(),
