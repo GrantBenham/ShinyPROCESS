@@ -340,26 +340,20 @@ compose_path_label <- function(edge_row, label_mode = "auto",
   label
 }
 
-build_model_diagram_nodes <- function(settings, edges, show_covariates = TRUE, show_interactions = TRUE) {
+build_model_diagram_nodes <- function(settings, edges) {
   x_var <- settings$predictor_var
   y_var <- settings$outcome_var
   mediators <- if(!is.null(settings$mediator_vars)) settings$mediator_vars else character(0)
   w_var <- if(!is.null(settings$moderator_var) && nzchar(settings$moderator_var)) settings$moderator_var else character(0)
   z_var <- if(!is.null(settings$moderator2_var) && nzchar(settings$moderator2_var)) settings$moderator2_var else character(0)
-  covars <- if(isTRUE(show_covariates) && !is.null(settings$covariates)) settings$covariates else character(0)
-  
-  vars <- unique(c(x_var, y_var, mediators, w_var, z_var, covars, edges$from, edges$to))
-  vars <- vars[nzchar(vars)]
-  
-  interactions <- vars[grepl("\\bx\\b|\\bint_[0-9]+\\b", vars, ignore.case = TRUE)]
-  if(!isTRUE(show_interactions) && length(interactions) > 0) {
-    vars <- setdiff(vars, interactions)
-  }
+  covars <- character(0)
   
   n_m <- length(mediators)
-  m_x <- if(n_m > 0) seq(-0.2, 0.2, length.out = n_m) else numeric(0)
+  vars <- unique(c(x_var, y_var, mediators, w_var, z_var, covars, edges$from, edges$to))
+  vars <- vars[!grepl("^int_[0-9]+$", vars)]
+  vars <- vars[nzchar(vars)]
   
-  node_df <- data.frame(
+  nodes <- data.frame(
     name = vars,
     role = "other",
     x = 0,
@@ -367,57 +361,78 @@ build_model_diagram_nodes <- function(settings, edges, show_covariates = TRUE, s
     stringsAsFactors = FALSE
   )
   
-  node_df$role[node_df$name == x_var] <- "x"
-  node_df$role[node_df$name == y_var] <- "y"
-  node_df$role[node_df$name %in% mediators] <- "m"
-  if(length(w_var) > 0) node_df$role[node_df$name == w_var] <- "w"
-  if(length(z_var) > 0) node_df$role[node_df$name == z_var] <- "z"
-  if(length(covars) > 0) node_df$role[node_df$name %in% covars] <- "cov"
-  if(length(interactions) > 0) node_df$role[node_df$name %in% interactions] <- "int"
+  nodes$role[nodes$name == x_var] <- "x"
+  nodes$role[nodes$name == y_var] <- "y"
+  if(n_m > 0) nodes$role[nodes$name %in% mediators] <- "m"
+  if(length(w_var) > 0) nodes$role[nodes$name == w_var] <- "w"
+  if(length(z_var) > 0) nodes$role[nodes$name == z_var] <- "z"
+  if(length(covars) > 0) nodes$role[nodes$name %in% covars] <- "cov"
   
-  node_df$x[node_df$role == "x"] <- -1
-  node_df$y[node_df$role == "x"] <- 0
-  node_df$x[node_df$role == "y"] <- 1
-  node_df$y[node_df$role == "y"] <- 0
+  # Template families:
+  # A) moderation-only (no mediators)
+  # B) mediation / moderated mediation (with mediators)
+  nodes$x[nodes$role == "x"] <- -0.8
+  nodes$y[nodes$role == "x"] <- 0.0
+  nodes$x[nodes$role == "y"] <- 0.8
+  nodes$y[nodes$role == "y"] <- 0.0
   
-  if(n_m > 0) {
-    for(i in seq_along(mediators)) {
-      node_df$x[node_df$name == mediators[[i]]] <- m_x[[i]]
-      node_df$y[node_df$name == mediators[[i]]] <- 0.55
+  if(n_m == 0) {
+    if(length(w_var) > 0) {
+      nodes$x[nodes$role == "w"] <- -0.8
+      nodes$y[nodes$role == "w"] <- 0.35
+    }
+    if(length(z_var) > 0) {
+      nodes$x[nodes$role == "z"] <- -0.8
+      nodes$y[nodes$role == "z"] <- 0.12
+    }
+    if(length(covars) > 0) {
+      cov_x <- if(length(covars) == 1) 0.60 else seq(0.45, 0.80, length.out = length(covars))
+      for(i in seq_along(covars)) {
+        nodes$x[nodes$name == covars[[i]]] <- cov_x[[i]]
+        nodes$y[nodes$name == covars[[i]]] <- -0.62
+      }
+    }
+  } else {
+    if(n_m == 1) {
+      nodes$x[nodes$name == mediators[[1]]] <- 0
+      nodes$y[nodes$name == mediators[[1]]] <- 0.42
+    } else if(n_m == 2) {
+      # Parallel 2-mediator layout: stack vertically around the X->Y line.
+      nodes$x[nodes$name == mediators[[1]]] <- 0
+      nodes$y[nodes$name == mediators[[1]]] <- 0.46
+      nodes$x[nodes$name == mediators[[2]]] <- 0
+      nodes$y[nodes$name == mediators[[2]]] <- -0.20
+    } else {
+      # 3+ mediators: stagger vertically for readability.
+      med_y <- seq(0.52, -0.18, length.out = n_m)
+      med_x <- rep(0, n_m)
+      for(i in seq_along(mediators)) {
+        nodes$x[nodes$name == mediators[[i]]] <- med_x[[i]]
+        nodes$y[nodes$name == mediators[[i]]] <- med_y[[i]]
+      }
+    }
+    if(length(w_var) > 0) {
+      nodes$x[nodes$role == "w"] <- -0.35
+      nodes$y[nodes$role == "w"] <- -0.38
+    }
+    if(length(z_var) > 0) {
+      nodes$x[nodes$role == "z"] <- 0.35
+      nodes$y[nodes$role == "z"] <- -0.38
+    }
+    if(length(covars) > 0) {
+      cov_x <- if(length(covars) == 1) 0 else seq(-0.45, 0.45, length.out = length(covars))
+      for(i in seq_along(covars)) {
+        nodes$x[nodes$name == covars[[i]]] <- cov_x[[i]]
+        nodes$y[nodes$name == covars[[i]]] <- -0.75
+      }
     }
   }
   
-  if(length(w_var) > 0) {
-    node_df$x[node_df$role == "w"] <- -0.45
-    node_df$y[node_df$role == "w"] <- -0.6
-  }
-  if(length(z_var) > 0) {
-    node_df$x[node_df$role == "z"] <- 0.45
-    node_df$y[node_df$role == "z"] <- -0.6
-  }
-  
-  if(length(covars) > 0) {
-    cov_x <- seq(-1, 1, length.out = length(covars))
-    for(i in seq_along(covars)) {
-      node_df$x[node_df$name == covars[[i]]] <- cov_x[[i]]
-      node_df$y[node_df$name == covars[[i]]] <- -1.05
-    }
-  }
-  
-  int_names <- node_df$name[node_df$role == "int"]
-  if(length(int_names) > 0) {
-    int_x <- seq(-0.2, 0.2, length.out = length(int_names))
-    for(i in seq_along(int_names)) {
-      node_df$x[node_df$name == int_names[[i]]] <- int_x[[i]]
-      node_df$y[node_df$name == int_names[[i]]] <- -0.2
-    }
-  }
-  
-  node_df
+  nodes
 }
 
 build_model_diagram_plot <- function(parsed, settings, label_mode = "auto",
-                                     show_covariates = TRUE, show_interactions = TRUE,
+                                     show_interactions = TRUE,
                                      include_ci = FALSE, include_p = FALSE, include_stars = TRUE) {
   edges <- parsed$paths
   if(nrow(edges) == 0) {
@@ -429,13 +444,14 @@ build_model_diagram_plot <- function(parsed, settings, label_mode = "auto",
     )
   }
   
-  if(!isTRUE(show_covariates)) {
-    edges <- edges[edges$path_kind != "covariate", , drop = FALSE]
-  }
-  if(!isTRUE(show_interactions)) {
-    edges <- edges[edges$path_kind != "interaction", , drop = FALSE]
-  }
-  if(nrow(edges) == 0) {
+  is_interaction <- edges$path_kind == "interaction" | grepl("^int_[0-9]+$", edges$from)
+  interaction_edges <- edges[is_interaction, , drop = FALSE]
+  core_edges <- edges[!is_interaction, , drop = FALSE]
+  
+  # Covariates are intentionally excluded from model diagrams.
+  core_edges <- core_edges[core_edges$path_kind != "covariate", , drop = FALSE]
+  
+  if(nrow(core_edges) == 0) {
     return(
       ggplot2::ggplot() +
         ggplot2::annotate("text", x = 0, y = 0, label = "No edges to display with current options", size = 6) +
@@ -444,14 +460,14 @@ build_model_diagram_plot <- function(parsed, settings, label_mode = "auto",
     )
   }
   
-  nodes <- build_model_diagram_nodes(settings, edges, show_covariates = show_covariates, show_interactions = show_interactions)
+  nodes <- build_model_diagram_nodes(settings, core_edges)
   
   from_xy <- nodes[, c("name", "x", "y")]
   names(from_xy) <- c("from", "x_from", "y_from")
   to_xy <- nodes[, c("name", "x", "y")]
   names(to_xy) <- c("to", "x_to", "y_to")
   
-  edge_plot <- merge(edges, from_xy, by = "from", all.x = TRUE)
+  edge_plot <- merge(core_edges, from_xy, by = "from", all.x = TRUE)
   edge_plot <- merge(edge_plot, to_xy, by = "to", all.x = TRUE)
   edge_plot <- edge_plot[!is.na(edge_plot$x_from) & !is.na(edge_plot$x_to), , drop = FALSE]
   
@@ -474,8 +490,63 @@ build_model_diagram_plot <- function(parsed, settings, label_mode = "auto",
     )
   })
   
+  edge_plot$dx <- edge_plot$x_to - edge_plot$x_from
+  edge_plot$dy <- edge_plot$y_to - edge_plot$y_from
+  edge_plot$seg_len <- pmax(sqrt(edge_plot$dx^2 + edge_plot$dy^2), 1e-6)
   edge_plot$xm <- (edge_plot$x_from + edge_plot$x_to) / 2
   edge_plot$ym <- (edge_plot$y_from + edge_plot$y_to) / 2
+  edge_plot$label_nudge <- ifelse(edge_plot$path_kind == "covariate", 0.03, 0.045)
+  edge_plot$x_label <- edge_plot$xm - edge_plot$label_nudge * (edge_plot$dy / edge_plot$seg_len)
+  edge_plot$y_label <- edge_plot$ym + edge_plot$label_nudge * (edge_plot$dx / edge_plot$seg_len)
+
+  # Moderation cue: draw a short dashed arrow from moderator node to the X->Y path midpoint
+  # (Hayes-style visual cue) when no mediators are present.
+  mod_cue <- data.frame(x = numeric(0), y = numeric(0), xend = numeric(0), yend = numeric(0))
+  if(isTRUE(show_interactions) && nrow(interaction_edges) > 0 && length(settings$mediator_vars) == 0) {
+    w_name <- if(!is.null(settings$moderator_var) && nzchar(settings$moderator_var)) settings$moderator_var else NA_character_
+    if(!is.na(w_name)) {
+      w_node <- nodes[nodes$name == w_name, , drop = FALSE]
+      x_node <- nodes[nodes$name == settings$predictor_var, , drop = FALSE]
+      y_node <- nodes[nodes$name == settings$outcome_var, , drop = FALSE]
+      if(nrow(w_node) == 1 && nrow(x_node) == 1 && nrow(y_node) == 1) {
+        mod_cue <- data.frame(
+          x = w_node$x,
+          y = w_node$y - 0.03,
+          xend = (x_node$x + y_node$x) / 2,
+          yend = (x_node$y + y_node$y) / 2 + 0.03
+        )
+      }
+    }
+  }
+  
+  if(nrow(interaction_edges) > 0 && isTRUE(show_interactions)) {
+    interaction_labels <- apply(interaction_edges, 1, function(r) {
+      row_df <- as.list(r)
+      row_df$is_available_std <- isTRUE(as.logical(row_df$is_available_std))
+      row_df$is_available_raw <- isTRUE(as.logical(row_df$is_available_raw))
+      row_df$estimate_std <- safe_numeric(row_df$estimate_std)
+      row_df$estimate_raw <- safe_numeric(row_df$estimate_raw)
+      row_df$llci <- safe_numeric(row_df$llci)
+      row_df$ulci <- safe_numeric(row_df$ulci)
+      row_df$p <- safe_numeric(row_df$p)
+      row_df$stars <- as.character(row_df$stars)
+      paste0(r[["from"]], ": ", compose_path_label(
+        row_df,
+        label_mode = label_mode,
+        include_ci = include_ci,
+        include_p = include_p,
+        include_stars = include_stars
+      ))
+    })
+    interaction_df <- data.frame(
+      x = rep(-0.18, length(interaction_labels)),
+      y = seq(0.30, 0.30 - 0.09 * (length(interaction_labels) - 1), by = -0.09),
+      label = interaction_labels,
+      stringsAsFactors = FALSE
+    )
+  } else {
+    interaction_df <- data.frame(x = numeric(0), y = numeric(0), label = character(0), stringsAsFactors = FALSE)
+  }
   
   title_txt <- paste0("Model ", settings$model, " Path Diagram")
   subtitle_txt <- paste0(
@@ -488,18 +559,17 @@ build_model_diagram_plot <- function(parsed, settings, label_mode = "auto",
   )
   
   ggplot2::ggplot() +
-    ggplot2::geom_curve(
+    ggplot2::geom_segment(
       data = edge_plot,
       ggplot2::aes(x = x_from, y = y_from, xend = x_to, yend = y_to, linetype = path_kind),
       arrow = grid::arrow(length = grid::unit(0.15, "cm")),
       color = "black",
-      linewidth = 0.5,
-      curvature = 0.05
+      linewidth = 0.65
     ) +
     ggplot2::geom_label(
       data = edge_plot,
-      ggplot2::aes(x = xm, y = ym, label = label),
-      size = 3,
+      ggplot2::aes(x = x_label, y = y_label, label = label),
+      size = 3.3,
       label.size = 0.2,
       fill = "white",
       color = "black"
@@ -507,30 +577,46 @@ build_model_diagram_plot <- function(parsed, settings, label_mode = "auto",
     ggplot2::geom_label(
       data = nodes,
       ggplot2::aes(x = x, y = y, label = name),
-      size = 4.2,
-      label.size = 0.35,
+      size = 4.8,
+      label.size = 0.45,
       fill = "white",
       color = "black",
       fontface = "bold"
+    ) +
+    ggplot2::geom_label(
+      data = interaction_df,
+      ggplot2::aes(x = x, y = y, label = label),
+      hjust = 0,
+      size = 3.0,
+      label.size = 0.2,
+      fill = "white",
+      color = "black"
+    ) +
+    ggplot2::geom_segment(
+      data = mod_cue,
+      ggplot2::aes(x = x, y = y, xend = xend, yend = yend),
+      linetype = "dashed",
+      linewidth = 0.5,
+      color = "black",
+      arrow = grid::arrow(length = grid::unit(0.12, "cm"))
     ) +
     ggplot2::scale_linetype_manual(
       values = c(
         direct = "solid",
         mediator = "solid",
         moderator = "solid",
-        interaction = "dashed",
         covariate = "dotted",
         unknown = "solid"
       ),
       guide = "none"
     ) +
-    ggplot2::coord_cartesian(xlim = c(-1.25, 1.25), ylim = c(-1.2, 0.85), clip = "off") +
+    ggplot2::coord_fixed(xlim = c(-1.0, 1.0), ylim = c(-0.95, 0.72), ratio = 1.0, clip = "off") +
     ggplot2::theme_void() +
     ggplot2::theme(
       plot.background = ggplot2::element_rect(fill = "white", color = NA),
       panel.background = ggplot2::element_rect(fill = "white", color = NA),
-      plot.title = ggplot2::element_text(face = "bold", size = 14, hjust = 0.5, color = "black"),
-      plot.subtitle = ggplot2::element_text(size = 10, hjust = 0.5, color = "black")
+      plot.title = ggplot2::element_text(face = "bold", size = 15, hjust = 0.5, color = "black"),
+      plot.subtitle = ggplot2::element_text(size = 10.5, hjust = 0.5, color = "black")
     ) +
     ggplot2::labs(title = title_txt, subtitle = subtitle_txt)
 }
@@ -542,7 +628,6 @@ diagram_plot_obj <- reactive({
   
   mode_input <- input$diagram_coef_mode
   if(is.null(mode_input) || mode_input == "") mode_input <- "auto"
-  show_cov <- if(is.null(input$diagram_show_covariates)) TRUE else isTRUE(input$diagram_show_covariates)
   show_int <- if(is.null(input$diagram_show_interactions)) TRUE else isTRUE(input$diagram_show_interactions)
   include_ci_opt <- if(is.null(input$diagram_include_ci)) FALSE else isTRUE(input$diagram_include_ci)
   include_p_opt <- if(is.null(input$diagram_include_p)) FALSE else isTRUE(input$diagram_include_p)
@@ -552,7 +637,6 @@ diagram_plot_obj <- reactive({
     parsed = parsed,
     settings = settings,
     label_mode = mode_input,
-    show_covariates = show_cov,
     show_interactions = show_int,
     include_ci = include_ci_opt,
     include_p = include_p_opt,

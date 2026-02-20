@@ -706,10 +706,6 @@ ui <- fluidPage(
                 ),
                 column(
                   3,
-                  checkboxInput("diagram_show_covariates", "Show covariate paths", value = TRUE)
-                ),
-                column(
-                  3,
                   checkboxInput("diagram_show_interactions", "Show interaction terms", value = TRUE)
                 ),
                 column(
