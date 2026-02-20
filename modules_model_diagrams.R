@@ -894,24 +894,30 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         add_node(mediators[[1]], 0.02, 0.56, "m")
         add_node(mediators[[2]], 0.02, -0.56, "m")
       }
-      # Requested cleaner routing: move moderator to the lower-right lane for Model 5.
+      # Place moderator/int nodes so turning off moderator main effects leaves interaction near Y.
       if(length(w_var) > 0) {
         if(n_m >= 2) {
-          add_node(w_var, 0.30, -0.52, "mod")
+          # Preferred 2-mediator layout: W directly below Y (aligned with M2 vertical level).
+          add_node(w_var, 0.80, -0.56, "mod")
         } else {
-          add_node(w_var, 0.24, -0.46, "mod")
+          # 1-mediator layout: switch W and interaction relative positions.
+          add_node(w_var, 0.48, -0.74, "mod")
         }
       }
       if(length(z_var) > 0) add_node(z_var, -0.92, 0.24, "mod")
       if(nrow(int_edges) > 0) {
         int_terms <- unique(int_edges$from)
-        int_base_x <- if(n_m >= 2) 0.58 else 0.48
-        int_base_y <- if(n_m >= 2) -0.78 else -0.74
+        int_base_x <- if(n_m >= 2) 0.80 else 0.24
+        int_base_y <- if(n_m >= 2) 0.56 else -0.46
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
-          # Requested cleaner routing: move interaction term box toward lower-right lane.
-          add_node(int_lbl, int_base_x + 0.12 * (i - 1), int_base_y - 0.12 * (i - 1), "int")
+          if(n_m >= 2) {
+            # Preferred 2-mediator layout: interaction above Y, near M1 height.
+            add_node(int_lbl, int_base_x + 0.10 * (i - 1), int_base_y - 0.08 * (i - 1), "int")
+          } else {
+            add_node(int_lbl, int_base_x + 0.12 * (i - 1), int_base_y - 0.12 * (i - 1), "int")
+          }
         }
       }
     } else if(model_num %in% c(7L, 14L)) {
@@ -1088,19 +1094,19 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     if(model_num == 5L) {
       # Model 5: keep Y-target labels separated but on-line; tune for 1 vs 2 mediators.
       set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.50)
-      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.52)
-      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.74)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.50)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.50)
       if(length(mediators) == 1) {
-        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.70)
-        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.46)
+        # Keep coefficients nearer line midpoints for single-mediator model 5.
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.58)
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.50)
       } else if(length(mediators) >= 2) {
         m1_name <- mediators[[1]]
         m2_name <- mediators[[2]]
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.40)
-        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.66)
-        set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.62)
-        set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.82)
-        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.54)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.46)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.54)
+        set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.58)
+        set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.58)
       }
     }
 
