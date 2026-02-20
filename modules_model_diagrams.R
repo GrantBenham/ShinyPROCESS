@@ -874,7 +874,29 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         add_node(mediators[[1]], -0.12, 0.58, "m")
         add_node(mediators[[2]], 0.24, 0.58, "m")
       }
-    } else if(model_num %in% c(5L, 7L, 14L)) {
+    } else if(model_num == 5L) {
+      # Model 5 statistical: moderated direct path with parallel mediators.
+      add_node(x_var, -0.78, 0.00, "x")
+      add_node(y_var, 0.80, 0.00, "y")
+      n_m <- length(mediators)
+      if(n_m == 1) {
+        add_node(mediators[[1]], 0.02, 0.58, "m")
+      } else if(n_m >= 2) {
+        # Keep two mediators vertically centered on the X->Y midpoint vertical.
+        add_node(mediators[[1]], 0.02, 0.56, "m")
+        add_node(mediators[[2]], 0.02, -0.56, "m")
+      }
+      if(length(w_var) > 0) add_node(w_var, -0.92, -0.28, "mod")
+      if(length(z_var) > 0) add_node(z_var, -0.92, 0.24, "mod")
+      if(nrow(int_edges) > 0) {
+        int_terms <- unique(int_edges$from)
+        for(i in seq_along(int_terms)) {
+          int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
+          int_lbl <- format_interaction_label(int_lbl, settings)
+          add_node(int_lbl, -0.48, -0.82 - 0.18 * (i - 1), "int")
+        }
+      }
+    } else if(model_num %in% c(7L, 14L)) {
       add_node(x_var, -0.78, 0.00, "x")
       add_node(y_var, 0.80, 0.00, "y")
       n_m <- length(mediators)
@@ -1046,12 +1068,20 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     }
 
     if(model_num == 5L) {
-      if(length(mediators) >= 2) {
+      # Model 5: keep Y-target labels separated but on-line; tune for 1 vs 2 mediators.
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.50)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.32)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.88)
+      if(length(mediators) == 1) {
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.70)
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.46)
+      } else if(length(mediators) >= 2) {
         m1_name <- mediators[[1]]
         m2_name <- mediators[[2]]
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.40)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.66)
         set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.62)
-        set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.78)
-        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.72)
+        set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.82)
       }
     }
 
@@ -1138,8 +1168,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
     }
   }
-  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L, 3L, 4L)) {
-    # For Models 1-4, place labels by center-to-center geometry (not clipped box edges).
+  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L, 3L, 4L, 5L)) {
+    # For Models 1-5, place labels by center-to-center geometry (not clipped box edges).
     edge_plot$x_label <- edge_plot$x_from + edge_plot$t_label * (edge_plot$x_to - edge_plot$x_from)
     edge_plot$y_label <- edge_plot$y_from + edge_plot$t_label * (edge_plot$y_to - edge_plot$y_from)
   } else {
