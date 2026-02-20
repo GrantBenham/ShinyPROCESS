@@ -228,11 +228,13 @@ extract_product_term_aliases <- function(lines) {
     if(length(g) == 3) {
       int_name <- tolower(trimws(g[[2]]))
       rhs <- trimws(g[[3]])
-      rhs <- gsub("\\s+", "", rhs)
-      rhs <- gsub("\\*", "x", rhs)
-      rhs <- toupper(gsub("x", "", rhs))
-      if(nzchar(rhs)) {
-        aliases[[int_name]] <- rhs
+      parts <- unlist(strsplit(rhs, "\\s*\\*\\s*|\\s+[xX]\\s+"))
+      parts <- toupper(trimws(parts))
+      parts <- parts[nzchar(parts)]
+      if(length(parts) >= 2) {
+        aliases[[int_name]] <- paste(parts, collapse = " x ")
+      } else if(length(parts) == 1) {
+        aliases[[int_name]] <- parts[[1]]
       }
     }
     i <- i + 1L
@@ -487,9 +489,27 @@ resolve_interaction_label <- function(var_name, alias_map) {
   toupper(trimws(var_name))
 }
 
+format_interaction_label <- function(raw_label, settings) {
+  lbl <- trimws(as.character(raw_label))
+  if(grepl("\\sx\\s", lbl, ignore.case = TRUE)) {
+    return(gsub("\\s*[xX]\\s*", " x ", toupper(lbl)))
+  }
+  # Fallback for concatenated PROCESS names (e.g., SPSACEQ)
+  x_var <- toupper(trimws(if(!is.null(settings$predictor_var)) settings$predictor_var else ""))
+  w_var <- toupper(trimws(if(!is.null(settings$moderator_var)) settings$moderator_var else ""))
+  z_var <- toupper(trimws(if(!is.null(settings$moderator2_var)) settings$moderator2_var else ""))
+  if(nzchar(x_var) && nzchar(w_var) && grepl(x_var, toupper(lbl), fixed = TRUE) && grepl(w_var, toupper(lbl), fixed = TRUE)) {
+    if(nzchar(z_var) && grepl(z_var, toupper(lbl), fixed = TRUE)) {
+      return(paste(x_var, w_var, z_var, sep = " x "))
+    }
+    return(paste(x_var, w_var, sep = " x "))
+  }
+  toupper(lbl)
+}
+
 build_template_diagram <- function(parsed, settings, diagram_type = c("conceptual", "statistical"),
-                                   label_mode = "auto", show_interactions = TRUE,
-                                   include_ci = FALSE, include_p = FALSE, include_stars = TRUE) {
+                                    label_mode = "auto", show_interactions = TRUE,
+                                    include_ci = FALSE, include_p = FALSE, include_stars = TRUE) {
   diagram_type <- match.arg(diagram_type)
   edges <- parsed$paths
   model_num <- suppressWarnings(as.integer(settings$model))
@@ -561,15 +581,20 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     # Statistical diagrams: map int_* aliases to readable interaction labels.
     if(nrow(int_edges) > 0) {
       for(i in seq_len(nrow(int_edges))) {
-        edges$from[edges$from == int_edges$from[[i]]] <- resolve_interaction_label(int_edges$from[[i]], alias_map)
+        int_lbl <- resolve_interaction_label(int_edges$from[[i]], alias_map)
+        int_lbl <- format_interaction_label(int_lbl, settings)
+        edges$from[edges$from == int_edges$from[[i]]] <- int_lbl
       }
-      int_edges <- edges[edges$path_kind == "interaction" | grepl("^int_[0-9]+$", edges$from), , drop = FALSE]
-      # Keep any alias-mapped interaction nodes included by role as well:
-      int_edges <- rbind(
-        int_edges,
-        edges[edges$from %in% unname(alias_map), , drop = FALSE]
-      )
-      if(nrow(int_edges) > 0) int_edges <- unique(int_edges)
+      int_edges <- edges[
+        edges$path_kind == "interaction" |
+          edges$from %in% unname(alias_map) |
+          grepl("^.*\\sx\\s.*$", edges$from, ignore.case = TRUE),
+        ,
+        drop = FALSE
+      ]
+      if(nrow(int_edges) > 0) {
+        int_edges <- unique(int_edges[, c("from", "to", "path_kind"), drop = FALSE])
+      }
     }
   }
 
@@ -597,6 +622,11 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     if(model_num %in% c(1L, 2L, 3L)) {
       if(length(w_var) > 0) add_node(w_var, -0.10, 0.45, "mod")
       if(length(z_var) > 0) add_node(z_var, -0.45, 0.45, "mod")
+      if(model_num == 1L && length(w_var) > 0) {
+        # Keep Model 1 moderation cue vertical to X->Y midpoint.
+        nodes$x[nodes$name == w_var] <- 0.00
+        nodes$y[nodes$name == w_var] <- 0.45
+      }
     }
     if(model_num %in% c(4L, 8L, 14L)) {
       n_m <- length(mediators)
@@ -614,17 +644,29 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   } else {
     # Statistical templates
     if(model_num == 1L) {
-      add_node(x_var, -0.75, 0.45, "x")
-      if(length(w_var) > 0) add_node(w_var, -0.75, 0.05, "mod")
-      for(i in seq_len(nrow(int_edges))) add_node(resolve_interaction_label(int_edges$from[[i]], alias_map), -0.75, -0.35 - 0.25 * (i - 1), "int")
+      add_node(x_var, -0.75, 0.00, "x")
+      if(length(w_var) > 0) add_node(w_var, -0.75, 0.28, "mod")
+      int_terms <- unique(int_edges$from)
+      if(length(int_terms) > 0) {
+        for(i in seq_along(int_terms)) {
+          int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
+          int_lbl <- format_interaction_label(int_lbl, settings)
+          add_node(int_lbl, -0.75, -0.48 - 0.26 * (i - 1), "int")
+        }
+      }
       add_node(y_var, 0.75, 0.00, "y")
     } else if(model_num %in% c(2L, 3L)) {
-      add_node(x_var, -0.75, 0.55, "x")
+      add_node(x_var, -0.75, 0.00, "x")
       if(length(w_var) > 0) add_node(w_var, -0.75, 0.20, "mod")
       if(length(z_var) > 0) add_node(z_var, -0.75, -0.10, "mod")
       if(nrow(int_edges) > 0) {
-        y_pos <- seq(-0.40, -0.85, length.out = nrow(int_edges))
-        for(i in seq_len(nrow(int_edges))) add_node(resolve_interaction_label(int_edges$from[[i]], alias_map), -0.75, y_pos[[i]], "int")
+        int_terms <- unique(int_edges$from)
+        y_pos <- seq(-0.40, -0.85, length.out = length(int_terms))
+        for(i in seq_along(int_terms)) {
+          int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
+          int_lbl <- format_interaction_label(int_lbl, settings)
+          add_node(int_lbl, -0.75, y_pos[[i]], "int")
+        }
       }
       add_node(y_var, 0.75, 0.00, "y")
     } else if(model_num == 4L) {
@@ -644,16 +686,41 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         for(i in seq_len(nrow(int_edges))) add_node(resolve_interaction_label(int_edges$from[[i]], alias_map), 0.25, -0.70 - 0.20 * (i - 1), "int")
       }
     } else if(model_num == 8L) {
-      add_node(x_var, -0.75, 0.25, "x")
-      if(length(w_var) > 0) add_node(w_var, -0.75, -0.10, "mod")
-      for(i in seq_len(nrow(int_edges))) add_node(resolve_interaction_label(int_edges$from[[i]], alias_map), -0.25, -0.48 - 0.20 * (i - 1), "int")
-      if(length(mediators) > 0) add_node(mediators[[1]], 0.05, 0.55, "m")
+      add_node(x_var, -0.75, 0.00, "x")
+      if(length(w_var) > 0) add_node(w_var, -0.75, -0.30, "mod")
+      int_terms <- unique(int_edges$from)
+      if(length(int_terms) > 0) {
+        for(i in seq_along(int_terms)) {
+          int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
+          int_lbl <- format_interaction_label(int_lbl, settings)
+          add_node(int_lbl, -0.25, -0.62 - 0.22 * (i - 1), "int")
+        }
+      }
+      n_m <- length(mediators)
+      if(n_m == 1) {
+        add_node(mediators[[1]], 0.05, 0.55, "m")
+      } else if(n_m == 2) {
+        add_node(mediators[[1]], 0.00, 0.58, "m")
+        add_node(mediators[[2]], 0.00, 0.26, "m")
+      } else if(n_m > 2) {
+        med_y <- seq(0.60, 0.14, length.out = n_m)
+        for(i in seq_along(mediators)) {
+          add_node(mediators[[i]], 0.00, med_y[[i]], "m")
+        }
+      }
       add_node(y_var, 0.75, 0.00, "y")
     } else if(model_num == 14L) {
-      add_node(x_var, -0.75, 0.10, "x")
+      add_node(x_var, -0.75, 0.00, "x")
       if(length(mediators) > 0) add_node(mediators[[1]], 0.00, 0.55, "m")
       if(length(w_var) > 0) add_node(w_var, -0.15, -0.20, "mod")
-      for(i in seq_len(nrow(int_edges))) add_node(resolve_interaction_label(int_edges$from[[i]], alias_map), 0.35, -0.55 - 0.20 * (i - 1), "int")
+      int_terms <- unique(int_edges$from)
+      if(length(int_terms) > 0) {
+        for(i in seq_along(int_terms)) {
+          int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
+          int_lbl <- format_interaction_label(int_lbl, settings)
+          add_node(int_lbl, 0.35, -0.55 - 0.20 * (i - 1), "int")
+        }
+      }
       add_node(y_var, 0.75, 0.00, "y")
     }
   }
@@ -671,6 +738,27 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   edge_plot <- merge(edges, from_xy, by = "from", all.x = TRUE)
   edge_plot <- merge(edge_plot, to_xy, by = "to", all.x = TRUE)
   edge_plot <- edge_plot[!is.na(edge_plot$x_from) & !is.na(edge_plot$x_to), , drop = FALSE]
+
+  clip_segment_to_box <- function(x0, y0, x1, y1, hw = 0.085, hh = 0.055) {
+    dx <- x1 - x0
+    dy <- y1 - y0
+    seg_len <- sqrt(dx * dx + dy * dy)
+    if(seg_len <= 1e-9) {
+      return(c(x0, y0, x1, y1))
+    }
+    t0x <- if(abs(dx) < 1e-9) Inf else hw / abs(dx)
+    t0y <- if(abs(dy) < 1e-9) Inf else hh / abs(dy)
+    t0 <- min(t0x, t0y)
+    xs <- x0 + dx * t0
+    ys <- y0 + dy * t0
+
+    t1x <- if(abs(dx) < 1e-9) Inf else hw / abs(dx)
+    t1y <- if(abs(dy) < 1e-9) Inf else hh / abs(dy)
+    t1 <- min(t1x, t1y)
+    xe <- x1 - dx * t1
+    ye <- y1 - dy * t1
+    c(xs, ys, xe, ye)
+  }
   
   if(identical(diagram_type, "conceptual")) {
     edge_plot$label <- ""
@@ -695,14 +783,29 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     })
   }
   
-  edge_plot$dx <- edge_plot$x_to - edge_plot$x_from
-  edge_plot$dy <- edge_plot$y_to - edge_plot$y_from
+  clipped <- t(mapply(
+    clip_segment_to_box,
+    edge_plot$x_from, edge_plot$y_from, edge_plot$x_to, edge_plot$y_to
+  ))
+  edge_plot$x_from_draw <- clipped[, 1]
+  edge_plot$y_from_draw <- clipped[, 2]
+  edge_plot$x_to_draw <- clipped[, 3]
+  edge_plot$y_to_draw <- clipped[, 4]
+  edge_plot$dx <- edge_plot$x_to_draw - edge_plot$x_from_draw
+  edge_plot$dy <- edge_plot$y_to_draw - edge_plot$y_from_draw
   edge_plot$seg_len <- pmax(sqrt(edge_plot$dx^2 + edge_plot$dy^2), 1e-6)
-  edge_plot$xm <- (edge_plot$x_from + edge_plot$x_to) / 2
-  edge_plot$ym <- (edge_plot$y_from + edge_plot$y_to) / 2
-  edge_plot$label_nudge <- ifelse(edge_plot$path_kind == "covariate", 0.03, 0.045)
-  edge_plot$x_label <- edge_plot$xm - edge_plot$label_nudge * (edge_plot$dy / edge_plot$seg_len)
-  edge_plot$y_label <- edge_plot$ym + edge_plot$label_nudge * (edge_plot$dx / edge_plot$seg_len)
+  # Label-spacing buffer rule:
+  # For edges converging on the same target node, place labels at staggered
+  # fractions along each line so labels stay on-line but avoid overlap.
+  edge_plot$label_rank <- ave(edge_plot$to, edge_plot$to, FUN = seq_along)
+  edge_plot$label_n <- ave(edge_plot$to, edge_plot$to, FUN = length)
+  edge_plot$label_rank <- suppressWarnings(as.numeric(edge_plot$label_rank))
+  edge_plot$label_n <- suppressWarnings(as.numeric(edge_plot$label_n))
+  edge_plot$label_rank[is.na(edge_plot$label_rank)] <- 1
+  edge_plot$label_n[is.na(edge_plot$label_n)] <- 1
+  edge_plot$t_label <- ifelse(edge_plot$label_n <= 1, 0.52, 0.30 + (edge_plot$label_rank - 1) * (0.45 / pmax(edge_plot$label_n - 1, 1)))
+  edge_plot$x_label <- edge_plot$x_from_draw + edge_plot$t_label * edge_plot$dx
+  edge_plot$y_label <- edge_plot$y_from_draw + edge_plot$t_label * edge_plot$dy
 
   # Conceptual moderation cue arrows (to path midpoint only; no coefficient label)
   mod_cue <- data.frame(x = numeric(0), y = numeric(0), xend = numeric(0), yend = numeric(0))
@@ -714,25 +817,42 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       midy <- (x_node$y + y_node$y) / 2
       if(length(w_var) > 0 && any(nodes$name == w_var)) {
         w_node <- nodes[nodes$name == w_var, , drop = FALSE]
-        mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = midx - 0.03, yend = midy + 0.04))
-        if(model_num == 8L && length(mediators) > 0 && any(nodes$name == mediators[[1]])) {
-          m_node <- nodes[nodes$name == mediators[[1]], , drop = FALSE]
-          xm_midx <- (x_node$x + m_node$x) / 2
-          xm_midy <- (x_node$y + m_node$y) / 2
-          mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = xm_midx - 0.02, yend = xm_midy + 0.03))
+        if(model_num == 1L) {
+          mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = midx, yend = midy))
+        } else {
+          mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = midx, yend = midy))
+        }
+        if(model_num == 8L && length(mediators) > 0) {
+          for(m in mediators) {
+            if(any(nodes$name == m)) {
+              m_node <- nodes[nodes$name == m, , drop = FALSE]
+              xm_midx <- (x_node$x + m_node$x) / 2
+              xm_midy <- (x_node$y + m_node$y) / 2
+              mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = xm_midx, yend = xm_midy))
+            }
+          }
         }
         if(model_num == 14L && length(mediators) > 0 && any(nodes$name == mediators[[1]])) {
           m_node <- nodes[nodes$name == mediators[[1]], , drop = FALSE]
           my_midx <- (m_node$x + y_node$x) / 2
           my_midy <- (m_node$y + y_node$y) / 2
-          mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = my_midx - 0.02, yend = my_midy + 0.03))
+          mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = my_midx, yend = my_midy))
         }
       }
       if(length(z_var) > 0 && any(nodes$name == z_var)) {
         z_node <- nodes[nodes$name == z_var, , drop = FALSE]
-        mod_cue <- rbind(mod_cue, data.frame(x = z_node$x, y = z_node$y, xend = midx + 0.03, yend = midy + 0.02))
+        mod_cue <- rbind(mod_cue, data.frame(x = z_node$x, y = z_node$y, xend = midx, yend = midy))
       }
     }
+  }
+  if(nrow(mod_cue) > 0) {
+    cue_clip <- t(mapply(function(x0, y0, x1, y1) {
+      # Clip only cue start to originating box; end stays exactly on target path.
+      clipped <- clip_segment_to_box(x0, y0, x1, y1)
+      c(clipped[[1]], clipped[[2]], x1, y1)
+    }, mod_cue$x, mod_cue$y, mod_cue$xend, mod_cue$yend))
+    mod_cue$x <- cue_clip[, 1]
+    mod_cue$y <- cue_clip[, 2]
   }
 
   title_txt <- paste0("Model ", settings$model, " ", if(identical(diagram_type, "conceptual")) "Conceptual" else "Statistical", " Diagram")
@@ -745,15 +865,15 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   p <- ggplot2::ggplot() +
     ggplot2::geom_segment(
       data = edge_plot,
-      ggplot2::aes(x = x_from, y = y_from, xend = x_to, yend = y_to, linetype = path_kind),
+      ggplot2::aes(x = x_from_draw, y = y_from_draw, xend = x_to_draw, yend = y_to_draw, linetype = path_kind, linewidth = path_kind),
       arrow = grid::arrow(length = grid::unit(0.15, "cm")),
       color = "black",
-      linewidth = 0.65
+      lineend = "round"
     ) +
     ggplot2::geom_label(
       data = nodes,
       ggplot2::aes(x = x, y = y, label = name),
-      size = 4.8,
+      size = if(identical(diagram_type, "conceptual")) 5.4 else 4.8,
       label.size = 0.45,
       fill = "white",
       color = "black",
@@ -763,7 +883,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       data = mod_cue,
       ggplot2::aes(x = x, y = y, xend = xend, yend = yend),
       linetype = "solid",
-      linewidth = 0.5,
+      linewidth = 0.45,
       color = "black",
       arrow = grid::arrow(length = grid::unit(0.12, "cm"))
     ) +
@@ -772,12 +892,29 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         direct = "solid",
         mediator = "solid",
         moderator = "solid",
+        interaction = "solid",
         covariate = "dotted",
         unknown = "solid"
       ),
       guide = "none"
     ) +
-    ggplot2::coord_fixed(xlim = c(-1.0, 1.0), ylim = c(-1.05, 0.85), ratio = 1.0, clip = "off") +
+    ggplot2::scale_linewidth_manual(
+      values = c(
+        direct = 0.80,
+        mediator = 0.80,
+        moderator = 0.55,
+        interaction = 0.55,
+        covariate = 0.45,
+        unknown = 0.65
+      ),
+      guide = "none"
+    ) +
+    ggplot2::coord_fixed(
+      xlim = if(identical(diagram_type, "conceptual")) c(-0.85, 0.85) else c(-1.0, 1.0),
+      ylim = c(-1.05, 0.85),
+      ratio = 1.0,
+      clip = "off"
+    ) +
     ggplot2::theme_void() +
     ggplot2::theme(
       plot.background = ggplot2::element_rect(fill = "white", color = NA),
