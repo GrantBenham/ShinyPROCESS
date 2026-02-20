@@ -56,6 +56,7 @@ process_model_specs$requires_w_input[process_model_specs$model == 74] <- FALSE
 # Populate mediator constraints
 process_model_specs$min_mediators[process_model_specs$has_m] <- 1L
 process_model_specs$max_mediators[process_model_specs$has_m] <- 10L
+process_model_specs$min_mediators[process_model_specs$model == 6] <- 2L
 process_model_specs$max_mediators[process_model_specs$model == 6] <- 6L
 process_model_specs$min_mediators[process_model_specs$model == 82] <- 4L
 process_model_specs$max_mediators[process_model_specs$model == 82] <- 4L

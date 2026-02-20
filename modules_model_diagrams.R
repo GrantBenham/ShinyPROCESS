@@ -1017,7 +1017,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     hh = rep(0.055, nrow(nodes)),
     stringsAsFactors = FALSE
   )
-  if(model_num == 6L && nrow(nodes) > 0) {
+  if(model_num %in% 1:6 && nrow(nodes) > 0) {
     est <- t(vapply(nodes$label, estimate_node_half_box, numeric(2)))
     node_dims$hw <- est[, "hw"]
     node_dims$hh <- est[, "hh"]
@@ -1103,8 +1103,9 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     edge_plot$x_from, edge_plot$y_from, edge_plot$x_to, edge_plot$y_to,
     edge_plot$hw_from, edge_plot$hh_from, edge_plot$hw_to, edge_plot$hh_to
   ))
-  # Model 6 spacing pass: enforce a consistent visible white-space gap at both node ends.
-  edge_gap <- if(model_num == 6L) 0.012 else 0
+  # Models 1-6 spacing pass: enforce a consistent visible white-space gap at both node ends.
+  # Reduced ~30% from prior tuning.
+  edge_gap <- if(model_num %in% 1:6) 0.0084 else 0
   if(edge_gap > 0 && nrow(clipped) > 0) {
     clipped <- t(mapply(
       function(xs, ys, xe, ye) inset_segment(xs, ys, xe, ye, pad = edge_gap),

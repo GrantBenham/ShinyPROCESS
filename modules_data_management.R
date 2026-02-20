@@ -71,6 +71,7 @@
       return(as.integer(spec$min_mediators))
     }
     if(is.null(model_num)) return(0L)
+    if(model_num == 6) return(2L)
     if(model_num >= 4 && model_num <= 92) return(1L)
     0L
   }
