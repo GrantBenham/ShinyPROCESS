@@ -1006,8 +1006,10 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     max_chars <- max(nchar(lines, type = "width"), na.rm = TRUE)
     n_lines <- length(lines)
     # Calibrated for ggplot::geom_label defaults used in this module.
-    hw <- 0.055 + 0.010 * max_chars
-    hh <- 0.040 + 0.020 * n_lines
+    # Conceptual diagrams use larger node label text, so scale up box estimates.
+    size_scale <- if(identical(diagram_type, "conceptual")) 1.16 else 1.00
+    hw <- (0.055 + 0.010 * max_chars) * size_scale
+    hh <- (0.040 + 0.020 * n_lines) * size_scale
     c(hw = hw, hh = hh)
   }
 
@@ -1103,9 +1105,50 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     edge_plot$x_from, edge_plot$y_from, edge_plot$x_to, edge_plot$y_to,
     edge_plot$hw_from, edge_plot$hh_from, edge_plot$hw_to, edge_plot$hh_to
   ))
+  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L, 3L)) {
+    idx_to_y <- which(edge_plot$to == y_var)
+    if(length(idx_to_y) > 0) {
+      # Requested for Models 1-3: all paths to Y leave source nodes from right-middle.
+      clipped[idx_to_y, 1] <- edge_plot$x_from[idx_to_y] + edge_plot$hw_from[idx_to_y]
+      clipped[idx_to_y, 2] <- edge_plot$y_from[idx_to_y]
+      # Paths terminate on Y's left edge.
+      clipped[idx_to_y, 3] <- edge_plot$x_to[idx_to_y] - edge_plot$hw_to[idx_to_y]
+
+      if(model_num == 1L) {
+        # Model 1: explicit top/middle/bottom terminations on Y (W, X, INT).
+        idx_mod <- idx_to_y[edge_plot$from_role[idx_to_y] == "mod"]
+        idx_x <- idx_to_y[edge_plot$from_role[idx_to_y] == "x"]
+        idx_int <- idx_to_y[edge_plot$from_role[idx_to_y] == "int"]
+        if(length(idx_mod) > 0) {
+          clipped[idx_mod, 4] <- edge_plot$y_to[idx_mod] + 0.72 * edge_plot$hh_to[idx_mod]
+        }
+        if(length(idx_x) > 0) {
+          clipped[idx_x, 4] <- edge_plot$y_to[idx_x]
+        }
+        if(length(idx_int) > 0) {
+          clipped[idx_int, 4] <- edge_plot$y_to[idx_int] - 0.72 * edge_plot$hh_to[idx_int]
+        }
+        idx_other <- setdiff(idx_to_y, c(idx_mod, idx_x, idx_int))
+        if(length(idx_other) > 0) {
+          ord_other <- idx_other[order(-edge_plot$y_from[idx_other], edge_plot$from[idx_other])]
+          y_mid <- edge_plot$y_to[ord_other][1]
+          h <- edge_plot$hh_to[ord_other][1]
+          y_vals <- if(length(ord_other) == 1) y_mid else seq(y_mid + 0.72 * h, y_mid - 0.72 * h, length.out = length(ord_other))
+          clipped[ord_other, 4] <- y_vals
+        }
+      } else {
+        # Models 2-3: equally space all Y-bound terminations from top to bottom.
+        ord <- idx_to_y[order(-edge_plot$y_from[idx_to_y], edge_plot$from[idx_to_y])]
+        y_mid <- edge_plot$y_to[ord][1]
+        h <- edge_plot$hh_to[ord][1]
+        y_vals <- if(length(ord) == 1) y_mid else seq(y_mid + 0.74 * h, y_mid - 0.74 * h, length.out = length(ord))
+        clipped[ord, 4] <- y_vals
+      }
+    }
+  }
   # Models 1-6 spacing pass: enforce a consistent visible white-space gap at both node ends.
-  # Reduced ~30% from prior tuning.
-  edge_gap <- if(model_num %in% 1:6) 0.0084 else 0
+  # Reduced by half from prior tuning.
+  edge_gap <- if(model_num %in% 1:6) 0.0042 else 0
   if(edge_gap > 0 && nrow(clipped) > 0) {
     clipped <- t(mapply(
       function(xs, ys, xe, ye) inset_segment(xs, ys, xe, ye, pad = edge_gap),
@@ -1273,11 +1316,12 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
     }
   }
-  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L, 3L, 4L, 5L, 6L)) {
-    # For Models 1-6, place labels by center-to-center geometry (not clipped box edges).
+  if(!identical(diagram_type, "conceptual") && model_num %in% c(4L, 5L, 6L)) {
+    # For Models 4-6, place labels by center-to-center geometry.
     edge_plot$x_label <- edge_plot$x_from + edge_plot$t_label * (edge_plot$x_to - edge_plot$x_from)
     edge_plot$y_label <- edge_plot$y_from + edge_plot$t_label * (edge_plot$y_to - edge_plot$y_from)
   } else {
+    # Default (and Models 1-3 after explicit endpoint anchoring): on rendered path segment.
     edge_plot$x_label <- edge_plot$x_from_draw + edge_plot$t_label * edge_plot$dx
     edge_plot$y_label <- edge_plot$y_from_draw + edge_plot$t_label * edge_plot$dy
   }
