@@ -1281,9 +1281,18 @@ statistical_diagram_plot_obj <- reactive({
 })
 
 observe({
-  req(analysis_results())
+  results <- analysis_results()
+  if(is.null(results)) {
+    updateSelectInput(
+      session,
+      "diagram_coef_mode",
+      choices = c("Unstandardized coefficients" = "raw"),
+      selected = "raw"
+    )
+    return()
+  }
   parsed <- diagram_parse_results()
-  has_std <- isTRUE(analysis_results()$settings$stand) &&
+  has_std <- isTRUE(results$settings$stand) &&
     nrow(parsed$paths) > 0 &&
     any(parsed$paths$is_available_std %in% TRUE)
   choices <- if(has_std) {
@@ -1302,17 +1311,25 @@ observe({
 })
 
 output$conceptual_diagram_plot <- renderPlot({
-  req(analysis_results())
+  if(is.null(analysis_results())) {
+    plot.new()
+    text(0.5, 0.5, "Run an analysis to generate the conceptual diagram.", col = "#666666")
+    return(invisible(NULL))
+  }
   print(conceptual_diagram_plot_obj())
 }, bg = "white")
 
 output$statistical_diagram_plot <- renderPlot({
-  req(analysis_results())
+  if(is.null(analysis_results())) {
+    plot.new()
+    text(0.5, 0.5, "Run an analysis to generate the statistical diagram.", col = "#666666")
+    return(invisible(NULL))
+  }
   print(statistical_diagram_plot_obj())
 }, bg = "white")
 
 output$model_diagram_notes <- renderUI({
-  req(analysis_results())
+  if(is.null(analysis_results())) return(NULL)
   parsed <- diagram_parse_results()
   warn <- parsed$metadata$warnings
   if(is.null(warn) || length(warn) == 0) return(NULL)

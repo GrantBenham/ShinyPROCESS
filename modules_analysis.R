@@ -795,6 +795,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
 # ============================================================================
 original_analysis <- eventReactive(input$run_analysis, {
   req(rv$original_dataset)
+  rv$suppress_results_recovery <- FALSE
   result <- run_process_analysis(rv$original_dataset, remove_outliers = FALSE, outliers_info = NULL)
   if(!is.null(result)) {
     rv$analysis_results <- result
@@ -810,6 +811,7 @@ original_analysis <- eventReactive(input$run_analysis, {
 # Analysis with outliers removed
 outliers_analysis <- eventReactive(input$run_analysis_no_outliers, {
   req(rv$original_dataset)
+  rv$suppress_results_recovery <- FALSE
   
   # Identify outliers
   outliers <- identify_outliers()
@@ -902,6 +904,13 @@ observeEvent(outliers_analysis(), {
 # Combined results reactive - use stored results from rv
 analysis_results <- reactive({
   dbg(paste("DEBUG: analysis_results reactive called. rv$analysis_results is NULL?", is.null(rv$analysis_results)))
+  
+  # During JSON load/reset flows, never recover from cached eventReactives.
+  # This prevents stale output from reappearing until user runs a new analysis.
+  if(isTRUE(rv$suppress_results_recovery)) {
+    dbg("DEBUG: Results recovery suppressed; returning NULL")
+    return(NULL)
+  }
   
   # Get current model number
   current_model_num <- if(!is.null(input$process_model) && input$process_model != "") {

@@ -162,7 +162,10 @@ server <- function(input, output, session) {
     process_status = NULL,
     process_detected_version = NULL,
     process_source = NULL,
-    app_runtime = "rshiny"
+    app_runtime = "rshiny",
+    # When TRUE, analysis_results() must not recover cached eventReactive output.
+    # This is used during JSON settings loads to prevent stale results from reappearing.
+    suppress_results_recovery = FALSE
   )
   
   # Detect runtime mode from runtime.txt

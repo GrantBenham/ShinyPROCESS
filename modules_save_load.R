@@ -167,6 +167,14 @@ observeEvent(input$load_settings_file, {
       return()
     }
     
+    # CRITICAL: Prevent stale outputs from prior runs when loading a new JSON.
+    # Keep recovery suppressed until the user runs a new analysis.
+    rv$suppress_results_recovery <- TRUE
+    rv$analysis_results <- NULL
+    rv$results_model <- NULL
+    rv$validation_error <- NULL
+    dbg("DEBUG: JSON load started - cleared prior analysis results and suppressed recovery")
+    
     # Step 3.5: Ensure Variable Selection section is visible before restoration
     # This prevents hidden UI from delaying mediator_count/mediator inputs
     shinyjs::runjs("
