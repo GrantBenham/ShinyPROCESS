@@ -717,7 +717,18 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     }
     if(model_num %in% c(4L, 5L, 6L, 7L, 8L, 14L)) {
       n_m <- length(mediators)
-      if(model_num == 8L && n_m > 0) {
+      if(model_num == 4L && n_m > 0) {
+        # Model 4 (parallel mediation):
+        # mediator node centers align on the X->Y midpoint vertical and are symmetric about X->Y.
+        med_x <- 0.00
+        med_offset <- 0.52
+        if(n_m == 1) {
+          add_node(mediators[[1]], med_x, med_offset, "m")
+        } else if(n_m >= 2) {
+          add_node(mediators[[1]], med_x, med_offset, "m")
+          add_node(mediators[[2]], med_x, -med_offset, "m")
+        }
+      } else if(model_num == 8L && n_m > 0) {
         # Cleaner layout rule for Model 8:
         # M1 above X->Y; M2+ below X->Y.
         add_node(mediators[[1]], 0.10, 0.52, "m")
@@ -812,11 +823,13 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       add_node(x_var, -0.75, 0.00, "x")
       add_node(y_var, 0.75, 0.00, "y")
       n_m <- length(mediators)
+      med_x <- 0.00
+      med_offset <- 0.52
       if(n_m == 1) {
-        add_node(mediators[[1]], 0.00, 0.50, "m")
+        add_node(mediators[[1]], med_x, med_offset, "m")
       } else if(n_m == 2) {
-        add_node(mediators[[1]], 0.00, 0.52, "m")
-        add_node(mediators[[2]], 0.00, -0.52, "m")
+        add_node(mediators[[1]], med_x, med_offset, "m")
+        add_node(mediators[[2]], med_x, -med_offset, "m")
       } else if(n_m > 2) {
         med_y <- seq(0.58, -0.35, length.out = n_m)
         for(i in seq_along(mediators)) add_node(mediators[[i]], 0.00, med_y[[i]], "m")
@@ -1125,8 +1138,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
     }
   }
-  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L, 3L)) {
-    # For Models 1-3, place labels by center-to-center geometry (not clipped box edges).
+  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L, 3L, 4L)) {
+    # For Models 1-4, place labels by center-to-center geometry (not clipped box edges).
     edge_plot$x_label <- edge_plot$x_from + edge_plot$t_label * (edge_plot$x_to - edge_plot$x_from)
     edge_plot$y_label <- edge_plot$y_from + edge_plot$t_label * (edge_plot$y_to - edge_plot$y_from)
   } else {
