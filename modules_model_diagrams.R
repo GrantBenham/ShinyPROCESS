@@ -630,16 +630,28 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     }
     if(model_num %in% c(4L, 8L, 14L)) {
       n_m <- length(mediators)
-      if(n_m == 1) {
-        add_node(mediators[[1]], 0.00, 0.45, "m")
-      } else if(n_m == 2) {
-        add_node(mediators[[1]], 0.00, 0.52, "m")
-        add_node(mediators[[2]], 0.00, -0.22, "m")
-      } else if(n_m > 2) {
-        med_y <- seq(0.55, -0.30, length.out = n_m)
-        for(i in seq_along(mediators)) add_node(mediators[[i]], 0.00, med_y[[i]], "m")
+      if(model_num == 8L && n_m > 0) {
+        # Cleaner layout rule for Model 8:
+        # M1 above X->Y; M2+ below X->Y.
+        add_node(mediators[[1]], 0.10, 0.52, "m")
+        if(n_m >= 2) {
+          lower_y <- if(n_m == 2) -0.36 else seq(-0.36, -0.70, length.out = n_m - 1)
+          for(i in 2:n_m) {
+            add_node(mediators[[i]], 0.10, lower_y[[i - 1]], "m")
+          }
+        }
+      } else {
+        if(n_m == 1) {
+          add_node(mediators[[1]], 0.00, 0.45, "m")
+        } else if(n_m == 2) {
+          add_node(mediators[[1]], 0.00, 0.52, "m")
+          add_node(mediators[[2]], 0.00, -0.22, "m")
+        } else if(n_m > 2) {
+          med_y <- seq(0.55, -0.30, length.out = n_m)
+          for(i in seq_along(mediators)) add_node(mediators[[i]], 0.00, med_y[[i]], "m")
+        }
       }
-      if(length(w_var) > 0 && model_num %in% c(8L, 14L)) add_node(w_var, -0.35, 0.55, "mod")
+      if(length(w_var) > 0 && model_num %in% c(8L, 14L)) add_node(w_var, -0.45, 0.55, "mod")
     }
   } else {
     # Statistical templates
@@ -686,29 +698,29 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         for(i in seq_len(nrow(int_edges))) add_node(resolve_interaction_label(int_edges$from[[i]], alias_map), 0.25, -0.70 - 0.20 * (i - 1), "int")
       }
     } else if(model_num == 8L) {
-      add_node(x_var, -0.75, 0.00, "x")
-      if(length(w_var) > 0) add_node(w_var, -0.75, -0.30, "mod")
+      add_node(x_var, -0.78, 0.00, "x")
+      if(length(w_var) > 0) add_node(w_var, -0.92, -0.34, "mod")
       int_terms <- unique(int_edges$from)
       if(length(int_terms) > 0) {
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
-          add_node(int_lbl, -0.25, -0.62 - 0.22 * (i - 1), "int")
+          add_node(int_lbl, -0.42, -0.82 - 0.20 * (i - 1), "int")
         }
       }
       n_m <- length(mediators)
       if(n_m == 1) {
-        add_node(mediators[[1]], 0.05, 0.55, "m")
-      } else if(n_m == 2) {
-        add_node(mediators[[1]], 0.00, 0.58, "m")
-        add_node(mediators[[2]], 0.00, 0.26, "m")
-      } else if(n_m > 2) {
-        med_y <- seq(0.60, 0.14, length.out = n_m)
-        for(i in seq_along(mediators)) {
-          add_node(mediators[[i]], 0.00, med_y[[i]], "m")
+        add_node(mediators[[1]], 0.06, 0.60, "m")
+      } else if(n_m >= 2) {
+        # Model 8 statistical rule:
+        # M1 above X->Y; M2+ below X->Y.
+        add_node(mediators[[1]], 0.06, 0.62, "m")
+        lower_y <- if(n_m == 2) -0.36 else seq(-0.36, -0.76, length.out = n_m - 1)
+        for(i in 2:n_m) {
+          add_node(mediators[[i]], 0.10, lower_y[[i - 1]], "m")
         }
       }
-      add_node(y_var, 0.75, 0.00, "y")
+      add_node(y_var, 0.80, 0.00, "y")
     } else if(model_num == 14L) {
       add_node(x_var, -0.75, 0.00, "x")
       if(length(mediators) > 0) add_node(mediators[[1]], 0.00, 0.55, "m")
@@ -738,6 +750,12 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   edge_plot <- merge(edges, from_xy, by = "from", all.x = TRUE)
   edge_plot <- merge(edge_plot, to_xy, by = "to", all.x = TRUE)
   edge_plot <- edge_plot[!is.na(edge_plot$x_from) & !is.na(edge_plot$x_to), , drop = FALSE]
+  role_map <- nodes[, c("name", "role"), drop = FALSE]
+  names(role_map) <- c("from", "from_role")
+  edge_plot <- merge(edge_plot, role_map, by = "from", all.x = TRUE)
+  role_map2 <- nodes[, c("name", "role"), drop = FALSE]
+  names(role_map2) <- c("to", "to_role")
+  edge_plot <- merge(edge_plot, role_map2, by = "to", all.x = TRUE)
 
   clip_segment_to_box <- function(x0, y0, x1, y1, hw = 0.085, hh = 0.055) {
     dx <- x1 - x0
@@ -803,9 +821,57 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   edge_plot$label_n <- suppressWarnings(as.numeric(edge_plot$label_n))
   edge_plot$label_rank[is.na(edge_plot$label_rank)] <- 1
   edge_plot$label_n[is.na(edge_plot$label_n)] <- 1
-  edge_plot$t_label <- ifelse(edge_plot$label_n <= 1, 0.52, 0.30 + (edge_plot$label_rank - 1) * (0.45 / pmax(edge_plot$label_n - 1, 1)))
+  edge_plot$t_label <- ifelse(edge_plot$label_n <= 1, 0.52, 0.28 + (edge_plot$label_rank - 1) * (0.50 / pmax(edge_plot$label_n - 1, 1)))
+  if(!identical(diagram_type, "conceptual")) {
+    # Model-specific label lanes to reduce collisions for dense moderated-mediation paths.
+    if(model_num == 1L) {
+      idx <- edge_plot$from_role == "x" & edge_plot$to_role == "y"
+      edge_plot$t_label[idx] <- 0.52
+      idx <- edge_plot$from_role == "mod" & edge_plot$to_role == "y"
+      edge_plot$t_label[idx] <- 0.32
+      idx <- edge_plot$from_role == "int" & edge_plot$to_role == "y"
+      edge_plot$t_label[idx] <- 0.72
+    }
+    if(model_num == 8L) {
+      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "x"
+      edge_plot$t_label[idx] <- 0.34
+      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "mod"
+      edge_plot$t_label[idx] <- 0.20
+      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "int"
+      edge_plot$t_label[idx] <- 0.62
+      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "x"
+      edge_plot$t_label[idx] <- 0.52
+      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "mod"
+      edge_plot$t_label[idx] <- 0.30
+      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "m"
+      edge_plot$t_label[idx] <- 0.68
+      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "int"
+      edge_plot$t_label[idx] <- 0.76
+    }
+  }
   edge_plot$x_label <- edge_plot$x_from_draw + edge_plot$t_label * edge_plot$dx
   edge_plot$y_label <- edge_plot$y_from_draw + edge_plot$t_label * edge_plot$dy
+  edge_plot$x_label_nudge <- 0
+  edge_plot$y_label_nudge <- 0
+  if(!identical(diagram_type, "conceptual") && model_num == 8L) {
+    # Additional lane offsets for dense Model 8 paths.
+    idx <- edge_plot$to_role == "m" & edge_plot$from_role == "x"
+    edge_plot$y_label_nudge[idx] <- 0.030
+    idx <- edge_plot$to_role == "m" & edge_plot$from_role == "mod"
+    edge_plot$y_label_nudge[idx] <- -0.038
+    idx <- edge_plot$to_role == "m" & edge_plot$from_role == "int"
+    edge_plot$y_label_nudge[idx] <- 0.050
+    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "x"
+    edge_plot$y_label_nudge[idx] <- 0.022
+    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "mod"
+    edge_plot$y_label_nudge[idx] <- -0.026
+    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "m"
+    edge_plot$y_label_nudge[idx] <- 0.030
+    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "int"
+    edge_plot$y_label_nudge[idx] <- -0.060
+  }
+  edge_plot$x_label <- edge_plot$x_label + edge_plot$x_label_nudge
+  edge_plot$y_label <- edge_plot$y_label + edge_plot$y_label_nudge
 
   # Conceptual moderation cue arrows (to path midpoint only; no coefficient label)
   mod_cue <- data.frame(x = numeric(0), y = numeric(0), xend = numeric(0), yend = numeric(0))
@@ -823,11 +889,14 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = midx, yend = midy))
         }
         if(model_num == 8L && length(mediators) > 0) {
+          cue_t <- if(length(mediators) == 1) 0.44 else seq(0.34, 0.54, length.out = length(mediators))
           for(m in mediators) {
             if(any(nodes$name == m)) {
               m_node <- nodes[nodes$name == m, , drop = FALSE]
-              xm_midx <- (x_node$x + m_node$x) / 2
-              xm_midy <- (x_node$y + m_node$y) / 2
+              m_idx <- which(mediators == m)[1]
+              t_pos <- cue_t[[m_idx]]
+              xm_midx <- x_node$x + t_pos * (m_node$x - x_node$x)
+              xm_midy <- x_node$y + t_pos * (m_node$y - x_node$y)
               mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = xm_midx, yend = xm_midy))
             }
           }
