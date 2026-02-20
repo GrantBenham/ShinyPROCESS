@@ -138,11 +138,30 @@
       rv$previous_model <- input$process_model  # Store current model as previous for next change
     })
 
-    # If settings are being loaded, skip clearing inputs.
-    # This avoids wiping restored values mid-restore.
-    if(isTRUE(rv$load_settings_pending)) {
-      dbg("DEBUG: Model change clearing skipped - load_settings_pending is TRUE")
+    # If settings are being loaded, skip clearing only for the expected JSON model-set event.
+    # If user manually changes model while a load is pending, cancel restore and clear normally.
+    is_json_model_set_event <- FALSE
+    if(isTRUE(rv$load_settings_pending) && !is.null(rv$settings_to_load) &&
+       !is.null(rv$settings_to_load$process_model) && rv$settings_to_load$process_model != "") {
+      is_json_model_set_event <- identical(
+        as.character(input$process_model),
+        as.character(rv$settings_to_load$process_model)
+      )
+    }
+    if(is_json_model_set_event) {
+      dbg("DEBUG: Model change clearing skipped - JSON restore model-set event")
       return()
+    }
+    if(isTRUE(rv$load_settings_pending) && !is_json_model_set_event) {
+      dbg("DEBUG: Manual model change detected while load pending - cancelling pending restore")
+      rv$load_settings_pending <- FALSE
+      rv$settings_to_load <- NULL
+      rv$restore_mediators_pending <- FALSE
+      rv$mediator_vars_to_restore <- NULL
+      rv$expected_mediator_count <- NULL
+      rv$mediator_restore_retry_count <- NULL
+      rv$restore_labels_pending <- FALSE
+      rv$labels_to_restore <- NULL
     }
     
     dbg("DEBUG - Model changed, resetting all variables to initial state")
@@ -153,51 +172,43 @@
       rv$validation_error <- NULL
     })
     
-    # CRITICAL: Now that ALL inputs are always rendered (just disabled when not relevant),
-    # we can simply use updateSelectInput to clear all of them - it will always work!
+    # CRITICAL: clear all UI selections, then repeat once after flush to catch late/dynamic inputs.
     if(!is.null(rv$original_dataset)) {
       vars <- names(rv$original_dataset)
-      
-      # Clear all variable inputs - they all exist in DOM now, so this will always work
-      updateSelectInput(session, "predictor_var", choices = c("Select variable" = "", vars), selected = "")
-      updateSelectInput(session, "outcome_var", choices = c("Select variable" = "", vars), selected = "")
-      updateSelectInput(session, "moderator_var", choices = c("Select variable" = "", vars), selected = "")
-      updateSelectInput(session, "moderator2_var", choices = c("Select variable" = "", vars), selected = "")
-      updateSelectInput(session, "covariates", choices = vars, selected = NULL)
-      
-      # Clear mediator count and all individual mediator selects (M1, M2, M3, etc.)
-      # BUT: Skip clearing if we're loading settings - the restore observer will handle it
-      if(!isTRUE(rv$load_settings_pending)) {
+      clear_model_inputs <- function() {
+        updateSelectInput(session, "predictor_var", choices = c("Select variable" = "", vars), selected = "")
+        updateSelectInput(session, "outcome_var", choices = c("Select variable" = "", vars), selected = "")
+        updateSelectInput(session, "moderator_var", choices = c("Select variable" = "", vars), selected = "")
+        updateSelectInput(session, "moderator2_var", choices = c("Select variable" = "", vars), selected = "")
+        updateSelectInput(session, "covariates", choices = vars, selected = character(0))
         updateSelectInput(session, "mediator_count", selected = "")
-        for(i in 1:10) {  # Clear up to 10 (max for Model 4)
+        for(i in 1:10) {
           updateSelectInput(session, paste0("mediator_m", i), choices = c("Select variable" = "", vars), selected = "")
         }
-      } else {
-        dbg("DEBUG: Skipping mediator clearing - loading settings, restore observer will handle")
       }
+      clear_model_inputs()
+      session$onFlushed(function() {
+        clear_model_inputs()
+        dbg("DEBUG: Re-applied model-change clear after flush")
+      }, once = TRUE)
       
       # Clear plot labels when model changes (they will be auto-populated when new variables are selected)
       # Only clear if we're NOT loading settings (settings loading will restore labels after model is set)
       dbg(paste("DEBUG: load_settings_pending is:", rv$load_settings_pending))
-      if(!isTRUE(rv$load_settings_pending)) {
-        dbg(paste("DEBUG: Clearing plot labels - x_label was:", input$x_label))
-        dbg(paste("DEBUG: Clearing plot labels - y_label was:", input$y_label))
-        dbg(paste("DEBUG: Clearing plot labels - moderator_label was:", input$moderator_label))
-        # Clear labels immediately
-        updateTextInput(session, "x_label", value = "")
-        updateTextInput(session, "y_label", value = "")
-        updateTextInput(session, "moderator_label", value = "")
-        updateTextInput(session, "moderator2_label", value = "")
-        # Reset previous variable values so labels will be auto-populated when new variables are selected
-        # CRITICAL: Set these to NULL so auto-label observer knows variables changed
-        rv$previous_predictor_var <- NULL
-        rv$previous_outcome_var <- NULL
-        rv$previous_moderator_var <- NULL
-        rv$previous_moderator2_var <- NULL
-        dbg("DEBUG: Plot labels cleared (will be auto-populated when variables are selected)")
-      } else {
-        dbg("DEBUG: Plot labels NOT cleared (settings are being loaded, will restore labels)")
-      }
+      dbg(paste("DEBUG: Clearing plot labels - x_label was:", input$x_label))
+      dbg(paste("DEBUG: Clearing plot labels - y_label was:", input$y_label))
+      dbg(paste("DEBUG: Clearing plot labels - moderator_label was:", input$moderator_label))
+      # Clear labels immediately
+      updateTextInput(session, "x_label", value = "")
+      updateTextInput(session, "y_label", value = "")
+      updateTextInput(session, "moderator_label", value = "")
+      updateTextInput(session, "moderator2_label", value = "")
+      # Reset previous variable values so labels will be auto-populated when new variables are selected
+      rv$previous_predictor_var <- NULL
+      rv$previous_outcome_var <- NULL
+      rv$previous_moderator_var <- NULL
+      rv$previous_moderator2_var <- NULL
+      dbg("DEBUG: Plot labels cleared (will be auto-populated when variables are selected)")
       
       dbg("DEBUG: All variable inputs cleared via updateSelectInput (all inputs exist in DOM)")
     }
