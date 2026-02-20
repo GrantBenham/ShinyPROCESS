@@ -369,7 +369,7 @@ compose_path_label <- function(edge_row, label_mode = "auto",
   est <- if(identical(use_mode, "std")) edge_row$estimate_std else edge_row$estimate_raw
   prefix <- if(identical(use_mode, "std")) "beta" else "b"
   
-  if(is.na(est)) return("NA")
+  if(is.na(est)) return("")
   
   label <- paste0(prefix, " = ", sprintf("%.3f", est))
   if(isTRUE(include_stars) && nzchar(edge_row$stars)) {
@@ -479,9 +479,12 @@ build_model_diagram_nodes <- function(settings, edges) {
 resolve_interaction_label <- function(var_name, alias_map) {
   key <- tolower(var_name)
   if(key %in% names(alias_map)) {
-    return(alias_map[[key]])
+    out <- alias_map[[key]]
+    out <- toupper(gsub("[^A-Za-z0-9_]", "", out))
+    out <- trimws(out)
+    if(nzchar(out)) return(out)
   }
-  var_name
+  toupper(trimws(var_name))
 }
 
 build_template_diagram <- function(parsed, settings, diagram_type = c("conceptual", "statistical"),
@@ -734,16 +737,9 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
 
   title_txt <- paste0("Model ", settings$model, " ", if(identical(diagram_type, "conceptual")) "Conceptual" else "Statistical", " Diagram")
   subtitle_txt <- if(identical(diagram_type, "conceptual")) {
-    "Structure only (no coefficients shown)"
+    NULL
   } else {
-    paste0(
-      "Coefficient mode: ",
-      switch(label_mode,
-             "raw" = "unstandardized",
-             "std" = "standardized",
-             "auto" = parsed$metadata$label_mode_used,
-             parsed$metadata$label_mode_used)
-    )
+    if(identical(label_mode, "std")) "Standardized coefficients" else "Unstandardized coefficients"
   }
   
   p <- ggplot2::ggplot() +
@@ -766,7 +762,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     ggplot2::geom_segment(
       data = mod_cue,
       ggplot2::aes(x = x, y = y, xend = xend, yend = yend),
-      linetype = "dashed",
+      linetype = "solid",
       linewidth = 0.5,
       color = "black",
       arrow = grid::arrow(length = grid::unit(0.12, "cm"))
@@ -792,8 +788,9 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     ggplot2::labs(title = title_txt, subtitle = subtitle_txt)
 
   if(!identical(diagram_type, "conceptual")) {
+    label_df <- edge_plot[nzchar(edge_plot$label), , drop = FALSE]
     p <- p + ggplot2::geom_label(
-      data = edge_plot,
+      data = label_df,
       ggplot2::aes(x = x_label, y = y_label, label = label),
       size = 3.3,
       label.size = 0.2,
@@ -811,7 +808,7 @@ conceptual_diagram_plot_obj <- reactive({
   settings <- analysis_results()$settings
   
   mode_input <- input$diagram_coef_mode
-  if(is.null(mode_input) || mode_input == "") mode_input <- "auto"
+  if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
   show_int <- FALSE
   include_ci_opt <- FALSE
   include_p_opt <- FALSE
@@ -835,7 +832,7 @@ statistical_diagram_plot_obj <- reactive({
   settings <- analysis_results()$settings
 
   mode_input <- input$diagram_coef_mode
-  if(is.null(mode_input) || mode_input == "") mode_input <- "auto"
+  if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
   show_int <- if(is.null(input$diagram_show_interactions)) TRUE else isTRUE(input$diagram_show_interactions)
   include_ci_opt <- if(is.null(input$diagram_include_ci)) FALSE else isTRUE(input$diagram_include_ci)
   include_p_opt <- if(is.null(input$diagram_include_p)) FALSE else isTRUE(input$diagram_include_p)
@@ -851,6 +848,26 @@ statistical_diagram_plot_obj <- reactive({
     include_p = include_p_opt,
     include_stars = include_stars_opt
   )
+})
+
+observe({
+  req(analysis_results())
+  parsed <- diagram_parse_results()
+  has_std <- isTRUE(analysis_results()$settings$stand) &&
+    any(isTRUE(parsed$paths$is_available_std))
+  choices <- if(has_std) {
+    c(
+      "Unstandardized coefficients" = "raw",
+      "Standardized coefficients" = "std"
+    )
+  } else {
+    c("Unstandardized coefficients" = "raw")
+  }
+  selected <- isolate(input$diagram_coef_mode)
+  if(is.null(selected) || !selected %in% unname(choices)) {
+    selected <- if(has_std) "std" else "raw"
+  }
+  updateSelectInput(session, "diagram_coef_mode", choices = choices, selected = selected)
 })
 
 output$conceptual_diagram_plot <- renderPlot({

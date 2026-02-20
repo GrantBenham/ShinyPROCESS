@@ -697,11 +697,9 @@ ui <- fluidPage(
                     "diagram_coef_mode",
                     "Coefficient Mode",
                     choices = c(
-                      "Auto (recommended)" = "auto",
-                      "Unstandardized" = "raw",
-                      "Standardized (when available)" = "std"
+                      "Unstandardized coefficients" = "raw"
                     ),
-                    selected = "auto"
+                    selected = "raw"
                   )
                 ),
                 column(
