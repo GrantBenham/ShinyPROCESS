@@ -991,10 +991,10 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     set_t(edge_plot$to_role == "m" & edge_plot$from_role == "m", 0.50)
 
     if(model_num == 1L) {
-      # Keep simple moderation labels closer to line midpoint.
+      # Model 1 experiment: align all Y-path labels to true center-to-center midpoints.
       set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.50)
-      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.36)
-      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.64)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.50)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.50)
     }
 
     if(model_num == 5L) {
@@ -1090,8 +1090,14 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
     }
   }
-  edge_plot$x_label <- edge_plot$x_from_draw + edge_plot$t_label * edge_plot$dx
-  edge_plot$y_label <- edge_plot$y_from_draw + edge_plot$t_label * edge_plot$dy
+  if(!identical(diagram_type, "conceptual") && model_num == 1L) {
+    # For Model 1 only, place labels by center-to-center geometry (not clipped box edges).
+    edge_plot$x_label <- edge_plot$x_from + edge_plot$t_label * (edge_plot$x_to - edge_plot$x_from)
+    edge_plot$y_label <- edge_plot$y_from + edge_plot$t_label * (edge_plot$y_to - edge_plot$y_from)
+  } else {
+    edge_plot$x_label <- edge_plot$x_from_draw + edge_plot$t_label * edge_plot$dx
+    edge_plot$y_label <- edge_plot$y_from_draw + edge_plot$t_label * edge_plot$dy
+  }
 
   # Conceptual moderation cue arrows (to path midpoint only; no coefficient label)
   mod_cue <- data.frame(x = numeric(0), y = numeric(0), xend = numeric(0), yend = numeric(0))
