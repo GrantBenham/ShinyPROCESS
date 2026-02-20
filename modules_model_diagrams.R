@@ -732,7 +732,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           add_node(mediators[[1]], 0.08, 0.52, "m")
         } else {
           # Model 6 (2 mediators): symmetric top-mediator layout (Hayes-style).
-          add_node(mediators[[1]], -0.08, 0.52, "m")
+          add_node(mediators[[1]], -0.14, 0.52, "m")
           add_node(mediators[[2]], 0.26, 0.52, "m")
         }
       } else if(model_num == 14L) {
@@ -806,8 +806,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       if(length(w_var) > 0) add_node(w_var, -0.92, -0.34, "mod")
       int_terms <- unique(int_edges$from)
       if(length(int_terms) > 0) {
-        int_x <- if(length(mediators) >= 2) -0.44 else -0.30
-        int_y_base <- if(length(mediators) >= 2) -0.74 else -0.92
+        int_x <- if(length(mediators) >= 2) -0.56 else -0.30
+        int_y_base <- if(length(mediators) >= 2) -0.66 else -0.92
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
@@ -827,7 +827,18 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         }
       }
       add_node(y_var, 0.80, 0.00, "y")
-    } else if(model_num %in% c(5L, 6L, 7L, 14L)) {
+    } else if(model_num == 6L) {
+      # Match statistical layout to conceptual serial/mediator-only structure.
+      add_node(x_var, -0.78, 0.00, "x")
+      add_node(y_var, 0.80, 0.00, "y")
+      n_m <- length(mediators)
+      if(n_m == 1) {
+        add_node(mediators[[1]], 0.04, 0.58, "m")
+      } else if(n_m >= 2) {
+        add_node(mediators[[1]], -0.12, 0.58, "m")
+        add_node(mediators[[2]], 0.24, 0.58, "m")
+      }
+    } else if(model_num %in% c(5L, 7L, 14L)) {
       add_node(x_var, -0.78, 0.00, "x")
       add_node(y_var, 0.80, 0.00, "y")
       n_m <- length(mediators)
@@ -844,7 +855,12 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
-          add_node(int_lbl, -0.45, -0.84 - 0.20 * (i - 1), "int")
+          if(model_num == 14L && length(int_terms) >= 2) {
+            # Move interaction terms rightward and stagger horizontally for clarity.
+            add_node(int_lbl, 0.12 + 0.24 * (i - 1), -0.84 - 0.08 * (i - 1), "int")
+          } else {
+            add_node(int_lbl, -0.45, -0.84 - 0.20 * (i - 1), "int")
+          }
         }
       }
     }
@@ -939,189 +955,143 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   edge_plot$dx <- edge_plot$x_to_draw - edge_plot$x_from_draw
   edge_plot$dy <- edge_plot$y_to_draw - edge_plot$y_from_draw
   edge_plot$seg_len <- pmax(sqrt(edge_plot$dx^2 + edge_plot$dy^2), 1e-6)
-  edge_plot$nx <- -edge_plot$dy / edge_plot$seg_len
-  edge_plot$ny <- edge_plot$dx / edge_plot$seg_len
-  # Label-spacing buffer rule:
-  # For edges converging on the same target node, place labels at staggered
-  # fractions along each line so labels stay on-line but avoid overlap.
-  edge_plot$label_rank <- ave(edge_plot$to, edge_plot$to, FUN = seq_along)
-  edge_plot$label_n <- ave(edge_plot$to, edge_plot$to, FUN = length)
-  edge_plot$label_rank <- suppressWarnings(as.numeric(edge_plot$label_rank))
-  edge_plot$label_n <- suppressWarnings(as.numeric(edge_plot$label_n))
-  edge_plot$label_rank[is.na(edge_plot$label_rank)] <- 1
-  edge_plot$label_n[is.na(edge_plot$label_n)] <- 1
-  edge_plot$t_label <- ifelse(edge_plot$label_n <= 1, 0.52, 0.28 + (edge_plot$label_rank - 1) * (0.50 / pmax(edge_plot$label_n - 1, 1)))
+  # Statistical label placement rule:
+  # keep coefficient-label centers on their own line by moving only along path length.
+  edge_plot$t_label <- 0.50
   if(!identical(diagram_type, "conceptual")) {
-    # Model-specific label lanes to reduce collisions for dense moderated-mediation paths.
+    set_t <- function(idx, value) {
+      edge_plot$t_label[idx] <<- value
+    }
+    spread_t <- function(idx, lo, hi, order_mode = c("from_y", "to_y", "from_x")) {
+      order_mode <- match.arg(order_mode)
+      ids <- which(idx)
+      if(length(ids) == 0) return()
+      if(length(ids) == 1) {
+        edge_plot$t_label[ids] <<- (lo + hi) / 2
+        return()
+      }
+      if(identical(order_mode, "to_y")) {
+        ord <- ids[order(-edge_plot$y_to[ids], edge_plot$x_to[ids], edge_plot$to[ids], edge_plot$from[ids])]
+      } else if(identical(order_mode, "from_x")) {
+        ord <- ids[order(edge_plot$x_from[ids], -edge_plot$y_from[ids], edge_plot$from[ids], edge_plot$to[ids])]
+      } else {
+        ord <- ids[order(-edge_plot$y_from[ids], edge_plot$x_from[ids], edge_plot$from[ids], edge_plot$to[ids])]
+      }
+      edge_plot$t_label[ord] <<- seq(lo, hi, length.out = length(ord))
+    }
+
+    # Baseline lanes by role with midpoint default preserved whenever feasible.
+    set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.50)
+    spread_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.28, 0.34, "from_y")
+    spread_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.62, 0.80, "from_y")
+    spread_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.84, 0.94, "from_x")
+    spread_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.36, 0.64, "to_y")
+    spread_t(edge_plot$to_role == "m" & edge_plot$from_role == "mod", 0.24, 0.44, "to_y")
+    spread_t(edge_plot$to_role == "m" & edge_plot$from_role == "int", 0.66, 0.86, "to_y")
+    set_t(edge_plot$to_role == "m" & edge_plot$from_role == "m", 0.50)
+
     if(model_num == 1L) {
-      idx <- edge_plot$from_role == "x" & edge_plot$to_role == "y"
-      edge_plot$t_label[idx] <- 0.52
-      idx <- edge_plot$from_role == "mod" & edge_plot$to_role == "y"
-      edge_plot$t_label[idx] <- 0.32
-      idx <- edge_plot$from_role == "int" & edge_plot$to_role == "y"
-      edge_plot$t_label[idx] <- 0.72
+      # Keep simple moderation labels closer to line midpoint.
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.50)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.36)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.64)
     }
-    if(model_num == 4L) {
-      # Align X->M and M->Y coefficients to similar vertical placement; center X->Y.
-      idx <- edge_plot$from_role == "x" & edge_plot$to_role == "m"
-      edge_plot$t_label[idx] <- 0.52
-      idx <- edge_plot$from_role == "m" & edge_plot$to_role == "y"
-      edge_plot$t_label[idx] <- 0.52
-      idx <- edge_plot$from_role == "x" & edge_plot$to_role == "y"
-      edge_plot$t_label[idx] <- 0.50
-    }
+
     if(model_num == 5L) {
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "x"
-      edge_plot$t_label[idx] <- 0.52
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "mod"
-      edge_plot$t_label[idx] <- 0.22
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "m"
-      edge_plot$t_label[idx] <- 0.72
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "int"
-      edge_plot$t_label[idx] <- 0.86
-      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "x"
-      edge_plot$t_label[idx] <- 0.44
-    }
-    if(model_num == 14L) {
-      # Model 14 statistical: align with Model 5 lane logic as baseline.
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "x"
-      edge_plot$t_label[idx] <- 0.50
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "mod"
-      edge_plot$t_label[idx] <- 0.26
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "m"
-      edge_plot$t_label[idx] <- 0.70
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "int"
-      edge_plot$t_label[idx] <- 0.86
-      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "x"
-      edge_plot$t_label[idx] <- 0.46
-      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "mod"
-      edge_plot$t_label[idx] <- 0.30
-      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "int"
-      edge_plot$t_label[idx] <- 0.76
       if(length(mediators) >= 2) {
         m1_name <- mediators[[1]]
         m2_name <- mediators[[2]]
-        idx <- edge_plot$to == y_var & edge_plot$from == m1_name
-        edge_plot$t_label[idx] <- 0.64
-        idx <- edge_plot$to == y_var & edge_plot$from == m2_name
-        edge_plot$t_label[idx] <- 0.82
+        set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.62)
+        set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.78)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.72)
       }
     }
-    if(model_num == 7L) {
-      # Move X->M1 label farther toward M1 and separate first-stage moderation labels.
-      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "x"
-      edge_plot$t_label[idx] <- 0.66
-      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "mod"
-      edge_plot$t_label[idx] <- 0.38
-      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "int"
-      edge_plot$t_label[idx] <- 0.78
+
+    if(model_num == 4L) {
+      # Keep simple mediation coefficients centered by default.
+      set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.50)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.50)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.50)
     }
-    if(model_num == 8L) {
-      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "x"
-      edge_plot$t_label[idx] <- 0.34
-      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "mod"
-      edge_plot$t_label[idx] <- if(length(mediators) >= 2) 0.24 else 0.20
-      idx <- edge_plot$to_role == "m" & edge_plot$from_role == "int"
-      edge_plot$t_label[idx] <- if(length(mediators) >= 2) 0.48 else 0.78
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "x"
-      edge_plot$t_label[idx] <- 0.52
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "mod"
-      edge_plot$t_label[idx] <- if(length(mediators) >= 2) 0.22 else 0.30
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "m"
-      edge_plot$t_label[idx] <- if(length(mediators) >= 2) 0.70 else 0.68
-      idx <- edge_plot$to_role == "y" & edge_plot$from_role == "int"
-      edge_plot$t_label[idx] <- if(length(mediators) >= 2) 0.90 else 0.76
+
+    if(model_num == 6L && length(mediators) >= 2) {
+      m1_name <- mediators[[1]]
+      m2_name <- mediators[[2]]
+      set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.42)
+      set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.60)
+      set_t(edge_plot$from == m1_name & edge_plot$to == m2_name, 0.50)
+      set_t(edge_plot$from == m1_name & edge_plot$to == y_var, 0.62)
+      set_t(edge_plot$from == m2_name & edge_plot$to == y_var, 0.74)
+    }
+
+    if(model_num == 7L) {
+      # First-stage moderation lanes for two-mediator layouts.
+      spread_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.42, 0.70, "to_y")
+      spread_t(edge_plot$to_role == "m" & edge_plot$from_role == "mod", 0.26, 0.50, "to_y")
+      spread_t(edge_plot$to_role == "m" & edge_plot$from_role == "int", 0.74, 0.88, "to_y")
       if(length(mediators) >= 2) {
         m1_name <- mediators[[1]]
         m2_name <- mediators[[2]]
-        idx <- edge_plot$to == y_var & edge_plot$from == m1_name
-        edge_plot$t_label[idx] <- 0.66
-        idx <- edge_plot$to == y_var & edge_plot$from == m2_name
-        edge_plot$t_label[idx] <- 0.84
-        idx <- edge_plot$to == m2_name & edge_plot$from_role == "x"
-        edge_plot$t_label[idx] <- 0.80
-        idx <- edge_plot$to == y_var & edge_plot$from_role == "int"
-        edge_plot$t_label[idx] <- 0.94
+        set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.64)
+        set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.80)
+      }
+    }
+
+    if(model_num == 8L) {
+      if(length(mediators) == 1) {
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.40)
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "mod", 0.22)
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "int", 0.78)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.30)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.68)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.86)
+      } else if(length(mediators) >= 2) {
+        m1_name <- mediators[[1]]
+        m2_name <- mediators[[2]]
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.36)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.74)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.24)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.54)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.56)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.82)
+        set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.64)
+        set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.82)
+        set_t(edge_plot$to == y_var & edge_plot$from_role == "int", 0.93)
+      }
+    }
+
+    if(model_num == 14L) {
+      if(length(mediators) == 1) {
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.44)
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "mod", 0.30)
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "int", 0.78)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.30)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.70)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.88)
+      } else if(length(mediators) >= 2) {
+        m1_name <- mediators[[1]]
+        m2_name <- mediators[[2]]
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.42)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.70)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.28)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.58)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.74)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.88)
+        set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.64)
+        set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.80)
+        idx_int_y <- edge_plot$to == y_var & edge_plot$from_role == "int"
+        if(sum(idx_int_y) > 1) {
+          ids <- which(idx_int_y)
+          ord <- ids[order(edge_plot$x_from[ids], edge_plot$from[ids])]
+          edge_plot$t_label[ord] <- seq(0.86, 0.95, length.out = length(ord))
+        } else {
+          set_t(idx_int_y, 0.90)
+        }
       }
     }
   }
   edge_plot$x_label <- edge_plot$x_from_draw + edge_plot$t_label * edge_plot$dx
   edge_plot$y_label <- edge_plot$y_from_draw + edge_plot$t_label * edge_plot$dy
-  # Global line-aware lane nudge:
-  # spread labels for paths converging on the same target along the local normal vector.
-  edge_plot$path_label_nudge <- ifelse(
-    edge_plot$label_n <= 1,
-    0,
-    (edge_plot$label_rank - (edge_plot$label_n + 1) / 2) * 0.040
-  )
-  edge_plot$x_label_nudge <- 0
-  edge_plot$y_label_nudge <- 0
-  if(!identical(diagram_type, "conceptual") && model_num == 5L) {
-    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "mod"
-    edge_plot$y_label_nudge[idx] <- -0.048
-    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "int"
-    edge_plot$y_label_nudge[idx] <- -0.090
-    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "m"
-    edge_plot$y_label_nudge[idx] <- 0.038
-  }
-  if(!identical(diagram_type, "conceptual") && model_num == 7L) {
-    idx <- edge_plot$to_role == "m" & edge_plot$from_role == "x"
-    edge_plot$y_label_nudge[idx] <- 0.030
-    idx <- edge_plot$to_role == "m" & edge_plot$from_role == "mod"
-    edge_plot$y_label_nudge[idx] <- -0.060
-    idx <- edge_plot$to_role == "m" & edge_plot$from_role == "int"
-    edge_plot$y_label_nudge[idx] <- 0.080
-  }
-  if(!identical(diagram_type, "conceptual") && model_num == 8L) {
-    # Additional lane offsets for dense Model 8 paths.
-    idx <- edge_plot$to_role == "m" & edge_plot$from_role == "x"
-    edge_plot$y_label_nudge[idx] <- 0.030
-    idx <- edge_plot$to_role == "m" & edge_plot$from_role == "mod"
-    edge_plot$y_label_nudge[idx] <- if(length(mediators) >= 2) -0.060 else -0.038
-    idx <- edge_plot$to_role == "m" & edge_plot$from_role == "int"
-    edge_plot$y_label_nudge[idx] <- if(length(mediators) >= 2) 0.080 else 0.140
-    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "x"
-    edge_plot$y_label_nudge[idx] <- 0.018
-    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "mod"
-    edge_plot$y_label_nudge[idx] <- if(length(mediators) >= 2) -0.090 else -0.026
-    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "m"
-    edge_plot$y_label_nudge[idx] <- 0.030
-    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "int"
-    edge_plot$y_label_nudge[idx] <- if(length(mediators) >= 2) -0.120 else -0.060
-    if(length(mediators) >= 2) {
-      m1_name <- mediators[[1]]
-      m2_name <- mediators[[2]]
-      idx <- edge_plot$to == y_var & edge_plot$from == m1_name
-      edge_plot$y_label_nudge[idx] <- 0.060
-      idx <- edge_plot$to == y_var & edge_plot$from == m2_name
-      edge_plot$y_label_nudge[idx] <- -0.075
-      idx <- edge_plot$to == m2_name & edge_plot$from_role == "x"
-      edge_plot$y_label_nudge[idx] <- -0.065
-      idx <- edge_plot$to == m2_name & edge_plot$from_role == "mod"
-      edge_plot$y_label_nudge[idx] <- 0.040
-      idx <- edge_plot$to == y_var & edge_plot$from_role == "int"
-      edge_plot$y_label_nudge[idx] <- -0.135
-      # Additional line-aware split for crowded M2/Y destination labels.
-      idx <- edge_plot$to == y_var & edge_plot$from == m1_name
-      edge_plot$path_label_nudge[idx] <- edge_plot$path_label_nudge[idx] + 0.040
-      idx <- edge_plot$to == y_var & edge_plot$from == m2_name
-      edge_plot$path_label_nudge[idx] <- edge_plot$path_label_nudge[idx] - 0.040
-      idx <- edge_plot$to == y_var & edge_plot$from_role == "int"
-      edge_plot$path_label_nudge[idx] <- edge_plot$path_label_nudge[idx] - 0.060
-    }
-  }
-  if(!identical(diagram_type, "conceptual") && model_num == 14L) {
-    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "mod"
-    edge_plot$y_label_nudge[idx] <- -0.040
-    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "int"
-    edge_plot$y_label_nudge[idx] <- -0.085
-    idx <- edge_plot$to_role == "y" & edge_plot$from_role == "m"
-    edge_plot$y_label_nudge[idx] <- 0.035
-  }
-  edge_plot$x_label <- edge_plot$x_label + edge_plot$x_label_nudge
-  edge_plot$y_label <- edge_plot$y_label + edge_plot$y_label_nudge
-  edge_plot$x_label <- edge_plot$x_label + edge_plot$path_label_nudge * edge_plot$nx
-  edge_plot$y_label <- edge_plot$y_label + edge_plot$path_label_nudge * edge_plot$ny
 
   # Conceptual moderation cue arrows (to path midpoint only; no coefficient label)
   mod_cue <- data.frame(x = numeric(0), y = numeric(0), xend = numeric(0), yend = numeric(0))
