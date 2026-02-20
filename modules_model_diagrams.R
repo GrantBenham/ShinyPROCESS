@@ -1016,6 +1016,24 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     ye <- y1 - dy * t1
     c(xs, ys, xe, ye)
   }
+
+  inset_segment <- function(x0, y0, x1, y1, pad = 0) {
+    if(is.na(pad) || pad <= 0) return(c(x0, y0, x1, y1))
+    dx <- x1 - x0
+    dy <- y1 - y0
+    seg_len <- sqrt(dx * dx + dy * dy)
+    if(seg_len <= 1e-9) return(c(x0, y0, x1, y1))
+    # Keep a valid segment even for short paths.
+    step <- min(pad, seg_len * 0.45)
+    ux <- dx / seg_len
+    uy <- dy / seg_len
+    c(
+      x0 + ux * step,
+      y0 + uy * step,
+      x1 - ux * step,
+      y1 - uy * step
+    )
+  }
   
   if(identical(diagram_type, "conceptual")) {
     edge_plot$label <- ""
@@ -1045,6 +1063,14 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     clip_segment_to_box,
     edge_plot$x_from, edge_plot$y_from, edge_plot$x_to, edge_plot$y_to
   ))
+  # Model 6 spacing pass: enforce a consistent visible white-space gap at both node ends.
+  edge_gap <- if(model_num == 6L) 0.012 else 0
+  if(edge_gap > 0 && nrow(clipped) > 0) {
+    clipped <- t(mapply(
+      function(xs, ys, xe, ye) inset_segment(xs, ys, xe, ye, pad = edge_gap),
+      clipped[, 1], clipped[, 2], clipped[, 3], clipped[, 4]
+    ))
+  }
   edge_plot$x_from_draw <- clipped[, 1]
   edge_plot$y_from_draw <- clipped[, 2]
   edge_plot$x_to_draw <- clipped[, 3]
