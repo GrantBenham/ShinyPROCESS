@@ -418,6 +418,18 @@ sanitize_label_text <- function(x, fallback) {
   if(!nzchar(val)) fallback else val
 }
 
+map_interaction_label <- function(raw_label, label_map) {
+  lbl <- trimws(as.character(raw_label))
+  if(!nzchar(lbl) || is.null(label_map) || length(label_map) == 0) return(lbl)
+  parts <- unlist(strsplit(lbl, "\\s+[xX]\\s+"))
+  if(length(parts) <= 1) return(lbl)
+  mapped <- vapply(parts, function(p) {
+    key <- names(label_map)[toupper(names(label_map)) == toupper(trimws(p))]
+    if(length(key) > 0) sanitize_label_text(label_map[[key[[1]]]], key[[1]]) else trimws(p)
+  }, character(1))
+  paste(mapped, collapse = " x ")
+}
+
 compose_path_label <- function(edge_row, label_mode = "auto",
                                include_ci = FALSE, include_p = FALSE, include_stars = TRUE) {
   use_mode <- label_mode
@@ -691,7 +703,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         # M1 above X->Y; M2+ below X->Y.
         add_node(mediators[[1]], 0.10, 0.52, "m")
         if(n_m >= 2) {
-          lower_y <- if(n_m == 2) -0.38 else seq(-0.38, -0.70, length.out = n_m - 1)
+          lower_y <- if(n_m == 2) -0.52 else seq(-0.52, -0.74, length.out = n_m - 1)
           for(i in 2:n_m) {
             add_node(mediators[[i]], 0.10, lower_y[[i - 1]], "m")
           }
@@ -708,7 +720,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           add_node(mediators[[1]], 0.00, 0.45, "m")
         } else if(n_m == 2) {
           add_node(mediators[[1]], 0.00, 0.52, "m")
-          add_node(mediators[[2]], 0.00, -0.30, "m")
+          add_node(mediators[[2]], 0.00, -0.52, "m")
         } else if(n_m > 2) {
           med_y <- seq(0.55, -0.30, length.out = n_m)
           for(i in seq_along(mediators)) add_node(mediators[[i]], 0.00, med_y[[i]], "m")
@@ -753,7 +765,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         add_node(mediators[[1]], 0.00, 0.50, "m")
       } else if(n_m == 2) {
         add_node(mediators[[1]], 0.00, 0.52, "m")
-        add_node(mediators[[2]], 0.00, -0.22, "m")
+        add_node(mediators[[2]], 0.00, -0.52, "m")
       } else if(n_m > 2) {
         med_y <- seq(0.58, -0.35, length.out = n_m)
         for(i in seq_along(mediators)) add_node(mediators[[i]], 0.00, med_y[[i]], "m")
@@ -769,7 +781,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
-          add_node(int_lbl, -0.42, -0.82 - 0.20 * (i - 1), "int")
+          add_node(int_lbl, -0.30, -0.92 - 0.20 * (i - 1), "int")
         }
       }
       n_m <- length(mediators)
@@ -779,7 +791,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         # Model 8 statistical rule:
         # M1 above X->Y; M2+ below X->Y.
         add_node(mediators[[1]], 0.06, 0.62, "m")
-        lower_y <- if(n_m == 2) -0.36 else seq(-0.36, -0.76, length.out = n_m - 1)
+        lower_y <- if(n_m == 2) -0.62 else seq(-0.62, -0.82, length.out = n_m - 1)
         for(i in 2:n_m) {
           add_node(mediators[[i]], 0.10, lower_y[[i - 1]], "m")
         }
@@ -824,7 +836,13 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   nodes <- unique(nodes)
   if(!is.null(label_map) && length(label_map) > 0) {
     node_labels <- vapply(nodes$name, function(nm) {
-      if(nm %in% names(label_map)) sanitize_label_text(label_map[[nm]], nm) else nm
+      if(nm %in% names(label_map)) {
+        sanitize_label_text(label_map[[nm]], nm)
+      } else if(grepl("\\s+[xX]\\s+", nm)) {
+        map_interaction_label(nm, label_map)
+      } else {
+        nm
+      }
     }, character(1))
     nodes$label <- node_labels
   } else {

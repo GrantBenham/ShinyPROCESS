@@ -740,14 +740,16 @@ ui <- fluidPage(
                     class = "btn-primary",
                     style = "margin-top: 24px;"
                   )
-                ),
+                )
+              ),
+              fluidRow(
                 column(
                   3,
                   downloadButton(
                     "download_conceptual_diagram",
                     "Download Conceptual (JPG)",
                     class = "btn-success",
-                    style = "background-color: #90EE90; border-color: #90EE90; color: #000; margin-top: 24px;"
+                    style = "background-color: #90EE90; border-color: #90EE90; color: #000;"
                   )
                 ),
                 column(
@@ -756,7 +758,7 @@ ui <- fluidPage(
                     "download_statistical_diagram",
                     "Download Statistical (JPG)",
                     class = "btn-success",
-                    style = "background-color: #90EE90; border-color: #90EE90; color: #000; margin-top: 24px;"
+                    style = "background-color: #90EE90; border-color: #90EE90; color: #000;"
                   )
                 )
               )
