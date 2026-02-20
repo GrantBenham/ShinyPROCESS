@@ -996,21 +996,60 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   names(role_map2) <- c("to", "to_role")
   edge_plot <- merge(edge_plot, role_map2, by = "to", all.x = TRUE)
 
-  clip_segment_to_box <- function(x0, y0, x1, y1, hw = 0.085, hh = 0.055) {
+  estimate_node_half_box <- function(label_txt) {
+    txt <- as.character(label_txt)
+    if(is.na(txt) || !nzchar(txt)) {
+      return(c(hw = 0.085, hh = 0.055))
+    }
+    lines <- unlist(strsplit(txt, "\n", fixed = TRUE))
+    if(length(lines) == 0) lines <- ""
+    max_chars <- max(nchar(lines, type = "width"), na.rm = TRUE)
+    n_lines <- length(lines)
+    # Calibrated for ggplot::geom_label defaults used in this module.
+    hw <- 0.055 + 0.010 * max_chars
+    hh <- 0.040 + 0.020 * n_lines
+    c(hw = hw, hh = hh)
+  }
+
+  node_dims <- data.frame(
+    name = nodes$name,
+    hw = rep(0.085, nrow(nodes)),
+    hh = rep(0.055, nrow(nodes)),
+    stringsAsFactors = FALSE
+  )
+  if(model_num == 6L && nrow(nodes) > 0) {
+    est <- t(vapply(nodes$label, estimate_node_half_box, numeric(2)))
+    node_dims$hw <- est[, "hw"]
+    node_dims$hh <- est[, "hh"]
+  }
+  from_dims <- node_dims
+  names(from_dims) <- c("from", "hw_from", "hh_from")
+  to_dims <- node_dims
+  names(to_dims) <- c("to", "hw_to", "hh_to")
+  edge_plot <- merge(edge_plot, from_dims, by = "from", all.x = TRUE)
+  edge_plot <- merge(edge_plot, to_dims, by = "to", all.x = TRUE)
+  edge_plot$hw_from[is.na(edge_plot$hw_from)] <- 0.085
+  edge_plot$hh_from[is.na(edge_plot$hh_from)] <- 0.055
+  edge_plot$hw_to[is.na(edge_plot$hw_to)] <- 0.085
+  edge_plot$hh_to[is.na(edge_plot$hh_to)] <- 0.055
+
+  clip_segment_to_box <- function(x0, y0, x1, y1,
+                                  hw0 = 0.085, hh0 = 0.055,
+                                  hw1 = 0.085, hh1 = 0.055) {
     dx <- x1 - x0
     dy <- y1 - y0
     seg_len <- sqrt(dx * dx + dy * dy)
     if(seg_len <= 1e-9) {
       return(c(x0, y0, x1, y1))
     }
-    t0x <- if(abs(dx) < 1e-9) Inf else hw / abs(dx)
-    t0y <- if(abs(dy) < 1e-9) Inf else hh / abs(dy)
+    t0x <- if(abs(dx) < 1e-9) Inf else hw0 / abs(dx)
+    t0y <- if(abs(dy) < 1e-9) Inf else hh0 / abs(dy)
     t0 <- min(t0x, t0y)
     xs <- x0 + dx * t0
     ys <- y0 + dy * t0
 
-    t1x <- if(abs(dx) < 1e-9) Inf else hw / abs(dx)
-    t1y <- if(abs(dy) < 1e-9) Inf else hh / abs(dy)
+    t1x <- if(abs(dx) < 1e-9) Inf else hw1 / abs(dx)
+    t1y <- if(abs(dy) < 1e-9) Inf else hh1 / abs(dy)
     t1 <- min(t1x, t1y)
     xe <- x1 - dx * t1
     ye <- y1 - dy * t1
@@ -1061,7 +1100,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   
   clipped <- t(mapply(
     clip_segment_to_box,
-    edge_plot$x_from, edge_plot$y_from, edge_plot$x_to, edge_plot$y_to
+    edge_plot$x_from, edge_plot$y_from, edge_plot$x_to, edge_plot$y_to,
+    edge_plot$hw_from, edge_plot$hh_from, edge_plot$hw_to, edge_plot$hh_to
   ))
   # Model 6 spacing pass: enforce a consistent visible white-space gap at both node ends.
   edge_gap <- if(model_num == 6L) 0.012 else 0
