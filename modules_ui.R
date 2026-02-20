@@ -692,7 +692,7 @@ ui <- fluidPage(
               p("Black-and-white conceptual and statistical diagrams generated from current analysis output."),
               fluidRow(
                 column(
-                  3,
+                  4,
                   selectInput(
                     "diagram_coef_mode",
                     "Coefficient Mode",
@@ -703,25 +703,19 @@ ui <- fluidPage(
                   )
                 ),
                 column(
-                  3,
-                  checkboxInput("diagram_show_interactions", "Show interaction terms", value = TRUE)
-                ),
-                column(
-                  3,
-                  checkboxInput("diagram_include_stars", "Include significance stars", value = TRUE)
-                ),
-                column(
-                  3,
-                  checkboxInput("diagram_include_ci", "Include confidence intervals", value = FALSE)
+                  4,
+                  tags$div(
+                    style = "padding-top: 4px;",
+                    checkboxInput("diagram_show_interactions", "Show interaction terms", value = TRUE),
+                    checkboxInput("diagram_include_stars", "Include significance stars", value = TRUE),
+                    checkboxInput("diagram_include_ci", "Include confidence intervals", value = FALSE),
+                    checkboxInput("diagram_include_p", "Include p-values", value = FALSE)
+                  )
                 )
               ),
               fluidRow(
                 column(
-                  3,
-                  checkboxInput("diagram_include_p", "Include p-values", value = FALSE)
-                ),
-                column(
-                  3,
+                  4,
                   downloadButton(
                     "download_conceptual_diagram",
                     "Download Conceptual (JPG)",
@@ -730,7 +724,7 @@ ui <- fluidPage(
                   )
                 ),
                 column(
-                  3,
+                  4,
                   downloadButton(
                     "download_statistical_diagram",
                     "Download Statistical (JPG)",
@@ -742,7 +736,7 @@ ui <- fluidPage(
             ),
             uiOutput("diagram_label_editor"),
             tags$div(
-              title = "Use this after changing any diagram label fields, coefficient display options, or interaction display settings.",
+              title = "Use this after renaming variables or changing diagram display checkboxes so interaction labels and path annotations refresh from current settings.",
               actionButton(
                 "diagram_regenerate",
                 "Regenerate Diagrams",

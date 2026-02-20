@@ -552,41 +552,44 @@ build_model_diagram_nodes <- function(settings, edges) {
 }
 
 resolve_interaction_label <- function(var_name, alias_map) {
-  key <- tolower(var_name)
+  key <- tolower(trimws(var_name))
   if(key %in% names(alias_map)) {
-    out <- alias_map[[key]]
-    out <- toupper(gsub("[^A-Za-z0-9_]", "", out))
-    out <- trimws(out)
+    out <- trimws(as.character(alias_map[[key]]))
     if(nzchar(out)) return(out)
   }
-  toupper(trimws(var_name))
+  trimws(as.character(var_name))
 }
 
 format_interaction_label <- function(raw_label, settings) {
   lbl <- trimws(as.character(raw_label))
-  if(grepl("\\sx\\s", lbl, ignore.case = TRUE)) {
-    return(gsub("\\s*[xX]\\s*", " x ", toupper(lbl)))
+  if(!nzchar(lbl)) return(lbl)
+  lbl_upper <- toupper(lbl)
+  parts <- unlist(strsplit(lbl_upper, "\\s*[xX*]\\s*"))
+  parts <- trimws(parts)
+  parts <- parts[nzchar(parts)]
+  if(length(parts) >= 2) {
+    return(paste(unique(parts), collapse = " x "))
   }
-  # Fallback for concatenated PROCESS names (e.g., SPSACEQ)
-  x_var <- toupper(trimws(if(!is.null(settings$predictor_var)) settings$predictor_var else ""))
-  w_var <- toupper(trimws(if(!is.null(settings$moderator_var)) settings$moderator_var else ""))
-  z_var <- toupper(trimws(if(!is.null(settings$moderator2_var)) settings$moderator2_var else ""))
-  if(nzchar(x_var) && nzchar(w_var) && grepl(x_var, toupper(lbl), fixed = TRUE) && grepl(w_var, toupper(lbl), fixed = TRUE)) {
-    if(nzchar(z_var) && grepl(z_var, toupper(lbl), fixed = TRUE)) {
-      return(paste(x_var, w_var, z_var, sep = " x "))
-    }
-    return(paste(x_var, w_var, sep = " x "))
+  # Fallback for concatenated PROCESS names where separators are missing.
+  known_vars <- toupper(trimws(c(
+    if(!is.null(settings$predictor_var)) settings$predictor_var else character(0),
+    if(!is.null(settings$moderator_var)) settings$moderator_var else character(0),
+    if(!is.null(settings$moderator2_var)) settings$moderator2_var else character(0),
+    if(!is.null(settings$mediator_vars)) settings$mediator_vars else character(0)
+  )))
+  known_vars <- unique(known_vars[nzchar(known_vars)])
+  hits <- known_vars[vapply(known_vars, function(v) grepl(v, lbl_upper, fixed = TRUE), logical(1))]
+  if(length(hits) >= 2) {
+    return(paste(hits, collapse = " x "))
   }
-  toupper(lbl)
+  lbl_upper
 }
 
 build_template_diagram <- function(parsed, settings, diagram_type = c("conceptual", "statistical"),
                                     label_mode = "auto", show_interactions = TRUE,
                                     include_ci = FALSE, include_p = FALSE, include_stars = TRUE,
-                                    display_mode = c("full", "simple"),
                                     label_map = NULL) {
   diagram_type <- match.arg(diagram_type)
-  display_mode <- match.arg(display_mode)
   edges <- parsed$paths
   model_num <- suppressWarnings(as.integer(settings$model))
   alias_map <- parsed$metadata$product_aliases
@@ -665,12 +668,6 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         int_edges <- unique(int_edges[, c("from", "to", "path_kind"), drop = FALSE])
       }
     }
-    if(identical(display_mode, "simple")) {
-      # Simplified publication mode: remove moderator main-effect paths and
-      # keep direct, mediation, and interaction effects.
-      edges <- edges[edges$path_kind != "moderator", , drop = FALSE]
-      int_edges <- edges[edges$path_kind == "interaction" | grepl("^.*\\sx\\s.*$", edges$from, ignore.case = TRUE), , drop = FALSE]
-    }
   }
 
   if(nrow(edges) == 0) {
@@ -687,16 +684,18 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   if(identical(diagram_type, "conceptual")) {
     add_node(x_var, -0.75, 0.00, "x")
     add_node(y_var, 0.75, 0.00, "y")
-    if(model_num %in% c(1L, 2L, 3L)) {
-      if(length(w_var) > 0) add_node(w_var, -0.10, 0.45, "mod")
-      if(length(z_var) > 0) add_node(z_var, -0.45, 0.45, "mod")
-      if(model_num == 1L && length(w_var) > 0) {
-        # Keep Model 1 moderation cue vertical to X->Y midpoint.
-        nodes$x[nodes$name == w_var] <- 0.00
-        nodes$y[nodes$name == w_var] <- 0.45
-      }
+    if(model_num == 1L) {
+      if(length(w_var) > 0) add_node(w_var, 0.00, 0.45, "mod")
+    } else if(model_num == 2L) {
+      # Model 2 conceptual: W and Z align over 1/3 and 2/3 of the X->Y path.
+      if(length(w_var) > 0) add_node(w_var, -0.25, 0.45, "mod")
+      if(length(z_var) > 0) add_node(z_var, 0.25, 0.45, "mod")
+    } else if(model_num == 3L) {
+      # Model 3 conceptual: W centered above X->Y; Z feeds horizontally into W's vertical cue.
+      if(length(w_var) > 0) add_node(w_var, 0.00, 0.45, "mod")
+      if(length(z_var) > 0) add_node(z_var, -0.45, 0.24, "mod")
     }
-    if(model_num %in% c(4L, 5L, 6L, 7L, 8L)) {
+    if(model_num %in% c(4L, 5L, 6L, 7L, 8L, 14L)) {
       n_m <- length(mediators)
       if(model_num == 8L && n_m > 0) {
         # Cleaner layout rule for Model 8:
@@ -715,6 +714,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           add_node(mediators[[1]], -0.08, 0.52, "m")
           add_node(mediators[[2]], 0.28, 0.16, "m")
         }
+      } else if(model_num == 14L) {
+        if(n_m > 0) add_node(mediators[[1]], 0.00, 0.50, "m")
       } else {
         if(n_m == 1) {
           add_node(mediators[[1]], 0.00, 0.45, "m")
@@ -727,6 +728,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         }
       }
       if(length(w_var) > 0 && model_num %in% c(5L, 7L, 8L)) add_node(w_var, -0.45, 0.55, "mod")
+      if(length(w_var) > 0 && model_num == 14L) add_node(w_var, 0.45, 0.52, "mod")
       if(length(z_var) > 0) add_node(z_var, -0.55, 0.22, "mod")
     }
   } else {
@@ -778,10 +780,12 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       if(length(w_var) > 0) add_node(w_var, -0.92, -0.34, "mod")
       int_terms <- unique(int_edges$from)
       if(length(int_terms) > 0) {
+        int_x <- if(length(mediators) >= 2) -0.44 else -0.30
+        int_y_base <- if(length(mediators) >= 2) -0.74 else -0.92
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
-          add_node(int_lbl, -0.30, -0.92 - 0.20 * (i - 1), "int")
+          add_node(int_lbl, int_x, int_y_base - 0.18 * (i - 1), "int")
         }
       }
       n_m <- length(mediators)
@@ -942,21 +946,35 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       idx <- edge_plot$from_role == "int" & edge_plot$to_role == "y"
       edge_plot$t_label[idx] <- 0.72
     }
+    if(model_num == 4L) {
+      # Align X->M and M->Y coefficients to similar vertical placement; center X->Y.
+      idx <- edge_plot$from_role == "x" & edge_plot$to_role == "m"
+      edge_plot$t_label[idx] <- 0.52
+      idx <- edge_plot$from_role == "m" & edge_plot$to_role == "y"
+      edge_plot$t_label[idx] <- 0.52
+      idx <- edge_plot$from_role == "x" & edge_plot$to_role == "y"
+      edge_plot$t_label[idx] <- 0.50
+    }
     if(model_num == 8L) {
       idx <- edge_plot$to_role == "m" & edge_plot$from_role == "x"
       edge_plot$t_label[idx] <- 0.34
       idx <- edge_plot$to_role == "m" & edge_plot$from_role == "mod"
-      edge_plot$t_label[idx] <- 0.20
+      edge_plot$t_label[idx] <- if(length(mediators) >= 2) 0.24 else 0.20
       idx <- edge_plot$to_role == "m" & edge_plot$from_role == "int"
-      edge_plot$t_label[idx] <- 0.62
+      edge_plot$t_label[idx] <- if(length(mediators) >= 2) 0.48 else 0.56
       idx <- edge_plot$to_role == "y" & edge_plot$from_role == "x"
       edge_plot$t_label[idx] <- 0.52
       idx <- edge_plot$to_role == "y" & edge_plot$from_role == "mod"
-      edge_plot$t_label[idx] <- 0.30
+      edge_plot$t_label[idx] <- if(length(mediators) >= 2) 0.22 else 0.30
       idx <- edge_plot$to_role == "y" & edge_plot$from_role == "m"
-      edge_plot$t_label[idx] <- 0.68
+      edge_plot$t_label[idx] <- if(length(mediators) >= 2) 0.70 else 0.68
       idx <- edge_plot$to_role == "y" & edge_plot$from_role == "int"
-      edge_plot$t_label[idx] <- 0.76
+      edge_plot$t_label[idx] <- if(length(mediators) >= 2) 0.82 else 0.76
+      if(length(mediators) >= 2) {
+        m2_name <- mediators[[2]]
+        idx <- edge_plot$to == m2_name & edge_plot$from_role == "x"
+        edge_plot$t_label[idx] <- 0.74
+      }
     }
   }
   edge_plot$x_label <- edge_plot$x_from_draw + edge_plot$t_label * edge_plot$dx
@@ -968,17 +986,24 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     idx <- edge_plot$to_role == "m" & edge_plot$from_role == "x"
     edge_plot$y_label_nudge[idx] <- 0.030
     idx <- edge_plot$to_role == "m" & edge_plot$from_role == "mod"
-    edge_plot$y_label_nudge[idx] <- -0.038
+    edge_plot$y_label_nudge[idx] <- if(length(mediators) >= 2) -0.060 else -0.038
     idx <- edge_plot$to_role == "m" & edge_plot$from_role == "int"
-    edge_plot$y_label_nudge[idx] <- 0.050
+    edge_plot$y_label_nudge[idx] <- if(length(mediators) >= 2) 0.080 else 0.095
     idx <- edge_plot$to_role == "y" & edge_plot$from_role == "x"
-    edge_plot$y_label_nudge[idx] <- 0.022
+    edge_plot$y_label_nudge[idx] <- 0.018
     idx <- edge_plot$to_role == "y" & edge_plot$from_role == "mod"
-    edge_plot$y_label_nudge[idx] <- -0.026
+    edge_plot$y_label_nudge[idx] <- if(length(mediators) >= 2) -0.090 else -0.026
     idx <- edge_plot$to_role == "y" & edge_plot$from_role == "m"
     edge_plot$y_label_nudge[idx] <- 0.030
     idx <- edge_plot$to_role == "y" & edge_plot$from_role == "int"
     edge_plot$y_label_nudge[idx] <- -0.060
+    if(length(mediators) >= 2) {
+      m2_name <- mediators[[2]]
+      idx <- edge_plot$to == m2_name & edge_plot$from_role == "x"
+      edge_plot$y_label_nudge[idx] <- -0.055
+      idx <- edge_plot$to == m2_name & edge_plot$from_role == "mod"
+      edge_plot$y_label_nudge[idx] <- 0.040
+    }
   }
   edge_plot$x_label <- edge_plot$x_label + edge_plot$x_label_nudge
   edge_plot$y_label <- edge_plot$y_label + edge_plot$y_label_nudge
@@ -991,11 +1016,17 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     if(nrow(x_node) == 1 && nrow(y_node) == 1) {
       midx <- (x_node$x + y_node$x) / 2
       midy <- (x_node$y + y_node$y) / 2
+      xy_point <- function(t_pos) {
+        c(x_node$x + t_pos * (y_node$x - x_node$x), x_node$y + t_pos * (y_node$y - x_node$y))
+      }
       if(length(w_var) > 0 && any(nodes$name == w_var)) {
         w_node <- nodes[nodes$name == w_var, , drop = FALSE]
-        if(model_num == 1L) {
-          mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = midx, yend = midy))
+        if(model_num == 2L) {
+          # Model 2 conceptual: W points vertically to ~1/3 of X->Y path.
+          w_target <- xy_point(1/3)
+          mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = w_target[[1]], yend = w_target[[2]]))
         } else {
+          # Default moderation cue: to X->Y midpoint.
           mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = midx, yend = midy))
         }
         if(model_num == 8L && length(mediators) > 0) {
@@ -1020,7 +1051,17 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
       if(length(z_var) > 0 && any(nodes$name == z_var)) {
         z_node <- nodes[nodes$name == z_var, , drop = FALSE]
-        mod_cue <- rbind(mod_cue, data.frame(x = z_node$x, y = z_node$y, xend = midx, yend = midy))
+        if(model_num == 2L) {
+          # Model 2 conceptual: Z points vertically to ~2/3 of X->Y path.
+          z_target <- xy_point(2/3)
+          mod_cue <- rbind(mod_cue, data.frame(x = z_node$x, y = z_node$y, xend = z_target[[1]], yend = z_target[[2]]))
+        } else if(model_num == 3L && length(w_var) > 0 && any(nodes$name == w_var)) {
+          # Model 3 conceptual: Z feeds horizontally into W's vertical moderation line.
+          w_node <- nodes[nodes$name == w_var, , drop = FALSE]
+          mod_cue <- rbind(mod_cue, data.frame(x = z_node$x, y = z_node$y, xend = w_node$x, yend = z_node$y))
+        } else {
+          mod_cue <- rbind(mod_cue, data.frame(x = z_node$x, y = z_node$y, xend = midx, yend = midy))
+        }
       }
     }
   }
@@ -1133,6 +1174,11 @@ diagram_settings_key <- function(settings) {
 diagram_label_map <- reactiveVal(character(0))
 diagram_key <- reactiveVal("")
 
+reset_model_diagram_state <- function() {
+  diagram_label_map(character(0))
+  diagram_key("")
+}
+
 observeEvent(analysis_results(), {
   settings <- analysis_results()$settings
   key <- diagram_settings_key(settings)
@@ -1194,7 +1240,7 @@ output$diagram_label_editor <- renderUI({
       inputId = f$id,
       label = f$title,
       value = if(f$var %in% names(current_map)) current_map[[f$var]] else f$var,
-      width = "100%"
+      width = "34%"
     )
   })
 
@@ -1203,7 +1249,7 @@ output$diagram_label_editor <- renderUI({
     tags$strong("Diagram variable labels"),
     tags$div(style = "font-size: 12px; color: #555; margin-bottom: 8px;",
              "Edit labels, then click Regenerate Diagrams to apply."),
-    do.call(fluidRow, list(lapply(input_controls, function(ctrl) column(3, ctrl))))
+    do.call(tagList, input_controls)
   )
 })
 
@@ -1236,8 +1282,6 @@ conceptual_diagram_plot_obj <- reactive({
   settings <- analysis_results()$settings
   mode_input <- input$diagram_coef_mode
   if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
-  display_mode_input <- input$diagram_display_mode
-  if(is.null(display_mode_input) || !display_mode_input %in% c("full", "simple")) display_mode_input <- "full"
 
   build_template_diagram(
     parsed = parsed,
@@ -1248,7 +1292,6 @@ conceptual_diagram_plot_obj <- reactive({
     include_ci = FALSE,
     include_p = FALSE,
     include_stars = FALSE,
-    display_mode = display_mode_input,
     label_map = diagram_label_map()
   )
 })
@@ -1259,8 +1302,6 @@ statistical_diagram_plot_obj <- reactive({
   settings <- analysis_results()$settings
   mode_input <- input$diagram_coef_mode
   if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
-  display_mode_input <- input$diagram_display_mode
-  if(is.null(display_mode_input) || !display_mode_input %in% c("full", "simple")) display_mode_input <- "full"
   show_int <- if(is.null(input$diagram_show_interactions)) TRUE else isTRUE(input$diagram_show_interactions)
   include_ci_opt <- if(is.null(input$diagram_include_ci)) FALSE else isTRUE(input$diagram_include_ci)
   include_p_opt <- if(is.null(input$diagram_include_p)) FALSE else isTRUE(input$diagram_include_p)
@@ -1275,7 +1316,6 @@ statistical_diagram_plot_obj <- reactive({
     include_ci = include_ci_opt,
     include_p = include_p_opt,
     include_stars = include_stars_opt,
-    display_mode = display_mode_input,
     label_map = diagram_label_map()
   )
 })
