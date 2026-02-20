@@ -586,7 +586,7 @@ format_interaction_label <- function(raw_label, settings) {
 }
 
 build_template_diagram <- function(parsed, settings, diagram_type = c("conceptual", "statistical"),
-                                    label_mode = "auto", show_interactions = TRUE,
+                                    label_mode = "auto", show_interactions = TRUE, show_moderator_main_effects = TRUE,
                                     include_ci = FALSE, include_p = FALSE, include_stars = TRUE,
                                     label_map = NULL) {
   diagram_type <- match.arg(diagram_type)
@@ -608,12 +608,20 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   if(!isTRUE(show_interactions)) {
     edges <- edges[!(edges$path_kind == "interaction" | grepl("^int_[0-9]+$", edges$from)), , drop = FALSE]
   }
+  if(!identical(diagram_type, "conceptual") && !isTRUE(show_moderator_main_effects)) {
+    # Diagram-display option: hide moderator main-effect paths while keeping interactions.
+    edges <- edges[edges$path_kind != "moderator", , drop = FALSE]
+  }
 
   x_var <- settings$predictor_var
   y_var <- settings$outcome_var
   mediators <- if(!is.null(settings$mediator_vars)) settings$mediator_vars else character(0)
   w_var <- if(!is.null(settings$moderator_var) && nzchar(settings$moderator_var)) settings$moderator_var else character(0)
   z_var <- if(!is.null(settings$moderator2_var) && nzchar(settings$moderator2_var)) settings$moderator2_var else character(0)
+  if(!identical(diagram_type, "conceptual") && !isTRUE(show_moderator_main_effects)) {
+    w_var <- character(0)
+    z_var <- character(0)
+  }
   int_edges <- edges[edges$path_kind == "interaction" | grepl("^int_[0-9]+$", edges$from), , drop = FALSE]
   
   # Model 14 conceptual fallback:
@@ -886,14 +894,24 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         add_node(mediators[[1]], 0.02, 0.56, "m")
         add_node(mediators[[2]], 0.02, -0.56, "m")
       }
-      if(length(w_var) > 0) add_node(w_var, -0.92, -0.28, "mod")
+      # Requested cleaner routing: move moderator to the lower-right lane for Model 5.
+      if(length(w_var) > 0) {
+        if(n_m >= 2) {
+          add_node(w_var, 0.30, -0.52, "mod")
+        } else {
+          add_node(w_var, 0.24, -0.46, "mod")
+        }
+      }
       if(length(z_var) > 0) add_node(z_var, -0.92, 0.24, "mod")
       if(nrow(int_edges) > 0) {
         int_terms <- unique(int_edges$from)
+        int_base_x <- if(n_m >= 2) 0.58 else 0.48
+        int_base_y <- if(n_m >= 2) -0.78 else -0.74
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
-          add_node(int_lbl, -0.48, -0.82 - 0.18 * (i - 1), "int")
+          # Requested cleaner routing: move interaction term box toward lower-right lane.
+          add_node(int_lbl, int_base_x + 0.12 * (i - 1), int_base_y - 0.12 * (i - 1), "int")
         }
       }
     } else if(model_num %in% c(7L, 14L)) {
@@ -1070,8 +1088,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     if(model_num == 5L) {
       # Model 5: keep Y-target labels separated but on-line; tune for 1 vs 2 mediators.
       set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.50)
-      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.32)
-      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.88)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.52)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.74)
       if(length(mediators) == 1) {
         set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.70)
         set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.46)
@@ -1082,6 +1100,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.66)
         set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.62)
         set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.82)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.54)
       }
     }
 
@@ -1478,6 +1497,7 @@ statistical_diagram_plot_obj <- reactive({
   mode_input <- input$diagram_coef_mode
   if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
   show_int <- if(is.null(input$diagram_show_interactions)) TRUE else isTRUE(input$diagram_show_interactions)
+  show_mod_main <- if(is.null(input$diagram_show_mod_main_effects)) TRUE else isTRUE(input$diagram_show_mod_main_effects)
   include_ci_opt <- if(is.null(input$diagram_include_ci)) FALSE else isTRUE(input$diagram_include_ci)
   include_p_opt <- if(is.null(input$diagram_include_p)) FALSE else isTRUE(input$diagram_include_p)
   include_stars_opt <- if(is.null(input$diagram_include_stars)) TRUE else isTRUE(input$diagram_include_stars)
@@ -1488,6 +1508,7 @@ statistical_diagram_plot_obj <- reactive({
     diagram_type = "statistical",
     label_mode = mode_input,
     show_interactions = show_int,
+    show_moderator_main_effects = show_mod_main,
     include_ci = include_ci_opt,
     include_p = include_p_opt,
     include_stars = include_stars_opt,
