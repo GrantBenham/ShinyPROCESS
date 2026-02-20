@@ -996,6 +996,12 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.50)
       set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.50)
     }
+    if(model_num == 2L) {
+      # Model 2 pass: same midpoint rule as Model 1 for Y-target paths.
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.50)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.50)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.50)
+    }
 
     if(model_num == 5L) {
       if(length(mediators) >= 2) {
@@ -1090,8 +1096,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
     }
   }
-  if(!identical(diagram_type, "conceptual") && model_num == 1L) {
-    # For Model 1 only, place labels by center-to-center geometry (not clipped box edges).
+  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L)) {
+    # For Models 1 and 2, place labels by center-to-center geometry (not clipped box edges).
     edge_plot$x_label <- edge_plot$x_from + edge_plot$t_label * (edge_plot$x_to - edge_plot$x_from)
     edge_plot$y_label <- edge_plot$y_from + edge_plot$t_label * (edge_plot$y_to - edge_plot$y_from)
   } else {
