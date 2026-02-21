@@ -712,6 +712,23 @@ ui <- fluidPage(
                         choices = c("3" = "3", "2" = "2"),
                         selected = "3"
                       ),
+                      sliderInput(
+                        "diagram_coef_font_size",
+                        "Coefficient Label Font Size",
+                        min = 2.6,
+                        max = 3.8,
+                        value = 3.3,
+                        step = 0.1
+                      ),
+                      selectInput(
+                        "diagram_coef_orientation",
+                        "Coefficient Label Orientation",
+                        choices = c(
+                          "Follow path" = "line",
+                          "Horizontal" = "horizontal"
+                        ),
+                        selected = "line"
+                      ),
                       conditionalPanel(
                         condition = "output.diagram_show_mod_controls === true",
                         checkboxInput("diagram_show_mod_main_effects", "Show moderator main effects", value = TRUE),
@@ -760,6 +777,7 @@ ui <- fluidPage(
             br(),
             h5("Statistical Diagram"),
             plotOutput("statistical_diagram_plot", height = "860px", width = "100%"),
+            uiOutput("graphviz_statistical_ui"),
             htmlOutput("model_diagram_notes")
           ),
           conditionalPanel(

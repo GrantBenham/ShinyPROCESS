@@ -7,6 +7,11 @@
 # - This is a non-UI scaffold used for upcoming Model Diagram tab work.
 # ============================================================================
 
+if(FALSE) {
+  # Keep DiagrammeR discoverable for shinylive static package scanning.
+  library(DiagrammeR)
+}
+
 strip_html_tags <- function(x) {
   gsub("<[^>]+>", "", x)
 }
@@ -604,6 +609,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
                                     label_mode = "auto", show_interactions = TRUE, show_moderator_main_effects = TRUE,
                                     include_ci = FALSE, include_p = FALSE, include_stars = TRUE,
                                     label_map = NULL, coef_digits = 3,
+                                    coef_label_size = 3.3, coef_label_orientation = "line",
                                     plot_width_px = NULL, plot_height_px = NULL) {
   diagram_type <- match.arg(diagram_type)
   edges <- parsed$paths
@@ -1670,10 +1676,16 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   }
   edge_plot$label_angle <- 0
   if(!identical(diagram_type, "conceptual")) {
-    ang <- atan2(edge_plot$dy, edge_plot$dx) * 180 / pi
-    ang <- ifelse(ang > 90, ang - 180, ifelse(ang < -90, ang + 180, ang))
-    # Keep labels readable for steep paths.
-    edge_plot$label_angle <- pmax(pmin(ang, 75), -75)
+    orient <- tolower(trimws(as.character(coef_label_orientation)))
+    if(!orient %in% c("line", "horizontal")) orient <- "line"
+    if(identical(orient, "line")) {
+      ang <- atan2(edge_plot$dy, edge_plot$dx) * 180 / pi
+      ang <- ifelse(ang > 90, ang - 180, ifelse(ang < -90, ang + 180, ang))
+      # Keep labels readable for steep paths.
+      edge_plot$label_angle <- pmax(pmin(ang, 75), -75)
+    } else {
+      edge_plot$label_angle <- 0
+    }
   }
 
   # Conceptual moderation cue arrows (to path midpoint only; no coefficient label)
@@ -1891,10 +1903,12 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
 
   if(!identical(diagram_type, "conceptual")) {
     label_df <- edge_plot[nzchar(edge_plot$label), , drop = FALSE]
+    coef_sz <- suppressWarnings(as.numeric(coef_label_size))
+    if(is.na(coef_sz) || coef_sz < 2.0 || coef_sz > 5.0) coef_sz <- 3.3
     p <- p + ggplot2::geom_label(
       data = label_df,
       ggplot2::aes(x = x_label, y = y_label, label = label, angle = label_angle),
-      size = 3.3,
+      size = coef_sz,
       label.size = 0.2,
       fill = "white",
       color = "black"
@@ -1902,6 +1916,156 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   }
 
   p
+}
+
+dot_escape_label <- function(x) {
+  out <- as.character(x)
+  out <- gsub("\\\\", "\\\\\\\\", out)
+  out <- gsub("\"", "\\\\\"", out, fixed = TRUE)
+  out <- gsub("\n", "\\\\n", out, fixed = TRUE)
+  out
+}
+
+build_graphviz_model7_statistical_dot <- function(parsed, settings,
+                                                   label_mode = "raw",
+                                                   show_interactions = TRUE,
+                                                   show_moderator_main_effects = TRUE,
+                                                   include_ci = FALSE,
+                                                   include_p = FALSE,
+                                                   include_stars = TRUE,
+                                                   label_map = NULL,
+                                                   coef_digits = 3) {
+  model_num <- suppressWarnings(as.integer(settings$model))
+  if(!identical(model_num, 7L)) return(NULL)
+  edges <- parsed$paths
+  if(nrow(edges) == 0) return(NULL)
+  edges <- edges[edges$path_kind != "covariate", , drop = FALSE]
+  if(!isTRUE(show_interactions)) {
+    edges <- edges[!(edges$path_kind == "interaction" | grepl("^int_[0-9]+$", edges$from)), , drop = FALSE]
+  }
+  if(!isTRUE(show_moderator_main_effects)) {
+    edges <- edges[edges$path_kind != "moderator", , drop = FALSE]
+  }
+  if(nrow(edges) == 0) return(NULL)
+
+  x_var <- settings$predictor_var
+  y_var <- settings$outcome_var
+  mediators <- if(!is.null(settings$mediator_vars)) settings$mediator_vars else character(0)
+  w_var <- if(!is.null(settings$moderator_var) && nzchar(settings$moderator_var) && isTRUE(show_moderator_main_effects)) settings$moderator_var else character(0)
+  z_var <- if(!is.null(settings$moderator2_var) && nzchar(settings$moderator2_var) && isTRUE(show_moderator_main_effects)) settings$moderator2_var else character(0)
+  alias_map <- parsed$metadata$product_aliases
+  if(is.null(alias_map)) alias_map <- character(0)
+
+  int_edges <- edges[edges$path_kind == "interaction" | grepl("^int_[0-9]+$", edges$from), , drop = FALSE]
+  if(nrow(int_edges) > 0) {
+    for(i in seq_len(nrow(int_edges))) {
+      int_lbl <- resolve_interaction_label(int_edges$from[[i]], alias_map)
+      int_lbl <- format_interaction_label(int_lbl, settings)
+      edges$from[edges$from == int_edges$from[[i]]] <- int_lbl
+    }
+    int_edges <- edges[
+      edges$path_kind == "interaction" |
+        edges$from %in% unname(alias_map) |
+        grepl("^.*\\sx\\s.*$", edges$from, ignore.case = TRUE),
+      ,
+      drop = FALSE
+    ]
+  }
+
+  nodes <- data.frame(name = character(0), x = numeric(0), y = numeric(0), stringsAsFactors = FALSE)
+  add_node <- function(nm, x, y) {
+    if(is.null(nm) || !nzchar(nm)) return()
+    nodes <<- rbind(nodes, data.frame(name = nm, x = x, y = y, stringsAsFactors = FALSE))
+  }
+
+  add_node(x_var, -0.84, 0.00)
+  add_node(y_var, 0.86, 0.00)
+  n_m <- length(mediators)
+  if(n_m == 1) {
+    add_node(mediators[[1]], 0.06, 0.56)
+  } else if(n_m >= 2) {
+    add_node(mediators[[1]], 0.06, 0.56)
+    add_node(mediators[[2]], 0.06, -0.56)
+  }
+  if(length(w_var) > 0) {
+    if(n_m == 1) {
+      add_node(w_var, -0.84, 0.28)
+    } else {
+      add_node(w_var, -0.84, -0.56)
+    }
+  }
+  if(length(z_var) > 0) add_node(z_var, -0.92, 0.24)
+  if(nrow(int_edges) > 0) {
+    int_terms <- unique(int_edges$from)
+    for(i in seq_along(int_terms)) {
+      int_lbl <- int_terms[[i]]
+      if(n_m == 1) {
+        add_node(int_lbl, -0.84 + 0.10 * (i - 1), 0.56 + 0.10 * (i - 1))
+      } else {
+        add_node(int_lbl, -0.48 + 0.12 * (i - 1), -0.92 - 0.12 * (i - 1))
+      }
+    }
+  }
+  nodes <- unique(nodes)
+  if(nrow(nodes) == 0) return(NULL)
+
+  if(!is.null(label_map) && length(label_map) > 0) {
+    nodes$label <- vapply(nodes$name, function(nm) {
+      if(nm %in% names(label_map)) {
+        sanitize_label_text(label_map[[nm]], nm)
+      } else if(grepl("\\s+[xX]\\s+", nm)) {
+        map_interaction_label(nm, label_map)
+      } else {
+        nm
+      }
+    }, character(1))
+  } else {
+    nodes$label <- nodes$name
+  }
+
+  edges <- edges[edges$from %in% nodes$name & edges$to %in% nodes$name, , drop = FALSE]
+  if(nrow(edges) == 0) return(NULL)
+
+  edges$label <- vapply(seq_len(nrow(edges)), function(i) {
+    compose_path_label(
+      edge_row = edges[i, , drop = FALSE],
+      label_mode = label_mode,
+      include_ci = include_ci,
+      include_p = include_p,
+      include_stars = include_stars,
+      coef_digits = coef_digits
+    )
+  }, character(1))
+
+  node_ids <- setNames(paste0("n", seq_len(nrow(nodes))), nodes$name)
+  x_scale <- 7.0
+  y_scale <- 5.6
+  node_lines <- vapply(seq_len(nrow(nodes)), function(i) {
+    nid <- node_ids[[nodes$name[[i]]]]
+    lbl <- dot_escape_label(nodes$label[[i]])
+    x <- nodes$x[[i]] * x_scale
+    y <- nodes$y[[i]] * y_scale
+    paste0("  ", nid, " [label=\"", lbl, "\", pos=\"", sprintf("%.2f,%.2f!", x, y), "\", pin=true];")
+  }, character(1))
+
+  edge_lines <- vapply(seq_len(nrow(edges)), function(i) {
+    fr <- node_ids[[edges$from[[i]]]]
+    to <- node_ids[[edges$to[[i]]]]
+    lbl <- edges$label[[i]]
+    lbl_attr <- if(nzchar(lbl)) paste0(", label=\"", dot_escape_label(lbl), "\"") else ""
+    paste0("  ", fr, " -> ", to, " [", "color=\"black\", penwidth=1.6, arrowsize=0.7, fontsize=14", lbl_attr, "];")
+  }, character(1))
+
+  paste(
+    "digraph G {",
+    "  graph [layout=neato, bgcolor=\"white\", overlap=false, splines=true, outputorder=\"edgesfirst\"];",
+    "  node [shape=box, style=\"rounded\", color=\"black\", fillcolor=\"white\", fontname=\"Helvetica\", fontsize=28, penwidth=1.2];",
+    "  edge [color=\"black\", arrowsize=0.7, penwidth=1.6, fontname=\"Helvetica\", fontsize=14];",
+    paste(node_lines, collapse = "\n"),
+    paste(edge_lines, collapse = "\n"),
+    "}",
+    sep = "\n"
+  )
 }
 
 diagram_settings_key <- function(settings) {
@@ -2072,6 +2236,10 @@ statistical_diagram_plot_obj <- reactive({
   include_stars_opt <- if(is.null(input$diagram_include_stars)) TRUE else isTRUE(input$diagram_include_stars)
   coef_digits_opt <- suppressWarnings(as.integer(input$diagram_coef_digits))
   if(is.na(coef_digits_opt) || !(coef_digits_opt %in% c(2L, 3L))) coef_digits_opt <- 3L
+  coef_label_size_opt <- suppressWarnings(as.numeric(input$diagram_coef_font_size))
+  if(is.na(coef_label_size_opt) || coef_label_size_opt < 2.0 || coef_label_size_opt > 5.0) coef_label_size_opt <- 3.3
+  coef_label_orient_opt <- tolower(trimws(as.character(input$diagram_coef_orientation)))
+  if(!coef_label_orient_opt %in% c("line", "horizontal")) coef_label_orient_opt <- "line"
   dims <- get_plot_dims_px("statistical_diagram_plot", 1500, 860)
 
   build_template_diagram(
@@ -2086,6 +2254,8 @@ statistical_diagram_plot_obj <- reactive({
     include_stars = include_stars_opt,
     label_map = diagram_label_map(),
     coef_digits = coef_digits_opt,
+    coef_label_size = coef_label_size_opt,
+    coef_label_orientation = coef_label_orient_opt,
     plot_width_px = dims$width_px,
     plot_height_px = dims$height_px
   )
@@ -2138,6 +2308,68 @@ output$statistical_diagram_plot <- renderPlot({
   }
   print(statistical_diagram_plot_obj())
 }, bg = "white", res = 96)
+
+output$graphviz_statistical_ui <- renderUI({
+  if(is.null(analysis_results())) return(NULL)
+  model_num <- suppressWarnings(as.integer(analysis_results()$settings$model))
+  if(!identical(model_num, 7L)) {
+    return(tags$div(
+      style = "margin-top: 8px; color: #666;",
+      "Experimental Graphviz comparison is currently shown for Model 7 only."
+    ))
+  }
+  if(!requireNamespace("DiagrammeR", quietly = TRUE)) {
+    return(tags$div(
+      style = "margin-top: 8px; color: #a94442;",
+      "DiagrammeR is not available in this runtime, so Graphviz comparison is disabled."
+    ))
+  }
+  tagList(
+    tags$hr(),
+    h5("Statistical Diagram (Experimental Graphviz Comparison)"),
+    DiagrammeR::grVizOutput("statistical_diagram_graphviz", height = "860px", width = "100%"),
+    tags$div(
+      style = "margin-top: 6px; color: #666;",
+      "Graphviz preview is for visual comparison only. JPG export still uses the ggplot diagram path."
+    )
+  )
+})
+
+output$statistical_diagram_graphviz <- DiagrammeR::renderGrViz({
+  req(analysis_results())
+  req(requireNamespace("DiagrammeR", quietly = TRUE))
+  settings <- analysis_results()$settings
+  model_num <- suppressWarnings(as.integer(settings$model))
+  if(!identical(model_num, 7L)) {
+    return(DiagrammeR::grViz("digraph G { graph [bgcolor='white']; note [shape=box, label='Graphviz comparison is currently available for Model 7 only.']; }"))
+  }
+  parsed <- diagram_parse_results()
+  mode_input <- input$diagram_coef_mode
+  if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
+  show_int <- if(is.null(input$diagram_show_interactions)) TRUE else isTRUE(input$diagram_show_interactions)
+  show_mod_main <- if(is.null(input$diagram_show_mod_main_effects)) TRUE else isTRUE(input$diagram_show_mod_main_effects)
+  include_ci_opt <- if(is.null(input$diagram_include_ci)) FALSE else isTRUE(input$diagram_include_ci)
+  include_p_opt <- if(is.null(input$diagram_include_p)) FALSE else isTRUE(input$diagram_include_p)
+  include_stars_opt <- if(is.null(input$diagram_include_stars)) TRUE else isTRUE(input$diagram_include_stars)
+  coef_digits_opt <- suppressWarnings(as.integer(input$diagram_coef_digits))
+  if(is.na(coef_digits_opt) || !(coef_digits_opt %in% c(2L, 3L))) coef_digits_opt <- 3L
+  dot_txt <- build_graphviz_model7_statistical_dot(
+    parsed = parsed,
+    settings = settings,
+    label_mode = mode_input,
+    show_interactions = show_int,
+    show_moderator_main_effects = show_mod_main,
+    include_ci = include_ci_opt,
+    include_p = include_p_opt,
+    include_stars = include_stars_opt,
+    label_map = diagram_label_map(),
+    coef_digits = coef_digits_opt
+  )
+  if(is.null(dot_txt) || !nzchar(dot_txt)) {
+    dot_txt <- "digraph G { graph [bgcolor='white']; note [shape=box, label='Unable to build Graphviz preview for current settings.']; }"
+  }
+  DiagrammeR::grViz(dot_txt)
+})
 
 output$model_diagram_notes <- renderUI({
   if(is.null(analysis_results())) return(NULL)
