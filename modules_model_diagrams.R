@@ -1926,6 +1926,16 @@ dot_escape_label <- function(x) {
   out
 }
 
+dot_escape_html_label <- function(x) {
+  out <- as.character(x)
+  out <- gsub("&", "&amp;", out, fixed = TRUE)
+  out <- gsub("<", "&lt;", out, fixed = TRUE)
+  out <- gsub(">", "&gt;", out, fixed = TRUE)
+  out <- gsub("\"", "&quot;", out, fixed = TRUE)
+  out <- gsub("\n", "<BR/>", out, fixed = TRUE)
+  out
+}
+
 build_graphviz_model7_statistical_dot <- function(parsed, settings,
                                                    label_mode = "raw",
                                                    show_interactions = TRUE,
@@ -2048,20 +2058,65 @@ build_graphviz_model7_statistical_dot <- function(parsed, settings,
     paste0("  ", nid, " [label=\"", lbl, "\", pos=\"", sprintf("%.2f,%.2f!", x, y), "\", pin=true];")
   }, character(1))
 
+  mod_names <- c(w_var, z_var)
+  mod_names <- mod_names[nzchar(mod_names)]
+  int_names <- unique(int_edges$from)
+  int_names <- int_names[nzchar(int_names)]
+  m1_name <- if(length(mediators) >= 1) mediators[[1]] else ""
+  get_node_xy <- function(nm) {
+    j <- match(nm, nodes$name)
+    if(is.na(j)) return(c(x = 0, y = 0))
+    c(x = nodes$x[[j]], y = nodes$y[[j]])
+  }
+  label_idx <- which(nzchar(edges$label))
+  label_node_lines <- if(length(label_idx) > 0) {
+    vapply(label_idx, function(i) {
+      p0 <- get_node_xy(edges$from[[i]])
+      p1 <- get_node_xy(edges$to[[i]])
+      t_pos <- 0.50
+      if(length(mediators) == 1 && nzchar(m1_name) && identical(edges$to[[i]], m1_name)) {
+        if(identical(edges$from[[i]], x_var)) {
+          t_pos <- 0.38
+        } else if(edges$from[[i]] %in% mod_names) {
+          t_pos <- 0.48
+        } else if(edges$from[[i]] %in% int_names) {
+          t_pos <- 0.58
+        }
+      }
+      if(length(mediators) == 1 && identical(edges$to[[i]], y_var) && identical(edges$from[[i]], m1_name)) {
+        t_pos <- 0.56
+      }
+      lx <- p0[["x"]] + t_pos * (p1[["x"]] - p0[["x"]])
+      ly <- p0[["y"]] + t_pos * (p1[["y"]] - p0[["y"]])
+      lbl_html <- dot_escape_html_label(edges$label[[i]])
+      n_lines <- length(strsplit(edges$label[[i]], "\n", fixed = TRUE)[[1]])
+      lab_fs <- if(n_lines >= 2) 9.0 else 10.5
+      paste0(
+        "  lab", i,
+        " [label=<<FONT POINT-SIZE=\"", sprintf("%.1f", lab_fs), "\">", lbl_html, "</FONT>>",
+        ", shape=box, style=\"rounded,filled\", fillcolor=\"white\", color=\"#666666\",",
+        " penwidth=0.7, fontname=\"Helvetica\"",
+        ", pos=\"", sprintf("%.2f,%.2f!", lx * x_scale, ly * y_scale),
+        "\", pin=true, width=0, height=0, margin=\"0.06,0.03\"];"
+      )
+    }, character(1))
+  } else {
+    character(0)
+  }
+
   edge_lines <- vapply(seq_len(nrow(edges)), function(i) {
     fr <- node_ids[[edges$from[[i]]]]
     to <- node_ids[[edges$to[[i]]]]
-    lbl <- edges$label[[i]]
-    lbl_attr <- if(nzchar(lbl)) paste0(", label=\"", dot_escape_label(lbl), "\"") else ""
-    paste0("  ", fr, " -> ", to, " [", "color=\"black\", penwidth=1.6, arrowsize=0.7, fontsize=14", lbl_attr, "];")
+    paste0("  ", fr, " -> ", to, " [color=\"black\", penwidth=1.6, arrowsize=0.7];")
   }, character(1))
 
   paste(
     "digraph G {",
-    "  graph [layout=neato, bgcolor=\"white\", overlap=false, splines=true, outputorder=\"edgesfirst\"];",
-    "  node [shape=box, style=\"rounded\", color=\"black\", fillcolor=\"white\", fontname=\"Helvetica\", fontsize=28, penwidth=1.2];",
-    "  edge [color=\"black\", arrowsize=0.7, penwidth=1.6, fontname=\"Helvetica\", fontsize=14];",
+    "  graph [layout=neato, bgcolor=\"white\", overlap=false, splines=true, outputorder=\"edgesfirst\", margin=0.04];",
+    "  node [shape=box, style=\"rounded,filled\", color=\"black\", fillcolor=\"white\", fontname=\"Helvetica\", fontsize=22, penwidth=1.2];",
+    "  edge [color=\"black\", arrowsize=0.7, penwidth=1.6, fontname=\"Helvetica\", fontsize=10];",
     paste(node_lines, collapse = "\n"),
+    paste(label_node_lines, collapse = "\n"),
     paste(edge_lines, collapse = "\n"),
     "}",
     sep = "\n"
@@ -2335,41 +2390,42 @@ output$graphviz_statistical_ui <- renderUI({
   )
 })
 
-output$statistical_diagram_graphviz <- DiagrammeR::renderGrViz({
-  req(analysis_results())
-  req(requireNamespace("DiagrammeR", quietly = TRUE))
-  settings <- analysis_results()$settings
-  model_num <- suppressWarnings(as.integer(settings$model))
-  if(!identical(model_num, 7L)) {
-    return(DiagrammeR::grViz("digraph G { graph [bgcolor='white']; note [shape=box, label='Graphviz comparison is currently available for Model 7 only.']; }"))
-  }
-  parsed <- diagram_parse_results()
-  mode_input <- input$diagram_coef_mode
-  if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
-  show_int <- if(is.null(input$diagram_show_interactions)) TRUE else isTRUE(input$diagram_show_interactions)
-  show_mod_main <- if(is.null(input$diagram_show_mod_main_effects)) TRUE else isTRUE(input$diagram_show_mod_main_effects)
-  include_ci_opt <- if(is.null(input$diagram_include_ci)) FALSE else isTRUE(input$diagram_include_ci)
-  include_p_opt <- if(is.null(input$diagram_include_p)) FALSE else isTRUE(input$diagram_include_p)
-  include_stars_opt <- if(is.null(input$diagram_include_stars)) TRUE else isTRUE(input$diagram_include_stars)
-  coef_digits_opt <- suppressWarnings(as.integer(input$diagram_coef_digits))
-  if(is.na(coef_digits_opt) || !(coef_digits_opt %in% c(2L, 3L))) coef_digits_opt <- 3L
-  dot_txt <- build_graphviz_model7_statistical_dot(
-    parsed = parsed,
-    settings = settings,
-    label_mode = mode_input,
-    show_interactions = show_int,
-    show_moderator_main_effects = show_mod_main,
-    include_ci = include_ci_opt,
-    include_p = include_p_opt,
-    include_stars = include_stars_opt,
-    label_map = diagram_label_map(),
-    coef_digits = coef_digits_opt
-  )
-  if(is.null(dot_txt) || !nzchar(dot_txt)) {
-    dot_txt <- "digraph G { graph [bgcolor='white']; note [shape=box, label='Unable to build Graphviz preview for current settings.']; }"
-  }
-  DiagrammeR::grViz(dot_txt)
-})
+if(requireNamespace("DiagrammeR", quietly = TRUE)) {
+  output$statistical_diagram_graphviz <- DiagrammeR::renderGrViz({
+    req(analysis_results())
+    settings <- analysis_results()$settings
+    model_num <- suppressWarnings(as.integer(settings$model))
+    if(!identical(model_num, 7L)) {
+      return(DiagrammeR::grViz("digraph G { graph [bgcolor='white']; note [shape=box, label='Graphviz comparison is currently available for Model 7 only.']; }"))
+    }
+    parsed <- diagram_parse_results()
+    mode_input <- input$diagram_coef_mode
+    if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
+    show_int <- if(is.null(input$diagram_show_interactions)) TRUE else isTRUE(input$diagram_show_interactions)
+    show_mod_main <- if(is.null(input$diagram_show_mod_main_effects)) TRUE else isTRUE(input$diagram_show_mod_main_effects)
+    include_ci_opt <- if(is.null(input$diagram_include_ci)) FALSE else isTRUE(input$diagram_include_ci)
+    include_p_opt <- if(is.null(input$diagram_include_p)) FALSE else isTRUE(input$diagram_include_p)
+    include_stars_opt <- if(is.null(input$diagram_include_stars)) TRUE else isTRUE(input$diagram_include_stars)
+    coef_digits_opt <- suppressWarnings(as.integer(input$diagram_coef_digits))
+    if(is.na(coef_digits_opt) || !(coef_digits_opt %in% c(2L, 3L))) coef_digits_opt <- 3L
+    dot_txt <- build_graphviz_model7_statistical_dot(
+      parsed = parsed,
+      settings = settings,
+      label_mode = mode_input,
+      show_interactions = show_int,
+      show_moderator_main_effects = show_mod_main,
+      include_ci = include_ci_opt,
+      include_p = include_p_opt,
+      include_stars = include_stars_opt,
+      label_map = diagram_label_map(),
+      coef_digits = coef_digits_opt
+    )
+    if(is.null(dot_txt) || !nzchar(dot_txt)) {
+      dot_txt <- "digraph G { graph [bgcolor='white']; note [shape=box, label='Unable to build Graphviz preview for current settings.']; }"
+    }
+    DiagrammeR::grViz(dot_txt)
+  })
+}
 
 output$model_diagram_notes <- renderUI({
   if(is.null(analysis_results())) return(NULL)
