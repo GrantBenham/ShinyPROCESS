@@ -1006,10 +1006,14 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     max_chars <- max(nchar(lines, type = "width"), na.rm = TRUE)
     n_lines <- length(lines)
     # Calibrated for ggplot::geom_label defaults used in this module.
-    # Conceptual diagrams use larger node label text, so scale up box estimates.
-    size_scale <- if(identical(diagram_type, "conceptual")) 1.22 else 1.00
-    hw <- (0.055 + 0.010 * max_chars) * size_scale
-    hh <- (0.040 + 0.020 * n_lines) * size_scale
+    # Conceptual diagrams use larger label text and need more conservative clipping.
+    if(identical(diagram_type, "conceptual")) {
+      hw <- 0.082 + 0.013 * max_chars
+      hh <- 0.052 + 0.024 * n_lines
+    } else {
+      hw <- 0.055 + 0.010 * max_chars
+      hh <- 0.040 + 0.020 * n_lines
+    }
     c(hw = hw, hh = hh)
   }
 
@@ -1409,7 +1413,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       dim_row <- node_dims[node_dims$name == nm, , drop = FALSE]
       c(hw = dim_row$hw[[1]], hh = dim_row$hh[[1]])
     }, numeric(2)))
-    cue_gap <- 0.0042
+    cue_gap <- 0.018
     cue_clip <- t(mapply(function(x0, y0, x1, y1, hw, hh) {
       # Clip cue start to source box edge.
       clipped <- clip_segment_to_box(x0, y0, x1, y1, hw0 = hw, hh0 = hh, hw1 = 0, hh1 = 0)
