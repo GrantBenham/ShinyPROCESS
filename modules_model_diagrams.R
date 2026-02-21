@@ -768,6 +768,14 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         x1 <- 0.75
         add_node(mediators[[1]], x0 + 0.25 * (x1 - x0), 0.52, "m")
         add_node(mediators[[2]], x0 + 0.75 * (x1 - x0), 0.52, "m")
+      } else if(model_num == 7L) {
+        if(n_m == 1) {
+          add_node(mediators[[1]], 0.00, 0.46, "m")
+        } else if(n_m >= 2) {
+          # Model 7 conceptual: keep mediators balanced around X->Y like Model 4.
+          add_node(mediators[[1]], 0.00, 0.46, "m")
+          add_node(mediators[[2]], 0.00, -0.46, "m")
+        }
       } else if(model_num == 14L) {
         if(n_m == 1) {
           add_node(mediators[[1]], 0.00, 0.50, "m")
@@ -786,7 +794,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           for(i in seq_along(mediators)) add_node(mediators[[i]], 0.00, med_y[[i]], "m")
         }
       }
-      if(length(w_var) > 0 && model_num %in% c(5L, 7L, 8L)) add_node(w_var, -0.45, 0.55, "mod")
+      if(length(w_var) > 0 && model_num == 7L) add_node(w_var, -0.66, 0.74, "mod")
+      if(length(w_var) > 0 && model_num %in% c(5L, 8L)) add_node(w_var, -0.45, 0.55, "mod")
       if(length(w_var) > 0 && model_num == 14L) add_node(w_var, 0.45, 0.52, "mod")
       if(length(z_var) > 0) add_node(z_var, -0.55, 0.22, "mod")
     }
@@ -934,7 +943,28 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           }
         }
       }
-    } else if(model_num %in% c(7L, 14L)) {
+    } else if(model_num == 7L) {
+      add_node(x_var, -0.78, 0.00, "x")
+      add_node(y_var, 0.80, 0.00, "y")
+      n_m <- length(mediators)
+      if(n_m == 1) {
+        add_node(mediators[[1]], 0.00, 0.46, "m")
+      } else if(n_m >= 2) {
+        # Model 7: keep mediator geometry balanced around X->Y like Model 4.
+        add_node(mediators[[1]], 0.00, 0.46, "m")
+        add_node(mediators[[2]], 0.00, -0.46, "m")
+      }
+      if(length(w_var) > 0) add_node(w_var, -0.74, -0.46, "mod")
+      if(length(z_var) > 0) add_node(z_var, -0.92, 0.24, "mod")
+      if(nrow(int_edges) > 0) {
+        int_terms <- unique(int_edges$from)
+        for(i in seq_along(int_terms)) {
+          int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
+          int_lbl <- format_interaction_label(int_lbl, settings)
+          add_node(int_lbl, -0.40 + 0.10 * (i - 1), -0.86 - 0.12 * (i - 1), "int")
+        }
+      }
+    } else if(model_num == 14L) {
       add_node(x_var, -0.78, 0.00, "x")
       add_node(y_var, 0.80, 0.00, "y")
       n_m <- length(mediators)
@@ -951,7 +981,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
-          if(model_num == 14L && length(int_terms) >= 2) {
+          if(length(int_terms) >= 2) {
             # Move interaction terms rightward and stagger horizontally for clarity.
             add_node(int_lbl, 0.12 + 0.24 * (i - 1), -0.84 - 0.08 * (i - 1), "int")
           } else {
@@ -959,7 +989,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           }
         }
       }
-    }
+    } 
   }
 
   nodes <- unique(nodes)
@@ -1162,6 +1192,32 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
     }
   }
+  if(!identical(diagram_type, "conceptual") && model_num == 7L) {
+    # Model 7 endpoint tuning:
+    # - W->M2 starts from W middle-right.
+    # - M1->Y starts from M1 bottom-right (mirrors X->M1 bottom-left landing).
+    if(length(mediators) >= 1) {
+      m1_name <- mediators[[1]]
+      idx_w_m <- edge_plot$from_role == "mod" & edge_plot$to_role == "m"
+      if(any(idx_w_m)) {
+        clipped[idx_w_m, 1] <- edge_plot$x_from[idx_w_m]
+        clipped[idx_w_m, 2] <- edge_plot$y_from[idx_w_m] + 0.90 * edge_plot$hh_from[idx_w_m]
+      }
+      if(length(mediators) >= 2) {
+        m2_name <- mediators[[2]]
+        idx_w_m2 <- edge_plot$from_role == "mod" & edge_plot$to == m2_name
+        if(any(idx_w_m2)) {
+          clipped[idx_w_m2, 1] <- edge_plot$x_from[idx_w_m2] + 0.95 * edge_plot$hw_from[idx_w_m2]
+          clipped[idx_w_m2, 2] <- edge_plot$y_from[idx_w_m2]
+        }
+      }
+      idx_m1_y <- edge_plot$from == m1_name & edge_plot$to == y_var
+      if(any(idx_m1_y)) {
+        clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] + 0.95 * edge_plot$hw_from[idx_m1_y]
+        clipped[idx_m1_y, 2] <- edge_plot$y_from[idx_m1_y] - 0.95 * edge_plot$hh_from[idx_m1_y]
+      }
+    }
+  }
   # Models 1-7 spacing pass: enforce a consistent visible white-space gap at both node ends.
   # Conceptual diagrams need a larger inset because node labels are intentionally larger.
   edge_gap <- 0
@@ -1270,15 +1326,27 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     }
 
     if(model_num == 7L) {
-      # First-stage moderation lanes for two-mediator layouts.
-      spread_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.42, 0.70, "to_y")
-      spread_t(edge_plot$to_role == "m" & edge_plot$from_role == "mod", 0.26, 0.50, "to_y")
-      spread_t(edge_plot$to_role == "m" & edge_plot$from_role == "int", 0.74, 0.88, "to_y")
+      # Model 7: midpoint-first placement, then targeted nudges for overlap control.
+      set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.50)
+      set_t(edge_plot$to_role == "m" & edge_plot$from_role == "mod", 0.50)
+      set_t(edge_plot$to_role == "m" & edge_plot$from_role == "int", 0.50)
       if(length(mediators) >= 2) {
         m1_name <- mediators[[1]]
         m2_name <- mediators[[2]]
-        set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.64)
-        set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.80)
+        # Keep near-midpoint labels while separating converging lanes.
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.44)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.44)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.62)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.54)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.60)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.50)
+        set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.58)
+        set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.54)
+      } else {
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.44)
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "mod", 0.54)
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "int", 0.60)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.58)
       }
     }
 
@@ -1365,8 +1433,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         } else if(model_num == 7L && length(mediators) > 0 && any(nodes$name == mediators[[1]])) {
           # Model 7 conceptual: moderator targets the first-stage X->M1 path.
           m_node <- nodes[nodes$name == mediators[[1]], , drop = FALSE]
-          xm_midx <- x_node$x + 0.66 * (m_node$x - x_node$x)
-          xm_midy <- x_node$y + 0.66 * (m_node$y - x_node$y)
+          xm_midx <- x_node$x + 0.50 * (m_node$x - x_node$x)
+          xm_midy <- x_node$y + 0.50 * (m_node$y - x_node$y)
           mod_cue <- rbind(mod_cue, data.frame(x = w_node$x, y = w_node$y, xend = xm_midx, yend = xm_midy))
         } else {
           # Default moderation cue: to X->Y midpoint.
