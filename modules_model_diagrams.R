@@ -1163,8 +1163,11 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     }
   }
   # Models 1-6 spacing pass: enforce a consistent visible white-space gap at both node ends.
-  # Reduced by half from prior tuning.
-  edge_gap <- if(model_num %in% 1:6) 0.0042 else 0
+  # Conceptual diagrams need a larger inset because node labels are intentionally larger.
+  edge_gap <- 0
+  if(model_num %in% 1:6) {
+    edge_gap <- if(identical(diagram_type, "conceptual")) 0.010 else 0.0042
+  }
   if(edge_gap > 0 && nrow(clipped) > 0) {
     clipped <- t(mapply(
       function(xs, ys, xe, ye) inset_segment(xs, ys, xe, ye, pad = edge_gap),
