@@ -962,22 +962,23 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         }
       }
     } else if(model_num == 7L) {
-      add_node(x_var, -0.84, 0.00, "x")
-      add_node(y_var, 0.86, 0.00, "y")
+      add_node(x_var, -0.82, 0.00, "x")
+      add_node(y_var, 0.82, 0.00, "y")
       n_m <- length(mediators)
       if(n_m == 1) {
         add_node(mediators[[1]], 0.06, 0.56, "m")
       } else if(n_m >= 2) {
         # Model 7: keep mediator geometry balanced around X->Y like Model 4.
-        add_node(mediators[[1]], 0.06, 0.56, "m")
-        add_node(mediators[[2]], 0.06, -0.56, "m")
+        add_node(mediators[[1]], 0.00, 0.56, "m")
+        add_node(mediators[[2]], 0.00, -0.56, "m")
       }
       if(length(w_var) > 0) {
         if(n_m == 1) {
           # 1-mediator Model 7: keep W midway between INT and X levels.
           add_node(w_var, -0.84, 0.28, "mod")
         } else {
-          add_node(w_var, -0.84, -0.56, "mod")
+          # 2-mediator Model 7: keep W right edge aligned with X; INT sits further right.
+          add_node(w_var, -0.82, -0.56, "mod")
         }
       }
       if(length(z_var) > 0) add_node(z_var, -0.92, 0.24, "mod")
@@ -990,7 +991,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
             # 1-mediator Model 7: interaction term horizontally aligned with M1.
             add_node(int_lbl, -0.84 + 0.10 * (i - 1), 0.56 + 0.10 * (i - 1), "int")
           } else {
-            add_node(int_lbl, -0.48 + 0.12 * (i - 1), -0.92 - 0.12 * (i - 1), "int")
+            # 2-mediator Model 7: shift interaction right of W to separate W->M1 vs INT->M1 lanes.
+            add_node(int_lbl, -0.28 + 0.14 * (i - 1), -0.92 - 0.10 * (i - 1), "int")
           }
         }
       }
@@ -1391,6 +1393,10 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   }
   if(model_num == 7L && length(mediators) == 1) {
     m1_name <- mediators[[1]]
+    # Bottom-edge split anchors for first-stage X and second-stage M1->Y.
+    # `anchor_frac` is measured from node center toward side edge (0=center, 1=edge).
+    # Kept as a single scalar so M2 top-edge mirrors can be added with the same rule.
+    anchor_frac <- 0.75
     x_names <- nodes$name[nodes$role == "x"]
     mod_names <- nodes$name[nodes$role == "mod"]
     int_names <- nodes$name[nodes$role == "int"]
@@ -1411,8 +1417,14 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     if(any(idx_x_m1)) {
       clipped[idx_x_m1, 1] <- edge_plot$x_from[idx_x_m1] + edge_plot$hw_from[idx_x_m1]
       clipped[idx_x_m1, 2] <- edge_plot$y_from[idx_x_m1] + 0.52 * edge_plot$hh_from[idx_x_m1]
-      clipped[idx_x_m1, 3] <- edge_plot$x_to[idx_x_m1] - edge_plot$hw_to[idx_x_m1]
-      clipped[idx_x_m1, 4] <- edge_plot$y_to[idx_x_m1] - 0.34 * edge_plot$hh_to[idx_x_m1]
+      if(!identical(diagram_type, "conceptual")) {
+        # X -> M1: land on M1 bottom edge, left of center.
+        clipped[idx_x_m1, 3] <- edge_plot$x_to[idx_x_m1] - anchor_frac * edge_plot$hw_to[idx_x_m1]
+        clipped[idx_x_m1, 4] <- edge_plot$y_to[idx_x_m1] - edge_plot$hh_to[idx_x_m1]
+      } else {
+        clipped[idx_x_m1, 3] <- edge_plot$x_to[idx_x_m1] - edge_plot$hw_to[idx_x_m1]
+        clipped[idx_x_m1, 4] <- edge_plot$y_to[idx_x_m1] - 0.34 * edge_plot$hh_to[idx_x_m1]
+      }
     }
     if(any(idx_w_m1)) {
       clipped[idx_w_m1, 1] <- edge_plot$x_from[idx_w_m1] + edge_plot$hw_from[idx_w_m1]
@@ -1431,8 +1443,9 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] + edge_plot$hw_from[idx_m1_y]
         clipped[idx_m1_y, 2] <- edge_plot$y_from[idx_m1_y]
       } else {
-        clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] + 0.95 * edge_plot$hw_from[idx_m1_y]
-        clipped[idx_m1_y, 2] <- edge_plot$y_from[idx_m1_y] - 0.95 * edge_plot$hh_from[idx_m1_y]
+        # M1 -> Y: leave from M1 bottom edge, right of center (mirror of X->M1 landing).
+        clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] + anchor_frac * edge_plot$hw_from[idx_m1_y]
+        clipped[idx_m1_y, 2] <- edge_plot$y_from[idx_m1_y] - edge_plot$hh_from[idx_m1_y]
       }
       clipped[idx_m1_y, 3] <- edge_plot$x_to[idx_m1_y] - edge_plot$hw_to[idx_m1_y]
       clipped[idx_m1_y, 4] <- edge_plot$y_to[idx_m1_y]
@@ -1595,12 +1608,13 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         m1_name <- mediators[[1]]
         m2_name <- mediators[[2]]
         # Keep near-midpoint labels while separating converging lanes.
+        # Target shape: W->M1 slightly higher than midpoint; INT->M1 just below that.
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.44)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.44)
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.62)
-        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.44)
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.60)
-        set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.50)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.68)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.46)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.64)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.52)
         set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.58)
         set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.54)
       } else {
