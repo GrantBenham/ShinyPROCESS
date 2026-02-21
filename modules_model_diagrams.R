@@ -1015,9 +1015,11 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
       if(length(w_var) > 0) {
         if(n_m == 1) {
-          add_node(w_var, 0.84, 0.28, "mod")
+          # Model 14 (1 mediator): W vertically aligned under Y.
+          add_node(w_var, 0.82, -0.56, "mod")
         } else {
-          add_node(w_var, 0.82, -0.50, "mod")
+          # Model 14 (2 mediators): W vertically aligned above Y.
+          add_node(w_var, 0.82, 0.56, "mod")
         }
       }
       if(length(z_var) > 0) add_node(z_var, -0.92, 0.24, "mod")
@@ -1027,11 +1029,12 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
           if(n_m == 1) {
-            # 1-mediator Model 14: interaction term right of mediator, aligned with M1 lane.
-            add_node(int_lbl, 0.84 + 0.10 * (i - 1), 0.56 + 0.10 * (i - 1), "int")
+            # Model 14 (1 mediator): INT vertically aligned above Y.
+            add_node(int_lbl, 0.82, 0.56 + 0.10 * (i - 1), "int")
           } else {
-            # 2-mediator Model 14: mirror Model 7 by shifting interactions to lower-right.
-            add_node(int_lbl, 0.36 + 0.14 * (i - 1), -0.92 - 0.10 * (i - 1), "int")
+            # Model 14 (2 mediators): interaction terms to the right, vertically aligned to mediator lanes.
+            y_lane <- if(i == 1) 0.56 else if(i == 2) -0.56 else (0.56 - 0.28 * (i - 1))
+            add_node(int_lbl, 1.10 + 0.08 * (i - 1), y_lane, "int")
           }
         }
       }
@@ -1208,7 +1211,12 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       if(model_num == 7L) {
         pin_right(w_var, x_right_ref)
       } else {
-        pin_left(w_var, y_left_ref)
+        idx_y <- which(nodes$name == y_var)
+        idx_w <- which(nodes$name == w_var)
+        if(length(idx_y) > 0 && length(idx_w) > 0) {
+          # Model 14 (1 mediator): keep W centerline vertically aligned with Y.
+          nodes$x[idx_w[[1]]] <- nodes$x[idx_y[[1]]]
+        }
       }
     }
 
@@ -1226,8 +1234,14 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           right_ref <- x_right_ref + 0.08 * (k - 1)
           nodes$x[[i]] <- right_ref - hw
         } else {
-          left_ref <- y_left_ref + 0.08 * (k - 1)
-          nodes$x[[i]] <- left_ref + hw
+          idx_y <- which(nodes$name == y_var)
+          if(length(idx_y) > 0) {
+            # Model 14 (1 mediator): INT centerline vertically aligned with Y.
+            nodes$x[[i]] <- nodes$x[idx_y[[1]]]
+          } else {
+            left_ref <- y_left_ref + 0.08 * (k - 1)
+            nodes$x[[i]] <- left_ref + hw
+          }
         }
       }
       if(length(w_var) > 0) {
@@ -1239,8 +1253,11 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           }
         } else {
           idx_y <- which(nodes$name == y_var)
-          if(length(idx_w) > 0 && length(idx_y) > 0) {
-            nodes$y[idx_w[[1]]] <- (nodes$y[idx_y[[1]]] + nodes$y[ord[[1]]]) / 2
+          if(length(idx_w) > 0 && length(idx_y) > 0 && length(ord) > 0) {
+            # Place W directly below Y by mirroring INT's vertical distance.
+            delta <- abs(nodes$y[ord[[1]]] - nodes$y[idx_y[[1]]])
+            if(delta < 1e-6) delta <- 0.56
+            nodes$y[idx_w[[1]]] <- nodes$y[idx_y[[1]]] - delta
           }
         }
       }
@@ -1506,7 +1523,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
     }
   } else if(!identical(diagram_type, "conceptual") && model_num == 14L) {
-    # Model 14 statistical: mirror handling of Model 7 with Y-side lane management.
+    # Model 14 statistical: explicit second-stage anchoring to reduce Y-side crowding.
     idx_x_y <- edge_plot$from_role == "x" & edge_plot$to == y_var
     if(any(idx_x_y)) {
       clipped[idx_x_y, 1] <- edge_plot$x_from[idx_x_y] + edge_plot$hw_from[idx_x_y]
@@ -1514,53 +1531,96 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       clipped[idx_x_y, 3] <- edge_plot$x_to[idx_x_y] - edge_plot$hw_to[idx_x_y]
       clipped[idx_x_y, 4] <- edge_plot$y_to[idx_x_y]
     }
-
-    idx_to_y <- which(edge_plot$to == y_var)
-    if(length(idx_to_y) > 0) {
-      idx_left <- idx_to_y[edge_plot$x_from[idx_to_y] <= edge_plot$x_to[idx_to_y]]
-      idx_right <- setdiff(idx_to_y, idx_left)
-
-      if(length(idx_left) > 0) {
-        clipped[idx_left, 1] <- edge_plot$x_from[idx_left] + edge_plot$hw_from[idx_left]
-        clipped[idx_left, 2] <- edge_plot$y_from[idx_left]
-        clipped[idx_left, 3] <- edge_plot$x_to[idx_left] - edge_plot$hw_to[idx_left]
-        ord_left <- idx_left[order(-edge_plot$y_from[idx_left], edge_plot$from[idx_left])]
-        y_mid <- edge_plot$y_to[ord_left][1]
-        h <- edge_plot$hh_to[ord_left][1]
-        y_vals <- if(length(ord_left) == 1) y_mid else seq(y_mid + 0.74 * h, y_mid - 0.74 * h, length.out = length(ord_left))
-        clipped[ord_left, 4] <- y_vals
-      }
-      if(length(idx_right) > 0) {
-        clipped[idx_right, 1] <- edge_plot$x_from[idx_right] - edge_plot$hw_from[idx_right]
-        clipped[idx_right, 2] <- edge_plot$y_from[idx_right]
-        clipped[idx_right, 3] <- edge_plot$x_to[idx_right] + edge_plot$hw_to[idx_right]
-        ord_right <- idx_right[order(-edge_plot$y_from[idx_right], edge_plot$from[idx_right])]
-        y_mid <- edge_plot$y_to[ord_right][1]
-        h <- edge_plot$hh_to[ord_right][1]
-        y_vals <- if(length(ord_right) == 1) y_mid else seq(y_mid + 0.62 * h, y_mid - 0.62 * h, length.out = length(ord_right))
-        clipped[ord_right, 4] <- y_vals
-      }
-    }
-    if(any(idx_x_y)) {
-      # Keep direct path strictly horizontal after Y-lane spreading.
-      clipped[idx_x_y, 4] <- edge_plot$y_to[idx_x_y]
-    }
-
     if(length(mediators) == 1) {
       m1_name <- mediators[[1]]
       anchor_frac <- 0.75
       idx_x_m1 <- edge_plot$from_role == "x" & edge_plot$to == m1_name
       idx_m1_y <- edge_plot$from == m1_name & edge_plot$to == y_var
+      idx_w_y <- edge_plot$from_role == "mod" & edge_plot$to == y_var
+      idx_int_y <- edge_plot$from_role == "int" & edge_plot$to == y_var
       if(any(idx_x_m1)) {
-        # Mirror of Model 7 split-anchor logic.
+        # Avoid crossing at M1: X->M1 lands bottom-left.
         clipped[idx_x_m1, 1] <- edge_plot$x_from[idx_x_m1] + edge_plot$hw_from[idx_x_m1]
         clipped[idx_x_m1, 2] <- edge_plot$y_from[idx_x_m1] + 0.52 * edge_plot$hh_from[idx_x_m1]
-        clipped[idx_x_m1, 3] <- edge_plot$x_to[idx_x_m1] + anchor_frac * edge_plot$hw_to[idx_x_m1]
+        clipped[idx_x_m1, 3] <- edge_plot$x_to[idx_x_m1] - anchor_frac * edge_plot$hw_to[idx_x_m1]
         clipped[idx_x_m1, 4] <- edge_plot$y_to[idx_x_m1] - edge_plot$hh_to[idx_x_m1]
       }
       if(any(idx_m1_y)) {
-        clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] - anchor_frac * edge_plot$hw_from[idx_m1_y]
+        # Avoid crossing at M1: M1->Y leaves bottom-right.
+        clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] + anchor_frac * edge_plot$hw_from[idx_m1_y]
         clipped[idx_m1_y, 2] <- edge_plot$y_from[idx_m1_y] - edge_plot$hh_from[idx_m1_y]
+        clipped[idx_m1_y, 3] <- edge_plot$x_to[idx_m1_y] - edge_plot$hw_to[idx_m1_y]
+        clipped[idx_m1_y, 4] <- edge_plot$y_to[idx_m1_y] + 0.62 * edge_plot$hh_to[idx_m1_y]
+      }
+      if(any(idx_w_y)) {
+        # W below Y with vertical path to Y bottom-middle.
+        clipped[idx_w_y, 1] <- edge_plot$x_from[idx_w_y]
+        clipped[idx_w_y, 2] <- edge_plot$y_from[idx_w_y] + edge_plot$hh_from[idx_w_y]
+        clipped[idx_w_y, 3] <- edge_plot$x_to[idx_w_y]
+        clipped[idx_w_y, 4] <- edge_plot$y_to[idx_w_y] - edge_plot$hh_to[idx_w_y]
+      }
+      if(any(idx_int_y)) {
+        # INT above Y with vertical path to Y top-middle.
+        clipped[idx_int_y, 1] <- edge_plot$x_from[idx_int_y]
+        clipped[idx_int_y, 2] <- edge_plot$y_from[idx_int_y] - edge_plot$hh_from[idx_int_y]
+        clipped[idx_int_y, 3] <- edge_plot$x_to[idx_int_y]
+        clipped[idx_int_y, 4] <- edge_plot$y_to[idx_int_y] + edge_plot$hh_to[idx_int_y]
+      }
+    } else if(length(mediators) >= 2) {
+      m1_name <- mediators[[1]]
+      m2_name <- mediators[[2]]
+      anchor_frac <- 0.72
+      idx_x_m1 <- edge_plot$from_role == "x" & edge_plot$to == m1_name
+      idx_x_m2 <- edge_plot$from_role == "x" & edge_plot$to == m2_name
+      idx_m1_y <- edge_plot$from == m1_name & edge_plot$to == y_var
+      idx_m2_y <- edge_plot$from == m2_name & edge_plot$to == y_var
+      idx_w_y <- edge_plot$from_role == "mod" & edge_plot$to == y_var
+      idx_int_y <- edge_plot$from_role == "int" & edge_plot$to == y_var
+
+      if(any(idx_x_m1)) {
+        clipped[idx_x_m1, 1] <- edge_plot$x_from[idx_x_m1] + edge_plot$hw_from[idx_x_m1]
+        clipped[idx_x_m1, 2] <- edge_plot$y_from[idx_x_m1] + 0.52 * edge_plot$hh_from[idx_x_m1]
+        clipped[idx_x_m1, 3] <- edge_plot$x_to[idx_x_m1] - anchor_frac * edge_plot$hw_to[idx_x_m1]
+        clipped[idx_x_m1, 4] <- edge_plot$y_to[idx_x_m1] - edge_plot$hh_to[idx_x_m1]
+      }
+      if(any(idx_x_m2)) {
+        clipped[idx_x_m2, 1] <- edge_plot$x_from[idx_x_m2] + edge_plot$hw_from[idx_x_m2]
+        clipped[idx_x_m2, 2] <- edge_plot$y_from[idx_x_m2] - 0.52 * edge_plot$hh_from[idx_x_m2]
+        clipped[idx_x_m2, 3] <- edge_plot$x_to[idx_x_m2] - anchor_frac * edge_plot$hw_to[idx_x_m2]
+        clipped[idx_x_m2, 4] <- edge_plot$y_to[idx_x_m2] + edge_plot$hh_to[idx_x_m2]
+      }
+      if(any(idx_m1_y)) {
+        clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] + anchor_frac * edge_plot$hw_from[idx_m1_y]
+        clipped[idx_m1_y, 2] <- edge_plot$y_from[idx_m1_y] - edge_plot$hh_from[idx_m1_y]
+        clipped[idx_m1_y, 3] <- edge_plot$x_to[idx_m1_y] - edge_plot$hw_to[idx_m1_y]
+        clipped[idx_m1_y, 4] <- edge_plot$y_to[idx_m1_y] + 0.34 * edge_plot$hh_to[idx_m1_y]
+      }
+      if(any(idx_m2_y)) {
+        clipped[idx_m2_y, 1] <- edge_plot$x_from[idx_m2_y] + anchor_frac * edge_plot$hw_from[idx_m2_y]
+        clipped[idx_m2_y, 2] <- edge_plot$y_from[idx_m2_y] + edge_plot$hh_from[idx_m2_y]
+        clipped[idx_m2_y, 3] <- edge_plot$x_to[idx_m2_y] - edge_plot$hw_to[idx_m2_y]
+        clipped[idx_m2_y, 4] <- edge_plot$y_to[idx_m2_y] - 0.34 * edge_plot$hh_to[idx_m2_y]
+      }
+      if(any(idx_w_y)) {
+        # W above Y with vertical path to Y top-middle.
+        clipped[idx_w_y, 1] <- edge_plot$x_from[idx_w_y]
+        clipped[idx_w_y, 2] <- edge_plot$y_from[idx_w_y] - edge_plot$hh_from[idx_w_y]
+        clipped[idx_w_y, 3] <- edge_plot$x_to[idx_w_y]
+        clipped[idx_w_y, 4] <- edge_plot$y_to[idx_w_y] + edge_plot$hh_to[idx_w_y]
+      }
+      if(any(idx_int_y)) {
+        ids <- which(idx_int_y)
+        # Upper interaction: center-bottom -> Y upper-left corner.
+        # Lower interaction: center-top -> Y lower-left corner.
+        ord <- ids[order(-edge_plot$y_from[ids], edge_plot$from[ids])]
+        for(k in seq_along(ord)) {
+          i <- ord[[k]]
+          upper <- (k == 1)
+          clipped[i, 1] <- edge_plot$x_from[i]
+          clipped[i, 2] <- if(upper) edge_plot$y_from[i] - edge_plot$hh_from[i] else edge_plot$y_from[i] + edge_plot$hh_from[i]
+          clipped[i, 3] <- edge_plot$x_to[i] - edge_plot$hw_to[i]
+          clipped[i, 4] <- if(upper) edge_plot$y_to[i] + 0.72 * edge_plot$hh_to[i] else edge_plot$y_to[i] - 0.72 * edge_plot$hh_to[i]
+        }
       }
     }
   }
@@ -1741,11 +1801,11 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
 
     if(model_num == 14L) {
       if(length(mediators) == 1) {
-        # Midpoint-first for one-mediator mirror branch.
+        # Model 14 (1 mediator): keep vertical second-stage labels away from Y center.
         set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.50)
-        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.50)
-        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.50)
-        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.50)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.56)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.36)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.36)
       } else if(length(mediators) >= 2) {
         m1_name <- mediators[[1]]
         m2_name <- mediators[[2]]
@@ -1753,15 +1813,15 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.44)
         set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.58)
         set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.54)
-        set_t(edge_plot$to == y_var & edge_plot$from_role == "mod", 0.66)
-        set_t(edge_plot$to == y_var & edge_plot$from_role == "int", 0.46)
+        set_t(edge_plot$to == y_var & edge_plot$from_role == "mod", 0.42)
+        set_t(edge_plot$to == y_var & edge_plot$from_role == "int", 0.30)
         idx_int_y <- edge_plot$to == y_var & edge_plot$from_role == "int"
         if(sum(idx_int_y) > 1) {
           ids <- which(idx_int_y)
-          ord <- ids[order(edge_plot$x_from[ids], edge_plot$from[ids])]
-          edge_plot$t_label[ord] <- seq(0.44, 0.52, length.out = length(ord))
+          ord <- ids[order(-edge_plot$y_from[ids], edge_plot$from[ids])]
+          edge_plot$t_label[ord] <- seq(0.26, 0.34, length.out = length(ord))
         } else {
-          set_t(idx_int_y, 0.46)
+          set_t(idx_int_y, 0.30)
         }
       }
     }
@@ -2149,9 +2209,9 @@ build_graphviz_statistical_dot <- function(parsed, settings,
     }
     if(length(w_var) > 0) {
       if(n_m == 1) {
-        add_node(w_var, 0.84, 0.28)
+        add_node(w_var, 0.86, -0.56)
       } else {
-        add_node(w_var, 0.84, -0.56)
+        add_node(w_var, 0.86, 0.56)
       }
     }
   }
@@ -2168,9 +2228,10 @@ build_graphviz_statistical_dot <- function(parsed, settings,
         }
       } else {
         if(n_m == 1) {
-          add_node(int_lbl, 0.84 + 0.10 * (i - 1), 0.56 + 0.10 * (i - 1))
+          add_node(int_lbl, 0.86, 0.56 + 0.10 * (i - 1))
         } else {
-          add_node(int_lbl, 0.48 + 0.12 * (i - 1), -0.92 - 0.12 * (i - 1))
+          y_lane <- if(i == 1) 0.56 else if(i == 2) -0.56 else (0.56 - 0.28 * (i - 1))
+          add_node(int_lbl, 1.24 + 0.08 * (i - 1), y_lane)
         }
       }
     }
@@ -2254,10 +2315,9 @@ build_graphviz_statistical_dot <- function(parsed, settings,
             t_pos <- 0.54
           }
         } else if(edges$from[[i]] %in% mod_names) {
-          t_pos <- if(length(mediators) == 1) 0.58 else 0.66
+          t_pos <- if(length(mediators) == 1) 0.36 else 0.42
         } else if(edges$from[[i]] %in% int_names) {
-          # Mirror of the SD tweak: keep INT->Y lower/closer to INT for 2-mediator models.
-          t_pos <- if(length(mediators) == 1) 0.60 else 0.46
+          t_pos <- if(length(mediators) == 1) 0.36 else 0.30
         }
       }
       if(model_num == 7L && length(mediators) == 1 && identical(edges$to[[i]], y_var) && identical(edges$from[[i]], m1_name)) {
@@ -2284,7 +2344,46 @@ build_graphviz_statistical_dot <- function(parsed, settings,
   edge_lines <- vapply(seq_len(nrow(edges)), function(i) {
     fr <- node_ids[[edges$from[[i]]]]
     to <- node_ids[[edges$to[[i]]]]
-    paste0("  ", fr, " -> ", to, " [color=\"black\", penwidth=1.6, arrowsize=0.7];")
+    attrs <- c("color=\"black\"", "penwidth=1.6", "arrowsize=0.7")
+    if(model_num == 14L) {
+      from_nm <- edges$from[[i]]
+      to_nm <- edges$to[[i]]
+      if(identical(to_nm, y_var) && from_nm %in% mod_names) {
+        if(length(mediators) == 1) {
+          attrs <- c(attrs, "tailport=n", "headport=s")
+        } else {
+          attrs <- c(attrs, "tailport=s", "headport=n")
+        }
+      }
+      if(identical(to_nm, y_var) && from_nm %in% int_names) {
+        y_from <- get_node_xy(from_nm)[["y"]]
+        y_y <- get_node_xy(y_var)[["y"]]
+        if(isTRUE(y_from >= y_y)) {
+          attrs <- c(attrs, "tailport=s", "headport=w")
+        } else {
+          attrs <- c(attrs, "tailport=n", "headport=w")
+        }
+      }
+      if(length(mediators) >= 1) {
+        m1_name <- mediators[[1]]
+        if(identical(from_nm, x_var) && identical(to_nm, m1_name)) {
+          attrs <- c(attrs, "tailport=e", "headport=sw")
+        }
+        if(identical(from_nm, m1_name) && identical(to_nm, y_var)) {
+          attrs <- c(attrs, "tailport=se", "headport=w")
+        }
+      }
+      if(length(mediators) >= 2) {
+        m2_name <- mediators[[2]]
+        if(identical(from_nm, x_var) && identical(to_nm, m2_name)) {
+          attrs <- c(attrs, "tailport=e", "headport=nw")
+        }
+        if(identical(from_nm, m2_name) && identical(to_nm, y_var)) {
+          attrs <- c(attrs, "tailport=ne", "headport=w")
+        }
+      }
+    }
+    paste0("  ", fr, " -> ", to, " [", paste(attrs, collapse = ", "), "];")
   }, character(1))
 
   paste(
