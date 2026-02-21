@@ -603,7 +603,8 @@ format_interaction_label <- function(raw_label, settings) {
 build_template_diagram <- function(parsed, settings, diagram_type = c("conceptual", "statistical"),
                                     label_mode = "auto", show_interactions = TRUE, show_moderator_main_effects = TRUE,
                                     include_ci = FALSE, include_p = FALSE, include_stars = TRUE,
-                                    label_map = NULL, coef_digits = 3) {
+                                    label_map = NULL, coef_digits = 3,
+                                    plot_width_px = NULL, plot_height_px = NULL) {
   diagram_type <- match.arg(diagram_type)
   edges <- parsed$paths
   model_num <- suppressWarnings(as.integer(settings$model))
@@ -954,14 +955,26 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         add_node(mediators[[1]], 0.00, 0.46, "m")
         add_node(mediators[[2]], 0.00, -0.46, "m")
       }
-      if(length(w_var) > 0) add_node(w_var, -0.74, -0.46, "mod")
+      if(length(w_var) > 0) {
+        if(n_m == 1) {
+          # 1-mediator Model 7: keep W midway between INT and X levels.
+          add_node(w_var, -0.78, 0.23, "mod")
+        } else {
+          add_node(w_var, -0.78, -0.46, "mod")
+        }
+      }
       if(length(z_var) > 0) add_node(z_var, -0.92, 0.24, "mod")
       if(nrow(int_edges) > 0) {
         int_terms <- unique(int_edges$from)
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
-          add_node(int_lbl, -0.40 + 0.10 * (i - 1), -0.86 - 0.12 * (i - 1), "int")
+          if(n_m == 1) {
+            # 1-mediator Model 7: interaction term horizontally aligned with M1.
+            add_node(int_lbl, -0.78 + 0.08 * (i - 1), 0.46 + 0.10 * (i - 1), "int")
+          } else {
+            add_node(int_lbl, -0.40 + 0.10 * (i - 1), -0.86 - 0.12 * (i - 1), "int")
+          }
         }
       }
     } else if(model_num == 14L) {
@@ -1047,6 +1060,60 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     c(hw = hw, hh = hh)
   }
 
+  measure_node_half_box_precise <- function(labels, font_mm, x_span, y_span, width_px, height_px) {
+    if(length(labels) == 0) return(matrix(numeric(0), ncol = 2, dimnames = list(NULL, c("hw", "hh"))))
+    w_px <- suppressWarnings(as.numeric(width_px))
+    h_px <- suppressWarnings(as.numeric(height_px))
+    if(is.na(w_px) || is.na(h_px) || w_px <= 0 || h_px <= 0) {
+      return(NULL)
+    }
+
+    tf <- tempfile(fileext = ".png")
+    opened <- FALSE
+    on.exit({
+      if(opened) grDevices::dev.off()
+      if(file.exists(tf)) unlink(tf)
+    }, add = TRUE)
+
+    tryCatch({
+      grDevices::png(
+        filename = tf,
+        width = as.integer(max(400, round(w_px))),
+        height = as.integer(max(300, round(h_px))),
+        units = "px",
+        res = 96,
+        bg = "white"
+      )
+      opened <<- TRUE
+    }, error = function(e) {
+      opened <<- FALSE
+    })
+    if(!opened) return(NULL)
+
+    fontsize_pt <- font_mm * ggplot2::.pt
+    pad_in <- (0.25 * 1.2 * fontsize_pt) / 72.27
+    stroke_in <- 0.45 / 25.4
+
+    widths_in <- vapply(labels, function(lbl) {
+      tg <- grid::textGrob(lbl, gp = grid::gpar(fontsize = fontsize_pt, fontface = "bold"))
+      grid::convertWidth(grid::grobWidth(tg), "in", valueOnly = TRUE)
+    }, numeric(1))
+    heights_in <- vapply(labels, function(lbl) {
+      tg <- grid::textGrob(lbl, gp = grid::gpar(fontsize = fontsize_pt, fontface = "bold"))
+      grid::convertHeight(grid::grobHeight(tg), "in", valueOnly = TRUE)
+    }, numeric(1))
+
+    box_w_in <- widths_in + 2 * pad_in + stroke_in
+    box_h_in <- heights_in + 2 * pad_in + stroke_in
+
+    panel_w_in <- max(1e-6, w_px / 96)
+    panel_h_in <- max(1e-6, h_px / 96)
+
+    hw <- ((box_w_in / panel_w_in) * x_span / 2) * 1.04
+    hh <- ((box_h_in / panel_h_in) * y_span / 2) * 1.04
+    cbind(hw = pmax(hw, 0.055), hh = pmax(hh, 0.040))
+  }
+
   node_dims <- data.frame(
     name = nodes$name,
     hw = rep(0.085, nrow(nodes)),
@@ -1054,9 +1121,33 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     stringsAsFactors = FALSE
   )
   if(model_num %in% 1:7 && nrow(nodes) > 0) {
-    est <- t(vapply(nodes$label, estimate_node_half_box, numeric(2)))
-    node_dims$hw <- est[, "hw"]
-    node_dims$hh <- est[, "hh"]
+    use_m7_one_mediator_precise <- !identical(diagram_type, "conceptual") &&
+      identical(model_num, 7L) &&
+      length(mediators) == 1
+
+    if(use_m7_one_mediator_precise) {
+      est_heur <- t(vapply(nodes$label, estimate_node_half_box, numeric(2)))
+      est_precise <- measure_node_half_box_precise(
+        labels = nodes$label,
+        font_mm = 4.8,
+        x_span = 2.0,
+        y_span = 1.90,
+        width_px = plot_width_px,
+        height_px = plot_height_px
+      )
+      if(!is.null(est_precise) && nrow(est_precise) == nrow(nodes)) {
+        # Use measured bounds, but never smaller than heuristic fallback.
+        node_dims$hw <- pmax(est_precise[, "hw"], est_heur[, "hw"])
+        node_dims$hh <- pmax(est_precise[, "hh"], est_heur[, "hh"])
+      } else {
+        node_dims$hw <- est_heur[, "hw"]
+        node_dims$hh <- est_heur[, "hh"]
+      }
+    } else {
+      est <- t(vapply(nodes$label, estimate_node_half_box, numeric(2)))
+      node_dims$hw <- est[, "hw"]
+      node_dims$hh <- est[, "hh"]
+    }
   }
   from_dims <- node_dims
   names(from_dims) <- c("from", "hw_from", "hh_from")
@@ -1196,12 +1287,39 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     # Model 7 endpoint tuning:
     # - W->M2 starts from W middle-right.
     # - M1->Y starts from M1 bottom-right (mirrors X->M1 bottom-left landing).
+    # - X->Y is forced horizontal from X right-middle to Y left-middle.
+    idx_x_y <- edge_plot$from_role == "x" & edge_plot$to == y_var
+    if(any(idx_x_y)) {
+      clipped[idx_x_y, 1] <- edge_plot$x_from[idx_x_y] + edge_plot$hw_from[idx_x_y]
+      clipped[idx_x_y, 2] <- edge_plot$y_from[idx_x_y]
+      clipped[idx_x_y, 3] <- edge_plot$x_to[idx_x_y] - edge_plot$hw_to[idx_x_y]
+      clipped[idx_x_y, 4] <- edge_plot$y_to[idx_x_y]
+    }
     if(length(mediators) >= 1) {
       m1_name <- mediators[[1]]
       idx_w_m <- edge_plot$from_role == "mod" & edge_plot$to_role == "m"
       if(any(idx_w_m)) {
-        clipped[idx_w_m, 1] <- edge_plot$x_from[idx_w_m]
-        clipped[idx_w_m, 2] <- edge_plot$y_from[idx_w_m] + 0.90 * edge_plot$hh_from[idx_w_m]
+        if(length(mediators) >= 2) {
+          clipped[idx_w_m, 1] <- edge_plot$x_from[idx_w_m]
+          clipped[idx_w_m, 2] <- edge_plot$y_from[idx_w_m] + 0.90 * edge_plot$hh_from[idx_w_m]
+        } else {
+          # 1-mediator Model 7: W->M1 lands lower on M1 left edge (separate from INT->M1 endpoint).
+          idx_w_m1 <- edge_plot$from_role == "mod" & edge_plot$to == m1_name
+          if(any(idx_w_m1)) {
+            clipped[idx_w_m1, 1] <- edge_plot$x_from[idx_w_m1] + edge_plot$hw_from[idx_w_m1]
+            clipped[idx_w_m1, 2] <- edge_plot$y_from[idx_w_m1]
+            clipped[idx_w_m1, 3] <- edge_plot$x_to[idx_w_m1] - edge_plot$hw_to[idx_w_m1]
+            clipped[idx_w_m1, 4] <- edge_plot$y_to[idx_w_m1] - 0.62 * edge_plot$hh_to[idx_w_m1]
+          }
+          # 1-mediator Model 7: INT->M1 lands on M1 left-middle using the same box-edge reference.
+          idx_int_m1 <- edge_plot$from_role == "int" & edge_plot$to == m1_name
+          if(any(idx_int_m1)) {
+            clipped[idx_int_m1, 1] <- edge_plot$x_from[idx_int_m1] + edge_plot$hw_from[idx_int_m1]
+            clipped[idx_int_m1, 2] <- edge_plot$y_from[idx_int_m1]
+            clipped[idx_int_m1, 3] <- edge_plot$x_to[idx_int_m1] - edge_plot$hw_to[idx_int_m1]
+            clipped[idx_int_m1, 4] <- edge_plot$y_to[idx_int_m1]
+          }
+        }
       }
       if(length(mediators) >= 2) {
         m2_name <- mediators[[2]]
@@ -1337,16 +1455,17 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.44)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.44)
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.62)
-        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.54)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.44)
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.60)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.50)
         set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.58)
         set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.54)
       } else {
-        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.44)
-        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "mod", 0.54)
-        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "int", 0.60)
-        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.58)
+        # 1-mediator Model 7: midpoint labels on each path.
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.50)
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "mod", 0.50)
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "int", 0.50)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.50)
       }
     }
 
@@ -1544,10 +1663,10 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       values = c(
         direct = 0.80,
         mediator = 0.80,
-        moderator = 0.55,
-        interaction = 0.55,
-        covariate = 0.45,
-        unknown = 0.65
+        moderator = 0.80,
+        interaction = 0.80,
+        covariate = 0.80,
+        unknown = 0.80
       ),
       guide = "none"
     ) +
@@ -1705,12 +1824,21 @@ observeEvent(input$diagram_regenerate, {
   diagram_label_map(current)
 }, ignoreInit = TRUE)
 
+get_plot_dims_px <- function(output_id, fallback_w, fallback_h) {
+  w <- suppressWarnings(as.numeric(session$clientData[[paste0("output_", output_id, "_width")]]))
+  h <- suppressWarnings(as.numeric(session$clientData[[paste0("output_", output_id, "_height")]]))
+  if(is.na(w) || w <= 0) w <- fallback_w
+  if(is.na(h) || h <= 0) h <- fallback_h
+  list(width_px = w, height_px = h)
+}
+
 conceptual_diagram_plot_obj <- reactive({
   req(analysis_results())
   parsed <- diagram_parse_results()
   settings <- analysis_results()$settings
   mode_input <- input$diagram_coef_mode
   if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
+  dims <- get_plot_dims_px("conceptual_diagram_plot", 1000, 520)
 
   build_template_diagram(
     parsed = parsed,
@@ -1721,7 +1849,9 @@ conceptual_diagram_plot_obj <- reactive({
     include_ci = FALSE,
     include_p = FALSE,
     include_stars = FALSE,
-    label_map = diagram_label_map()
+    label_map = diagram_label_map(),
+    plot_width_px = dims$width_px,
+    plot_height_px = dims$height_px
   )
 })
 
@@ -1738,6 +1868,7 @@ statistical_diagram_plot_obj <- reactive({
   include_stars_opt <- if(is.null(input$diagram_include_stars)) TRUE else isTRUE(input$diagram_include_stars)
   coef_digits_opt <- suppressWarnings(as.integer(input$diagram_coef_digits))
   if(is.na(coef_digits_opt) || !(coef_digits_opt %in% c(2L, 3L))) coef_digits_opt <- 3L
+  dims <- get_plot_dims_px("statistical_diagram_plot", 1200, 700)
 
   build_template_diagram(
     parsed = parsed,
@@ -1750,7 +1881,9 @@ statistical_diagram_plot_obj <- reactive({
     include_p = include_p_opt,
     include_stars = include_stars_opt,
     label_map = diagram_label_map(),
-    coef_digits = coef_digits_opt
+    coef_digits = coef_digits_opt,
+    plot_width_px = dims$width_px,
+    plot_height_px = dims$height_px
   )
 })
 
@@ -1791,7 +1924,7 @@ output$conceptual_diagram_plot <- renderPlot({
     return(invisible(NULL))
   }
   print(conceptual_diagram_plot_obj())
-}, bg = "white")
+}, bg = "white", res = 96)
 
 output$statistical_diagram_plot <- renderPlot({
   if(is.null(analysis_results())) {
@@ -1800,7 +1933,7 @@ output$statistical_diagram_plot <- renderPlot({
     return(invisible(NULL))
   }
   print(statistical_diagram_plot_obj())
-}, bg = "white")
+}, bg = "white", res = 96)
 
 output$model_diagram_notes <- renderUI({
   if(is.null(analysis_results())) return(NULL)
@@ -1818,8 +1951,11 @@ output$download_conceptual_diagram <- downloadHandler(
   contentType = "image/jpeg",
   content = function(file) {
     req(analysis_results())
+    dims <- get_plot_dims_px("conceptual_diagram_plot", 1000, 520)
+    width_in <- dims$width_px / 96
+    height_in <- dims$height_px / 96
     p <- conceptual_diagram_plot_obj()
-    ggplot2::ggsave(file, plot = p, device = "jpeg", width = 10, height = 6.2, dpi = 600, units = "in", bg = "white")
+    ggplot2::ggsave(file, plot = p, device = "jpeg", width = width_in, height = height_in, dpi = 600, units = "in", bg = "white")
   }
 )
 
@@ -1831,8 +1967,11 @@ output$download_statistical_diagram <- downloadHandler(
   contentType = "image/jpeg",
   content = function(file) {
     req(analysis_results())
+    dims <- get_plot_dims_px("statistical_diagram_plot", 1200, 700)
+    width_in <- dims$width_px / 96
+    height_in <- dims$height_px / 96
     p <- statistical_diagram_plot_obj()
-    ggplot2::ggsave(file, plot = p, device = "jpeg", width = 12, height = 8, dpi = 600, units = "in", bg = "white")
+    ggplot2::ggsave(file, plot = p, device = "jpeg", width = width_in, height = height_in, dpi = 600, units = "in", bg = "white")
   }
 )
 
