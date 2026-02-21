@@ -1613,7 +1613,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.44)
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.68)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.46)
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.70)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.56)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.52)
         set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.58)
         set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.54)
@@ -2107,7 +2107,7 @@ build_graphviz_model7_statistical_dot <- function(parsed, settings,
           t_pos <- if(length(mediators) == 1) 0.58 else 0.68
         } else if(edges$from[[i]] %in% int_names) {
           # Keep INT->M1 just below W->M1.
-          t_pos <- if(length(mediators) == 1) 0.60 else 0.64
+          t_pos <- if(length(mediators) == 1) 0.60 else 0.54
         }
       }
       if(length(mediators) == 1 && identical(edges$to[[i]], y_var) && identical(edges$from[[i]], m1_name)) {
