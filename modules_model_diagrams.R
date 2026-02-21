@@ -782,11 +782,11 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         add_node(mediators[[2]], x0 + 0.75 * (x1 - x0), 0.52, "m")
       } else if(model_num == 7L) {
         if(n_m == 1) {
-          add_node(mediators[[1]], 0.00, 0.46, "m")
+          add_node(mediators[[1]], 0.06, 0.54, "m")
         } else if(n_m >= 2) {
           # Model 7 conceptual: keep mediators balanced around X->Y like Model 4.
-          add_node(mediators[[1]], 0.00, 0.46, "m")
-          add_node(mediators[[2]], 0.00, -0.46, "m")
+          add_node(mediators[[1]], 0.06, 0.54, "m")
+          add_node(mediators[[2]], 0.06, -0.54, "m")
         }
       } else if(model_num == 14L) {
         if(n_m == 1) {
@@ -806,7 +806,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           for(i in seq_along(mediators)) add_node(mediators[[i]], 0.00, med_y[[i]], "m")
         }
       }
-      if(length(w_var) > 0 && model_num == 7L) add_node(w_var, -0.66, 0.74, "mod")
+      if(length(w_var) > 0 && model_num == 7L) add_node(w_var, -0.74, 0.74, "mod")
       if(length(w_var) > 0 && model_num %in% c(5L, 8L)) add_node(w_var, -0.45, 0.55, "mod")
       if(length(w_var) > 0 && model_num == 14L) add_node(w_var, 0.45, 0.52, "mod")
       if(length(z_var) > 0) add_node(z_var, -0.55, 0.22, "mod")
@@ -956,22 +956,22 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         }
       }
     } else if(model_num == 7L) {
-      add_node(x_var, -0.78, 0.00, "x")
-      add_node(y_var, 0.80, 0.00, "y")
+      add_node(x_var, -0.84, 0.00, "x")
+      add_node(y_var, 0.86, 0.00, "y")
       n_m <- length(mediators)
       if(n_m == 1) {
-        add_node(mediators[[1]], 0.00, 0.46, "m")
+        add_node(mediators[[1]], 0.06, 0.56, "m")
       } else if(n_m >= 2) {
         # Model 7: keep mediator geometry balanced around X->Y like Model 4.
-        add_node(mediators[[1]], 0.00, 0.46, "m")
-        add_node(mediators[[2]], 0.00, -0.46, "m")
+        add_node(mediators[[1]], 0.06, 0.56, "m")
+        add_node(mediators[[2]], 0.06, -0.56, "m")
       }
       if(length(w_var) > 0) {
         if(n_m == 1) {
           # 1-mediator Model 7: keep W midway between INT and X levels.
-          add_node(w_var, -0.78, 0.23, "mod")
+          add_node(w_var, -0.84, 0.28, "mod")
         } else {
-          add_node(w_var, -0.78, -0.46, "mod")
+          add_node(w_var, -0.84, -0.56, "mod")
         }
       }
       if(length(z_var) > 0) add_node(z_var, -0.92, 0.24, "mod")
@@ -982,9 +982,9 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           int_lbl <- format_interaction_label(int_lbl, settings)
           if(n_m == 1) {
             # 1-mediator Model 7: interaction term horizontally aligned with M1.
-            add_node(int_lbl, -0.78 + 0.08 * (i - 1), 0.46 + 0.10 * (i - 1), "int")
+            add_node(int_lbl, -0.84 + 0.10 * (i - 1), 0.56 + 0.10 * (i - 1), "int")
           } else {
-            add_node(int_lbl, -0.40 + 0.10 * (i - 1), -0.86 - 0.12 * (i - 1), "int")
+            add_node(int_lbl, -0.48 + 0.12 * (i - 1), -0.92 - 0.12 * (i - 1), "int")
           }
         }
       }
@@ -1138,6 +1138,25 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     }
   }
   if(model_num == 7L && length(mediators) == 1 && nrow(nodes) > 0) {
+    # Conservative floor for the Model 7 (1 mediator) rect/text renderer:
+    # ensure label boxes expand robustly as names get longer.
+    est_conservative <- t(vapply(nodes$label, function(lbl) {
+      txt <- as.character(lbl)
+      if(is.na(txt) || !nzchar(txt)) return(c(hw = 0.10, hh = 0.06))
+      lines <- unlist(strsplit(txt, "\n", fixed = TRUE))
+      if(length(lines) == 0) lines <- ""
+      max_chars <- max(nchar(lines, type = "width"), na.rm = TRUE)
+      n_lines <- length(lines)
+      if(identical(diagram_type, "conceptual")) {
+        c(hw = 0.102 + 0.016 * max_chars, hh = 0.064 + 0.027 * n_lines)
+      } else {
+        c(hw = 0.070 + 0.0125 * max_chars, hh = 0.046 + 0.022 * n_lines)
+      }
+    }, numeric(2)))
+    node_dims$hw <- pmax(node_dims$hw, est_conservative[, "hw"])
+    node_dims$hh <- pmax(node_dims$hh, est_conservative[, "hh"])
+  }
+  if(model_num == 7L && length(mediators) == 1 && nrow(nodes) > 0) {
     m1_name <- mediators[[1]]
     get_hw <- function(node_name) {
       j <- match(node_name, node_dims$name)
@@ -1159,8 +1178,8 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
 
     # Anchor-sensitive layout for Model 7 (1 mediator):
     # keep key attachment sides fixed as labels grow/shrink.
-    x_right_ref <- if(identical(diagram_type, "conceptual")) -0.64 else -0.66
-    y_left_ref <- if(identical(diagram_type, "conceptual")) 0.64 else 0.66
+    x_right_ref <- if(identical(diagram_type, "conceptual")) -0.72 else -0.78
+    y_left_ref <- if(identical(diagram_type, "conceptual")) 0.72 else 0.78
     pin_right(x_var, x_right_ref)
     if(length(w_var) > 0) pin_right(w_var, x_right_ref)
     pin_left(y_var, y_left_ref)
@@ -1649,6 +1668,13 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     edge_plot$x_label <- edge_plot$x_from_draw + edge_plot$t_label * edge_plot$dx
     edge_plot$y_label <- edge_plot$y_from_draw + edge_plot$t_label * edge_plot$dy
   }
+  edge_plot$label_angle <- 0
+  if(!identical(diagram_type, "conceptual")) {
+    ang <- atan2(edge_plot$dy, edge_plot$dx) * 180 / pi
+    ang <- ifelse(ang > 90, ang - 180, ifelse(ang < -90, ang + 180, ang))
+    # Keep labels readable for steep paths.
+    edge_plot$label_angle <- pmax(pmin(ang, 75), -75)
+  }
 
   # Conceptual moderation cue arrows (to path midpoint only; no coefficient label)
   mod_cue <- data.frame(x = numeric(0), y = numeric(0), xend = numeric(0), yend = numeric(0))
@@ -1867,7 +1893,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     label_df <- edge_plot[nzchar(edge_plot$label), , drop = FALSE]
     p <- p + ggplot2::geom_label(
       data = label_df,
-      ggplot2::aes(x = x_label, y = y_label, label = label),
+      ggplot2::aes(x = x_label, y = y_label, label = label, angle = label_angle),
       size = 3.3,
       label.size = 0.2,
       fill = "white",
@@ -2016,7 +2042,7 @@ conceptual_diagram_plot_obj <- reactive({
   settings <- analysis_results()$settings
   mode_input <- input$diagram_coef_mode
   if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
-  dims <- get_plot_dims_px("conceptual_diagram_plot", 1000, 520)
+  dims <- get_plot_dims_px("conceptual_diagram_plot", 1200, 620)
 
   build_template_diagram(
     parsed = parsed,
@@ -2046,7 +2072,7 @@ statistical_diagram_plot_obj <- reactive({
   include_stars_opt <- if(is.null(input$diagram_include_stars)) TRUE else isTRUE(input$diagram_include_stars)
   coef_digits_opt <- suppressWarnings(as.integer(input$diagram_coef_digits))
   if(is.na(coef_digits_opt) || !(coef_digits_opt %in% c(2L, 3L))) coef_digits_opt <- 3L
-  dims <- get_plot_dims_px("statistical_diagram_plot", 1200, 700)
+  dims <- get_plot_dims_px("statistical_diagram_plot", 1500, 860)
 
   build_template_diagram(
     parsed = parsed,
@@ -2129,7 +2155,7 @@ output$download_conceptual_diagram <- downloadHandler(
   contentType = "image/jpeg",
   content = function(file) {
     req(analysis_results())
-    dims <- get_plot_dims_px("conceptual_diagram_plot", 1000, 520)
+    dims <- get_plot_dims_px("conceptual_diagram_plot", 1200, 620)
     width_in <- dims$width_px / 96
     height_in <- dims$height_px / 96
     p <- conceptual_diagram_plot_obj()
@@ -2145,7 +2171,7 @@ output$download_statistical_diagram <- downloadHandler(
   contentType = "image/jpeg",
   content = function(file) {
     req(analysis_results())
-    dims <- get_plot_dims_px("statistical_diagram_plot", 1200, 700)
+    dims <- get_plot_dims_px("statistical_diagram_plot", 1500, 860)
     width_in <- dims$width_px / 96
     height_in <- dims$height_px / 96
     p <- statistical_diagram_plot_obj()

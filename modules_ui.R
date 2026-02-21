@@ -756,10 +756,10 @@ ui <- fluidPage(
             ),
             htmlOutput("diagram_eligibility_msg"),
             h5("Conceptual Diagram"),
-            plotOutput("conceptual_diagram_plot", height = "520px", width = "100%"),
+            plotOutput("conceptual_diagram_plot", height = "620px", width = "100%"),
             br(),
             h5("Statistical Diagram"),
-            plotOutput("statistical_diagram_plot", height = "700px", width = "100%"),
+            plotOutput("statistical_diagram_plot", height = "860px", width = "100%"),
             htmlOutput("model_diagram_notes")
           ),
           conditionalPanel(
