@@ -1366,53 +1366,51 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   }
   if(model_num == 7L && length(mediators) == 1) {
     m1_name <- mediators[[1]]
-    side_gap <- if(identical(diagram_type, "conceptual")) {
-      pixel_gap_to_data(gap_px = 6.0, fallback_data = 0.010)
-    } else {
-      pixel_gap_to_data(gap_px = 5.0, fallback_data = 0.0042)
-    }
-    idx_x_y <- edge_plot$from_role == "x" & edge_plot$to == y_var
-    idx_x_m1 <- edge_plot$from_role == "x" & edge_plot$to == m1_name
-    idx_w_m1 <- edge_plot$from_role == "mod" & edge_plot$to == m1_name
-    idx_int_m1 <- edge_plot$from_role == "int" & edge_plot$to == m1_name
+    x_names <- nodes$name[nodes$role == "x"]
+    mod_names <- nodes$name[nodes$role == "mod"]
+    int_names <- nodes$name[nodes$role == "int"]
+    idx_x_y <- edge_plot$from %in% x_names & edge_plot$to == y_var
+    idx_x_m1 <- edge_plot$from %in% x_names & edge_plot$to == m1_name
+    idx_w_m1 <- edge_plot$from %in% mod_names & edge_plot$to == m1_name
+    idx_int_m1 <- edge_plot$from %in% int_names & edge_plot$to == m1_name
     idx_m1_y <- edge_plot$from == m1_name & edge_plot$to == y_var
 
     # Keep direct path anchored on fixed box sides regardless label width.
     if(any(idx_x_y)) {
-      clipped[idx_x_y, 1] <- edge_plot$x_from[idx_x_y] + edge_plot$hw_from[idx_x_y] + side_gap
+      clipped[idx_x_y, 1] <- edge_plot$x_from[idx_x_y] + edge_plot$hw_from[idx_x_y]
       clipped[idx_x_y, 2] <- edge_plot$y_from[idx_x_y]
-      clipped[idx_x_y, 3] <- edge_plot$x_to[idx_x_y] - edge_plot$hw_to[idx_x_y] - side_gap
+      clipped[idx_x_y, 3] <- edge_plot$x_to[idx_x_y] - edge_plot$hw_to[idx_x_y]
       clipped[idx_x_y, 4] <- edge_plot$y_to[idx_x_y]
     }
     # First-stage paths use explicit lane anchors on M1's left edge.
     if(any(idx_x_m1)) {
-      clipped[idx_x_m1, 1] <- edge_plot$x_from[idx_x_m1] + edge_plot$hw_from[idx_x_m1] + side_gap
+      clipped[idx_x_m1, 1] <- edge_plot$x_from[idx_x_m1] + edge_plot$hw_from[idx_x_m1]
       clipped[idx_x_m1, 2] <- edge_plot$y_from[idx_x_m1] + 0.52 * edge_plot$hh_from[idx_x_m1]
-      clipped[idx_x_m1, 3] <- edge_plot$x_to[idx_x_m1] - edge_plot$hw_to[idx_x_m1] - side_gap
+      clipped[idx_x_m1, 3] <- edge_plot$x_to[idx_x_m1] - edge_plot$hw_to[idx_x_m1]
       clipped[idx_x_m1, 4] <- edge_plot$y_to[idx_x_m1] - 0.34 * edge_plot$hh_to[idx_x_m1]
     }
     if(any(idx_w_m1)) {
-      clipped[idx_w_m1, 1] <- edge_plot$x_from[idx_w_m1] + edge_plot$hw_from[idx_w_m1] + side_gap
+      clipped[idx_w_m1, 1] <- edge_plot$x_from[idx_w_m1] + edge_plot$hw_from[idx_w_m1]
       clipped[idx_w_m1, 2] <- edge_plot$y_from[idx_w_m1]
-      clipped[idx_w_m1, 3] <- edge_plot$x_to[idx_w_m1] - edge_plot$hw_to[idx_w_m1] - side_gap
+      clipped[idx_w_m1, 3] <- edge_plot$x_to[idx_w_m1] - edge_plot$hw_to[idx_w_m1]
       clipped[idx_w_m1, 4] <- edge_plot$y_to[idx_w_m1] - 0.62 * edge_plot$hh_to[idx_w_m1]
     }
     if(any(idx_int_m1)) {
-      clipped[idx_int_m1, 1] <- edge_plot$x_from[idx_int_m1] + edge_plot$hw_from[idx_int_m1] + side_gap
+      clipped[idx_int_m1, 1] <- edge_plot$x_from[idx_int_m1] + edge_plot$hw_from[idx_int_m1]
       clipped[idx_int_m1, 2] <- edge_plot$y_from[idx_int_m1]
-      clipped[idx_int_m1, 3] <- edge_plot$x_to[idx_int_m1] - edge_plot$hw_to[idx_int_m1] - side_gap
+      clipped[idx_int_m1, 3] <- edge_plot$x_to[idx_int_m1] - edge_plot$hw_to[idx_int_m1]
       clipped[idx_int_m1, 4] <- edge_plot$y_to[idx_int_m1]
     }
     if(any(idx_m1_y)) {
       if(identical(diagram_type, "conceptual")) {
-        clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] + edge_plot$hw_from[idx_m1_y] + side_gap
+        clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] + edge_plot$hw_from[idx_m1_y]
         clipped[idx_m1_y, 2] <- edge_plot$y_from[idx_m1_y]
-        clipped[idx_m1_y, 3] <- edge_plot$x_to[idx_m1_y] - edge_plot$hw_to[idx_m1_y] - side_gap
-        clipped[idx_m1_y, 4] <- edge_plot$y_to[idx_m1_y]
       } else {
-        clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] + 0.95 * edge_plot$hw_from[idx_m1_y] + side_gap
+        clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] + 0.95 * edge_plot$hw_from[idx_m1_y]
         clipped[idx_m1_y, 2] <- edge_plot$y_from[idx_m1_y] - 0.95 * edge_plot$hh_from[idx_m1_y]
       }
+      clipped[idx_m1_y, 3] <- edge_plot$x_to[idx_m1_y] - edge_plot$hw_to[idx_m1_y]
+      clipped[idx_m1_y, 4] <- edge_plot$y_to[idx_m1_y]
     }
   } else if(!identical(diagram_type, "conceptual") && model_num == 7L) {
     # Preserve existing 2-mediator statistical tuning.
@@ -1442,15 +1440,10 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   # Use pixel-calibrated insets so the visible gap remains stable across app view and JPG export.
   edge_gap <- 0
   if(model_num %in% 1:7) {
-    if(model_num == 7L && length(mediators) == 1) {
-      # Model 7 (1 mediator) uses explicit side-gap anchor offsets above.
-      edge_gap <- 0
+    edge_gap <- if(identical(diagram_type, "conceptual")) {
+      pixel_gap_to_data(gap_px = 6.0, fallback_data = 0.010)
     } else {
-      edge_gap <- if(identical(diagram_type, "conceptual")) {
-        pixel_gap_to_data(gap_px = 6.0, fallback_data = 0.010)
-      } else {
-        pixel_gap_to_data(gap_px = 5.0, fallback_data = 0.0042)
-      }
+      pixel_gap_to_data(gap_px = 5.0, fallback_data = 0.0042)
     }
   }
   if(edge_gap > 0 && nrow(clipped) > 0) {
@@ -1749,18 +1742,70 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     mod_cue$yend <- cue_clip[, 4]
   }
 
-  title_txt <- paste0("Model ", settings$model, " ", if(identical(diagram_type, "conceptual")) "Conceptual" else "Statistical", " Diagram")
+  m7_one_mediator <- identical(model_num, 7L) && length(mediators) == 1
+  title_txt <- paste0(
+    "Model ",
+    settings$model,
+    " ",
+    if(identical(diagram_type, "conceptual")) "Conceptual" else "Statistical",
+    " Diagram"
+  )
   subtitle_txt <- if(identical(diagram_type, "conceptual")) {
     NULL
   } else {
     if(identical(label_mode, "std")) "Standardized coefficients" else "Unstandardized coefficients"
   }
+  nodes_draw <- nodes
+  nodes_draw$hw <- node_dims$hw[match(nodes_draw$name, node_dims$name)]
+  nodes_draw$hh <- node_dims$hh[match(nodes_draw$name, node_dims$name)]
+  nodes_draw$hw[is.na(nodes_draw$hw)] <- 0.085
+  nodes_draw$hh[is.na(nodes_draw$hh)] <- 0.055
+  if(m7_one_mediator) {
+    node_boxes <- nodes_draw
+    node_boxes$xmin <- node_boxes$x - node_boxes$hw
+    node_boxes$xmax <- node_boxes$x + node_boxes$hw
+    node_boxes$ymin <- node_boxes$y - node_boxes$hh
+    node_boxes$ymax <- node_boxes$y + node_boxes$hh
+  } else {
+    node_boxes <- NULL
+  }
   cue_linewidth <- 0.45
   cue_arrow_cm <- 0.12
-  if(identical(diagram_type, "conceptual") && identical(model_num, 7L) && length(mediators) == 1) {
+  if(identical(diagram_type, "conceptual") && m7_one_mediator) {
     # Match moderator cue style to all other path lines for Model 7 (1-mediator) conceptual.
     cue_linewidth <- 0.80
     cue_arrow_cm <- 0.15
+  }
+  node_layer <- if(m7_one_mediator) {
+    list(
+      ggplot2::geom_rect(
+        data = node_boxes,
+        ggplot2::aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+        fill = "white",
+        color = "black",
+        linewidth = 0.45,
+        inherit.aes = FALSE
+      ),
+      ggplot2::geom_text(
+        data = nodes_draw,
+        ggplot2::aes(x = x, y = y, label = label),
+        size = if(identical(diagram_type, "conceptual")) 5.4 else 4.8,
+        color = "black",
+        fontface = "bold"
+      )
+    )
+  } else {
+    list(
+      ggplot2::geom_label(
+        data = nodes,
+        ggplot2::aes(x = x, y = y, label = label),
+        size = if(identical(diagram_type, "conceptual")) 5.4 else 4.8,
+        label.size = 0.45,
+        fill = "white",
+        color = "black",
+        fontface = "bold"
+      )
+    )
   }
   
   p <- ggplot2::ggplot() +
@@ -1771,15 +1816,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       color = "black",
       lineend = "butt"
     ) +
-    ggplot2::geom_label(
-      data = nodes,
-      ggplot2::aes(x = x, y = y, label = label),
-      size = if(identical(diagram_type, "conceptual")) 5.4 else 4.8,
-      label.size = 0.45,
-      fill = "white",
-      color = "black",
-      fontface = "bold"
-    ) +
+    node_layer +
     ggplot2::geom_segment(
       data = mod_cue,
       ggplot2::aes(x = x, y = y, xend = xend, yend = yend),
