@@ -1023,7 +1023,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     hh = rep(0.055, nrow(nodes)),
     stringsAsFactors = FALSE
   )
-  if(model_num %in% 1:6 && nrow(nodes) > 0) {
+  if(model_num %in% 1:7 && nrow(nodes) > 0) {
     est <- t(vapply(nodes$label, estimate_node_half_box, numeric(2)))
     node_dims$hw <- est[, "hw"]
     node_dims$hh <- est[, "hh"]
@@ -1121,10 +1121,10 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     edge_plot$x_from, edge_plot$y_from, edge_plot$x_to, edge_plot$y_to,
     edge_plot$hw_from, edge_plot$hh_from, edge_plot$hw_to, edge_plot$hh_to
   ))
-  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L, 3L)) {
+  if(!identical(diagram_type, "conceptual") && model_num %in% c(1L, 2L, 3L, 7L)) {
     idx_to_y <- which(edge_plot$to == y_var)
     if(length(idx_to_y) > 0) {
-      # Requested for Models 1-3: all paths to Y leave source nodes from right-middle.
+      # Requested for Models 1-3 (extended to 7): all paths to Y leave source nodes from right-middle.
       clipped[idx_to_y, 1] <- edge_plot$x_from[idx_to_y] + edge_plot$hw_from[idx_to_y]
       clipped[idx_to_y, 2] <- edge_plot$y_from[idx_to_y]
       # Paths terminate on Y's left edge.
@@ -1153,7 +1153,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           clipped[ord_other, 4] <- y_vals
         }
       } else {
-        # Models 2-3: equally space all Y-bound terminations from top to bottom.
+        # Models 2-3-7: equally space all Y-bound terminations from top to bottom.
         ord <- idx_to_y[order(-edge_plot$y_from[idx_to_y], edge_plot$from[idx_to_y])]
         y_mid <- edge_plot$y_to[ord][1]
         h <- edge_plot$hh_to[ord][1]
@@ -1162,10 +1162,10 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
     }
   }
-  # Models 1-6 spacing pass: enforce a consistent visible white-space gap at both node ends.
+  # Models 1-7 spacing pass: enforce a consistent visible white-space gap at both node ends.
   # Conceptual diagrams need a larger inset because node labels are intentionally larger.
   edge_gap <- 0
-  if(model_num %in% 1:6) {
+  if(model_num %in% 1:7) {
     edge_gap <- if(identical(diagram_type, "conceptual")) 0.010 else 0.0042
   }
   if(edge_gap > 0 && nrow(clipped) > 0) {
