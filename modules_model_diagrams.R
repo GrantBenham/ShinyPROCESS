@@ -1018,7 +1018,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           # Model 14 (1 mediator): W vertically aligned under Y.
           add_node(w_var, 0.82, -0.56, "mod")
         } else {
-          # Model 14 (2 mediators): W vertically aligned above Y.
+          # Model 14 (2 mediators): W above Y (same centerline), left of INT lanes.
           add_node(w_var, 0.82, 0.56, "mod")
         }
       }
@@ -1032,9 +1032,10 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
             # Model 14 (1 mediator): INT vertically aligned above Y.
             add_node(int_lbl, 0.82, 0.56 + 0.10 * (i - 1), "int")
           } else {
-            # Model 14 (2 mediators): interaction terms to the right, vertically aligned to mediator lanes.
+            # Model 14 (2 mediators): interaction terms to the right of W, aligned to mediator lanes.
             y_lane <- if(i == 1) 0.56 else if(i == 2) -0.56 else (0.56 - 0.28 * (i - 1))
-            add_node(int_lbl, 1.10 + 0.08 * (i - 1), y_lane, "int")
+            x_lane <- if(i <= 2) 1.16 else (1.16 + 0.08 * (i - 2))
+            add_node(int_lbl, x_lane, y_lane, "int")
           }
         }
       }
@@ -1593,13 +1594,13 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         clipped[idx_m1_y, 1] <- edge_plot$x_from[idx_m1_y] + anchor_frac * edge_plot$hw_from[idx_m1_y]
         clipped[idx_m1_y, 2] <- edge_plot$y_from[idx_m1_y] - edge_plot$hh_from[idx_m1_y]
         clipped[idx_m1_y, 3] <- edge_plot$x_to[idx_m1_y] - edge_plot$hw_to[idx_m1_y]
-        clipped[idx_m1_y, 4] <- edge_plot$y_to[idx_m1_y] + 0.34 * edge_plot$hh_to[idx_m1_y]
+        clipped[idx_m1_y, 4] <- edge_plot$y_to[idx_m1_y] + 0.62 * edge_plot$hh_to[idx_m1_y]
       }
       if(any(idx_m2_y)) {
         clipped[idx_m2_y, 1] <- edge_plot$x_from[idx_m2_y] + anchor_frac * edge_plot$hw_from[idx_m2_y]
         clipped[idx_m2_y, 2] <- edge_plot$y_from[idx_m2_y] + edge_plot$hh_from[idx_m2_y]
         clipped[idx_m2_y, 3] <- edge_plot$x_to[idx_m2_y] - edge_plot$hw_to[idx_m2_y]
-        clipped[idx_m2_y, 4] <- edge_plot$y_to[idx_m2_y] - 0.34 * edge_plot$hh_to[idx_m2_y]
+        clipped[idx_m2_y, 4] <- edge_plot$y_to[idx_m2_y] - 0.62 * edge_plot$hh_to[idx_m2_y]
       }
       if(any(idx_w_y)) {
         # W above Y with vertical path to Y top-middle.
@@ -1610,16 +1611,16 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
       if(any(idx_int_y)) {
         ids <- which(idx_int_y)
-        # Upper interaction: center-bottom -> Y upper-left corner.
-        # Lower interaction: center-top -> Y lower-left corner.
+        # Upper interaction: center-bottom -> Y upper-right corner.
+        # Lower interaction: center-top -> Y lower-right corner.
         ord <- ids[order(-edge_plot$y_from[ids], edge_plot$from[ids])]
         for(k in seq_along(ord)) {
           i <- ord[[k]]
           upper <- (k == 1)
           clipped[i, 1] <- edge_plot$x_from[i]
           clipped[i, 2] <- if(upper) edge_plot$y_from[i] - edge_plot$hh_from[i] else edge_plot$y_from[i] + edge_plot$hh_from[i]
-          clipped[i, 3] <- edge_plot$x_to[i] - edge_plot$hw_to[i]
-          clipped[i, 4] <- if(upper) edge_plot$y_to[i] + 0.72 * edge_plot$hh_to[i] else edge_plot$y_to[i] - 0.72 * edge_plot$hh_to[i]
+          clipped[i, 3] <- edge_plot$x_to[i] + edge_plot$hw_to[i]
+          clipped[i, 4] <- if(upper) edge_plot$y_to[i] + 0.95 * edge_plot$hh_to[i] else edge_plot$y_to[i] - 0.95 * edge_plot$hh_to[i]
         }
       }
     }
@@ -1844,6 +1845,22 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       ang <- ifelse(ang > 90, ang - 180, ifelse(ang < -90, ang + 180, ang))
       # Keep labels readable for steep paths.
       edge_plot$label_angle <- pmax(pmin(ang, 75), -75)
+      if(model_num == 14L) {
+        # For Model 14 second-stage paths, follow line orientation exactly (including near-vertical paths).
+        idx_stage2 <- edge_plot$to == y_var & edge_plot$from_role %in% c("mod", "int")
+        if(any(idx_stage2)) {
+          # Use center-to-center vector (not clipped segment) for robust orientation
+          # when endpoint anchoring is customized near the Y box.
+          dx_stage2 <- edge_plot$x_to[idx_stage2] - edge_plot$x_from[idx_stage2]
+          dy_stage2 <- edge_plot$y_to[idx_stage2] - edge_plot$y_from[idx_stage2]
+          ang_stage2 <- atan2(dy_stage2, dx_stage2) * 180 / pi
+          ang_stage2 <- ifelse(ang_stage2 > 90, ang_stage2 - 180, ifelse(ang_stage2 < -90, ang_stage2 + 180, ang_stage2))
+          # Snap near-vertical paths to true vertical so W->Y / INT->Y labels track the line cleanly.
+          near_vertical <- abs(abs(ang_stage2) - 90) < 8
+          ang_stage2[near_vertical] <- ifelse(ang_stage2[near_vertical] >= 0, 90, -90)
+          edge_plot$label_angle[idx_stage2] <- ang_stage2
+        }
+      }
     } else {
       edge_plot$label_angle <- 0
     }
@@ -2231,7 +2248,8 @@ build_graphviz_statistical_dot <- function(parsed, settings,
           add_node(int_lbl, 0.86, 0.56 + 0.10 * (i - 1))
         } else {
           y_lane <- if(i == 1) 0.56 else if(i == 2) -0.56 else (0.56 - 0.28 * (i - 1))
-          add_node(int_lbl, 1.24 + 0.08 * (i - 1), y_lane)
+          x_lane <- if(i <= 2) 1.22 else (1.22 + 0.08 * (i - 2))
+          add_node(int_lbl, x_lane, y_lane)
         }
       }
     }
@@ -2358,10 +2376,14 @@ build_graphviz_statistical_dot <- function(parsed, settings,
       if(identical(to_nm, y_var) && from_nm %in% int_names) {
         y_from <- get_node_xy(from_nm)[["y"]]
         y_y <- get_node_xy(y_var)[["y"]]
-        if(isTRUE(y_from >= y_y)) {
-          attrs <- c(attrs, "tailport=s", "headport=w")
+        if(length(mediators) == 1) {
+          attrs <- c(attrs, "tailport=s", "headport=n")
         } else {
-          attrs <- c(attrs, "tailport=n", "headport=w")
+          if(isTRUE(y_from >= y_y)) {
+            attrs <- c(attrs, "tailport=s", "headport=ne")
+          } else {
+            attrs <- c(attrs, "tailport=n", "headport=se")
+          }
         }
       }
       if(length(mediators) >= 1) {
@@ -2370,7 +2392,7 @@ build_graphviz_statistical_dot <- function(parsed, settings,
           attrs <- c(attrs, "tailport=e", "headport=sw")
         }
         if(identical(from_nm, m1_name) && identical(to_nm, y_var)) {
-          attrs <- c(attrs, "tailport=se", "headport=w")
+          attrs <- c(attrs, "tailport=se", "headport=nw")
         }
       }
       if(length(mediators) >= 2) {
@@ -2379,7 +2401,7 @@ build_graphviz_statistical_dot <- function(parsed, settings,
           attrs <- c(attrs, "tailport=e", "headport=nw")
         }
         if(identical(from_nm, m2_name) && identical(to_nm, y_var)) {
-          attrs <- c(attrs, "tailport=ne", "headport=w")
+          attrs <- c(attrs, "tailport=ne", "headport=sw")
         }
       }
     }
