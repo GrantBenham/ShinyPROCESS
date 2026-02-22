@@ -1299,6 +1299,42 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     }
     pin_left(y_var, y_left_ref)
   }
+  if(!identical(diagram_type, "conceptual") && model_num == 2L && nrow(nodes) > 0) {
+    # Model 2 statistical: stabilize left cluster and Y anchor sides so
+    # start/end attachment points stay consistent as labels expand.
+    get_hw <- function(node_name) {
+      j <- match(node_name, node_dims$name)
+      if(is.na(j)) return(0.085)
+      node_dims$hw[[j]]
+    }
+    pin_right <- function(node_name, x_right_ref) {
+      idx <- which(nodes$name == node_name)
+      if(length(idx) == 0) return()
+      hw <- get_hw(node_name)
+      nodes$x[idx[[1]]] <<- x_right_ref - hw
+    }
+    pin_left <- function(node_name, x_left_ref) {
+      idx <- which(nodes$name == node_name)
+      if(length(idx) == 0) return()
+      hw <- get_hw(node_name)
+      nodes$x[idx[[1]]] <<- x_left_ref + hw
+    }
+
+    x_right_ref <- -0.66
+    y_left_ref <- 0.66
+    pin_right(x_var, x_right_ref)
+    if(length(w_var) > 0) pin_right(w_var, x_right_ref)
+    if(length(z_var) > 0) pin_right(z_var, x_right_ref)
+
+    idx_int <- which(nodes$role == "int")
+    if(length(idx_int) > 0) {
+      for(i in idx_int) {
+        nm <- nodes$name[[i]]
+        nodes$x[[i]] <- x_right_ref - get_hw(nm)
+      }
+    }
+    pin_left(y_var, y_left_ref)
+  }
 
   from_xy <- nodes[, c("name", "x", "y")]
   names(from_xy) <- c("from", "x_from", "y_from")
@@ -1465,6 +1501,44 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           h <- edge_plot$hh_to[ord_other][1]
           y_vals <- if(length(ord_other) == 1) y_mid else seq(y_mid + 0.72 * h, y_mid - 0.72 * h, length.out = length(ord_other))
           clipped[ord_other, 4] <- y_vals
+        }
+      } else if(model_num == 2L) {
+        # Model 2: keep X->Y horizontal at center; distribute all other Y-bound
+        # terminations from top to bottom to avoid endpoint stacking.
+        idx_x <- idx_to_y[edge_plot$from_role[idx_to_y] == "x"]
+        if(length(idx_x) > 0) {
+          clipped[idx_x, 4] <- edge_plot$y_to[idx_x]
+        }
+        idx_other <- setdiff(idx_to_y, idx_x)
+        if(length(idx_other) > 0) {
+          x_src_y <- if(length(idx_x) > 0) edge_plot$y_from[idx_x[[1]]] else 0
+          y_mid <- edge_plot$y_to[idx_other][1]
+          h <- edge_plot$hh_to[idx_other][1]
+
+          idx_top <- idx_other[edge_plot$y_from[idx_other] >= x_src_y]
+          idx_bot <- idx_other[edge_plot$y_from[idx_other] < x_src_y]
+
+          if(length(idx_top) > 0) {
+            ord_top <- idx_top[order(-edge_plot$y_from[idx_top], edge_plot$from[idx_top])]
+            y_top <- if(length(ord_top) == 1) {
+              y_mid + 0.72 * h
+            } else {
+              seq(y_mid + 0.72 * h, y_mid + 0.24 * h, length.out = length(ord_top))
+            }
+            clipped[ord_top, 4] <- y_top
+          }
+
+          if(length(idx_bot) > 0) {
+            # Keep the source closest to X just below the X->Y center lane
+            # (e.g., Z main effect), with lower interaction paths stacked below.
+            ord_bot <- idx_bot[order(-edge_plot$y_from[idx_bot], edge_plot$from[idx_bot])]
+            y_bot <- if(length(ord_bot) == 1) {
+              y_mid - 0.60 * h
+            } else {
+              seq(y_mid - 0.24 * h, y_mid - 0.72 * h, length.out = length(ord_bot))
+            }
+            clipped[ord_bot, 4] <- y_bot
+          }
         }
       } else {
         # Models 2-3-7: equally space all Y-bound terminations from top to bottom.
@@ -2192,7 +2266,7 @@ build_graphviz_statistical_dot <- function(parsed, settings,
                                                    label_map = NULL,
                                                    coef_digits = 3) {
   model_num <- suppressWarnings(as.integer(settings$model))
-  if(!(model_num %in% c(1L, 7L, 14L))) return(NULL)
+  if(!(model_num %in% c(1L, 2L, 7L, 14L))) return(NULL)
   edges <- parsed$paths
   if(nrow(edges) == 0) return(NULL)
   edges <- edges[edges$path_kind != "covariate", , drop = FALSE]
@@ -2246,6 +2320,16 @@ build_graphviz_statistical_dot <- function(parsed, settings,
         add_node(int_terms[[i]], -0.84, y_pos[[i]])
       }
     }
+  } else if(model_num == 2L) {
+    if(length(w_var) > 0) add_node(w_var, -0.84, 0.22)
+    if(length(z_var) > 0) add_node(z_var, -0.84, -0.22)
+    if(nrow(int_edges) > 0) {
+      int_terms <- unique(int_edges$from)
+      y_pos <- seq(-0.56, -0.86, length.out = length(int_terms))
+      for(i in seq_along(int_terms)) {
+        add_node(int_terms[[i]], -0.84, y_pos[[i]])
+      }
+    }
   } else if(model_num == 7L) {
     if(n_m == 1) {
       add_node(mediators[[1]], 0.06, 0.56)
@@ -2276,7 +2360,7 @@ build_graphviz_statistical_dot <- function(parsed, settings,
       }
     }
   }
-  if(length(z_var) > 0) add_node(z_var, -0.92, 0.24)
+  if(length(z_var) > 0 && !any(nodes$name == z_var)) add_node(z_var, -0.92, 0.24)
   if(nrow(int_edges) > 0 && model_num %in% c(7L, 14L)) {
     int_terms <- unique(int_edges$from)
     for(i in seq_along(int_terms)) {
@@ -2367,7 +2451,7 @@ build_graphviz_statistical_dot <- function(parsed, settings,
           t_pos <- if(length(mediators) == 1) 0.60 else 0.54
         }
       }
-      if(model_num == 1L && identical(edges$to[[i]], y_var)) {
+      if(model_num %in% c(1L, 2L) && identical(edges$to[[i]], y_var)) {
         from_nm <- edges$from[[i]]
         if(from_nm %in% mod_names) {
           t_pos <- 0.38
@@ -2417,14 +2501,15 @@ build_graphviz_statistical_dot <- function(parsed, settings,
     fr <- node_ids[[edges$from[[i]]]]
     to <- node_ids[[edges$to[[i]]]]
     attrs <- c("color=\"black\"", "penwidth=1.6", "arrowsize=0.7")
-    if(model_num == 1L) {
+    if(model_num %in% c(1L, 2L)) {
       from_nm <- edges$from[[i]]
       to_nm <- edges$to[[i]]
       if(identical(to_nm, y_var)) {
         attrs <- c(attrs, "tailport=e")
-        if(from_nm %in% mod_names) {
+        y_from <- get_node_xy(from_nm)[["y"]]
+        if(from_nm %in% mod_names && y_from >= 0) {
           attrs <- c(attrs, "headport=nw")
-        } else if(from_nm %in% int_names) {
+        } else if(from_nm %in% int_names || (from_nm %in% mod_names && y_from < 0)) {
           attrs <- c(attrs, "headport=sw")
         } else if(identical(from_nm, x_var)) {
           attrs <- c(attrs, "headport=w")
@@ -2733,10 +2818,10 @@ output$statistical_diagram_plot <- renderPlot({
 output$graphviz_statistical_ui <- renderUI({
   if(is.null(analysis_results())) return(NULL)
   model_num <- suppressWarnings(as.integer(analysis_results()$settings$model))
-  if(!(model_num %in% c(1L, 7L, 14L))) {
+  if(!(model_num %in% c(1L, 2L, 7L, 14L))) {
     return(tags$div(
       style = "margin-top: 8px; color: #666;",
-      "Experimental Graphviz comparison is currently shown for Models 1, 7, and 14 only."
+      "Experimental Graphviz comparison is currently shown for Models 1, 2, 7, and 14 only."
     ))
   }
   if(!requireNamespace("DiagrammeR", quietly = TRUE)) {
@@ -2761,8 +2846,8 @@ if(requireNamespace("DiagrammeR", quietly = TRUE)) {
     req(analysis_results())
     settings <- analysis_results()$settings
     model_num <- suppressWarnings(as.integer(settings$model))
-    if(!(model_num %in% c(1L, 7L, 14L))) {
-      return(DiagrammeR::grViz("digraph G { graph [bgcolor='white']; note [shape=box, label='Graphviz comparison is currently available for Models 1, 7, and 14 only.']; }"))
+    if(!(model_num %in% c(1L, 2L, 7L, 14L))) {
+      return(DiagrammeR::grViz("digraph G { graph [bgcolor='white']; note [shape=box, label='Graphviz comparison is currently available for Models 1, 2, 7, and 14 only.']; }"))
     }
     parsed <- diagram_parse_results()
     mode_input <- input$diagram_coef_mode
