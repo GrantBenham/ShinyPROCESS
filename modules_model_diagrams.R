@@ -610,6 +610,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
                                     include_ci = FALSE, include_p = FALSE, include_stars = TRUE,
                                     label_map = NULL, coef_digits = 3,
                                     coef_label_size = 3.3, coef_label_orientation = "line",
+                                    fill_variable_boxes_blue = FALSE,
                                     plot_width_px = NULL, plot_height_px = NULL) {
   diagram_type <- match.arg(diagram_type)
   edges <- parsed$paths
@@ -2543,6 +2544,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   }
 
   rect_one_mediator <- model_num %in% c(7L, 14L) && length(mediators) == 1
+  node_fill_color <- if(isTRUE(fill_variable_boxes_blue)) "#DCEEFF" else "white"
   title_txt <- paste0(
     "Model ",
     settings$model,
@@ -2579,14 +2581,14 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   }
   node_layer <- if(rect_one_mediator) {
     list(
-      ggplot2::geom_rect(
-        data = node_boxes,
-        ggplot2::aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-        fill = "white",
-        color = "black",
-        linewidth = 0.45,
-        inherit.aes = FALSE
-      ),
+        ggplot2::geom_rect(
+          data = node_boxes,
+          ggplot2::aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+          fill = node_fill_color,
+          color = "black",
+          linewidth = 0.45,
+          inherit.aes = FALSE
+        ),
       ggplot2::geom_text(
         data = nodes_draw,
         ggplot2::aes(x = x, y = y, label = label),
@@ -2602,7 +2604,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         ggplot2::aes(x = x, y = y, label = label),
         size = if(identical(diagram_type, "conceptual")) 5.4 else 4.8,
         label.size = 0.45,
-        fill = "white",
+        fill = node_fill_color,
         color = "black",
         fontface = "bold"
       )
@@ -3408,6 +3410,7 @@ conceptual_diagram_plot_obj <- reactive({
   settings <- analysis_results()$settings
   mode_input <- input$diagram_coef_mode
   if(is.null(mode_input) || mode_input == "") mode_input <- "raw"
+  fill_var_boxes_blue_opt <- if(is.null(input$diagram_fill_variable_boxes_blue)) FALSE else isTRUE(input$diagram_fill_variable_boxes_blue)
   dims <- get_plot_dims_px("conceptual_diagram_plot", 1200, 620)
 
   build_template_diagram(
@@ -3420,6 +3423,7 @@ conceptual_diagram_plot_obj <- reactive({
     include_p = FALSE,
     include_stars = FALSE,
     label_map = diagram_label_map(),
+    fill_variable_boxes_blue = fill_var_boxes_blue_opt,
     plot_width_px = dims$width_px,
     plot_height_px = dims$height_px
   )
@@ -3442,6 +3446,7 @@ statistical_diagram_plot_obj <- reactive({
   if(is.na(coef_label_size_opt) || coef_label_size_opt < 2.0 || coef_label_size_opt > 5.0) coef_label_size_opt <- 3.3
   coef_label_orient_opt <- tolower(trimws(as.character(input$diagram_coef_orientation)))
   if(!coef_label_orient_opt %in% c("line", "horizontal")) coef_label_orient_opt <- "line"
+  fill_var_boxes_blue_opt <- if(is.null(input$diagram_fill_variable_boxes_blue)) FALSE else isTRUE(input$diagram_fill_variable_boxes_blue)
   dims <- get_plot_dims_px("statistical_diagram_plot", 1500, 860)
 
   build_template_diagram(
@@ -3458,6 +3463,7 @@ statistical_diagram_plot_obj <- reactive({
     coef_digits = coef_digits_opt,
     coef_label_size = coef_label_size_opt,
     coef_label_orientation = coef_label_orient_opt,
+    fill_variable_boxes_blue = fill_var_boxes_blue_opt,
     plot_width_px = dims$width_px,
     plot_height_px = dims$height_px
   )

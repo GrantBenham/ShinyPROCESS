@@ -736,30 +736,12 @@ ui <- fluidPage(
                       ),
                       checkboxInput("diagram_include_stars", "Include significance stars", value = TRUE),
                       checkboxInput("diagram_include_ci", "Include confidence intervals (PROCESS model-table CIs; not bootstrap CIs)", value = FALSE),
-                    checkboxInput("diagram_include_p", "Include p-values", value = FALSE)
+                      checkboxInput("diagram_include_p", "Include p-values", value = FALSE),
+                      checkboxInput("diagram_fill_variable_boxes_blue", "Fill variable label boxes (light blue)", value = FALSE)
                   )
                 )
               ),
-              fluidRow(
-                column(
-                  4,
-                  downloadButton(
-                    "download_conceptual_diagram",
-                    "Download Conceptual (JPG)",
-                    class = "btn-success",
-                    style = "background-color: #90EE90; border-color: #90EE90; color: #000;"
-                  )
-                ),
-                column(
-                  4,
-                  downloadButton(
-                    "download_statistical_diagram",
-                    "Download Statistical (JPG)",
-                    class = "btn-success",
-                    style = "background-color: #90EE90; border-color: #90EE90; color: #000;"
-                  )
-                )
-              )
+              NULL
             ),
             uiOutput("diagram_label_editor"),
             tags$div(
@@ -774,9 +756,27 @@ ui <- fluidPage(
             htmlOutput("diagram_eligibility_msg"),
             h5("Conceptual Diagram"),
             plotOutput("conceptual_diagram_plot", height = "620px", width = "100%"),
+            div(
+              style = "margin: 8px 0 18px 0;",
+              downloadButton(
+                "download_conceptual_diagram",
+                "Download Conceptual (JPG)",
+                class = "btn-success",
+                style = "background-color: #90EE90; border-color: #90EE90; color: #000;"
+              )
+            ),
             br(),
             h5("Statistical Diagram"),
             plotOutput("statistical_diagram_plot", height = "860px", width = "100%"),
+            div(
+              style = "margin: 8px 0 8px 0;",
+              downloadButton(
+                "download_statistical_diagram",
+                "Download Statistical (JPG)",
+                class = "btn-success",
+                style = "background-color: #90EE90; border-color: #90EE90; color: #000;"
+              )
+            ),
             uiOutput("graphviz_statistical_ui"),
             htmlOutput("model_diagram_notes")
           ),
@@ -890,7 +890,7 @@ ui <- fluidPage(
                 tags$strong("Adjust Diagram Display"),
                 ": In the ",
                 tags$code("Model Diagram"),
-                " tab, you can choose coefficient mode (unstandardized/standardized when available), edit diagram labels, toggle stars/CIs/p-values, and set coefficient label orientation/font size. Confidence interval labels in diagrams use PROCESS model-table CIs (not bootstrap coefficient CIs)."
+                " tab, you can choose coefficient mode (unstandardized/standardized when available), edit diagram labels, toggle stars/CIs/p-values, set coefficient label orientation/font size, and optionally fill variable label boxes light blue. Confidence interval labels in diagrams use PROCESS model-table CIs (not bootstrap coefficient CIs)."
               )
             ),
 
