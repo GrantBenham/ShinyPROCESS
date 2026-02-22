@@ -400,33 +400,6 @@ ui <- fluidPage(
           )
         ),
         
-        # Live Plot Settings (renamed from Plot Options) - Only for moderation models
-        conditionalPanel(
-          condition = "output.is_plot_model === true",
-          tags$details(
-            tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
-                        "Live Plot Settings"),
-            div(style = "margin-left: 15px; margin-top: 10px;",
-              h5("Simple Slopes Plot Settings"),
-              checkboxInput("use_color_lines", "Use color for lines", value = TRUE),
-              checkboxInput("custom_y_axis", "Customize y-axis range", value = FALSE),
-              conditionalPanel(
-                condition = "input.custom_y_axis == true",
-                numericInput("y_axis_min", "Y-axis minimum", value = 0),
-                numericInput("y_axis_max", "Y-axis maximum", value = 100)
-              ),
-              textInput("x_label", "Label for Predictor", ""),
-              textInput("y_label", "Label for Outcome", ""),
-              textInput("moderator_label", "Label for Moderator", ""),
-              conditionalPanel(
-                condition = "output.has_second_moderator === true",
-                textInput("moderator2_label", "Label for Second Moderator (Z)", "")
-              ),
-              numericInput("decimal_places", "Decimal Places for Moderator Levels", 2, min = 0, max = 5),
-              checkboxInput("show_confidence_intervals", "Show confidence intervals", value = TRUE)
-            )
-          )
-        )
       ),
       
       # Run Analysis buttons
@@ -627,6 +600,36 @@ ui <- fluidPage(
           )
         ),
         tabPanel("Plots",
+          conditionalPanel(
+            condition = "output.is_plot_model === true",
+            div(style = "margin-bottom: 18px;",
+              tags$details(
+                tags$summary(
+                  style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9;",
+                  "Live Plot Settings"
+                ),
+                div(style = "margin-left: 15px; margin-top: 10px;",
+                  h5("Simple Slopes Plot Settings"),
+                  checkboxInput("use_color_lines", "Use color for lines", value = TRUE),
+                  checkboxInput("custom_y_axis", "Customize y-axis range", value = FALSE),
+                  conditionalPanel(
+                    condition = "input.custom_y_axis == true",
+                    numericInput("y_axis_min", "Y-axis minimum", value = 0),
+                    numericInput("y_axis_max", "Y-axis maximum", value = 100)
+                  ),
+                  textInput("x_label", "Label for Predictor", ""),
+                  textInput("y_label", "Label for Outcome", ""),
+                  textInput("moderator_label", "Label for Moderator", ""),
+                  conditionalPanel(
+                    condition = "output.has_second_moderator === true",
+                    textInput("moderator2_label", "Label for Second Moderator (Z)", "")
+                  ),
+                  numericInput("decimal_places", "Decimal Places for Moderator Levels", 2, min = 0, max = 5),
+                  checkboxInput("show_confidence_intervals", "Show confidence intervals", value = TRUE)
+                )
+              )
+            )
+          ),
           conditionalPanel(
             condition = "output.is_plot_model === true && output.analysis_ready === true",
             # Only show JN plot for Model 1
@@ -882,9 +885,11 @@ ui <- fluidPage(
               ),
               tags$li(
                 tags$strong("Adjust Plot Display (Models 1 and 3)"),
-                ": In ",
+                ": At the top of the ",
+                tags$code("Plots"),
+                " tab (",
                 tags$code("Live Plot Settings"),
-                ", you can edit displayed variable labels, change formatting, and turn confidence intervals on or off. These changes are updated in real time."
+                "), you can edit displayed variable labels, change formatting, and turn confidence intervals on or off. These changes are updated in real time."
               ),
               tags$li(
                 tags$strong("Adjust Diagram Display"),
