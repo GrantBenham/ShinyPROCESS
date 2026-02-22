@@ -1335,6 +1335,42 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     }
     pin_left(y_var, y_left_ref)
   }
+  if(!identical(diagram_type, "conceptual") && model_num == 3L && nrow(nodes) > 0) {
+    # Model 3 statistical: side-pin the left cluster and Y anchor side for
+    # label-length robustness in dense multi-line convergence.
+    get_hw <- function(node_name) {
+      j <- match(node_name, node_dims$name)
+      if(is.na(j)) return(0.085)
+      node_dims$hw[[j]]
+    }
+    pin_right <- function(node_name, x_right_ref) {
+      idx <- which(nodes$name == node_name)
+      if(length(idx) == 0) return()
+      hw <- get_hw(node_name)
+      nodes$x[idx[[1]]] <<- x_right_ref - hw
+    }
+    pin_left <- function(node_name, x_left_ref) {
+      idx <- which(nodes$name == node_name)
+      if(length(idx) == 0) return()
+      hw <- get_hw(node_name)
+      nodes$x[idx[[1]]] <<- x_left_ref + hw
+    }
+
+    x_right_ref <- -0.66
+    y_left_ref <- 0.66
+    pin_right(x_var, x_right_ref)
+    if(length(w_var) > 0) pin_right(w_var, x_right_ref)
+    if(length(z_var) > 0) pin_right(z_var, x_right_ref)
+
+    idx_int <- which(nodes$role == "int")
+    if(length(idx_int) > 0) {
+      for(i in idx_int) {
+        nm <- nodes$name[[i]]
+        nodes$x[[i]] <- x_right_ref - get_hw(nm)
+      }
+    }
+    pin_left(y_var, y_left_ref)
+  }
 
   from_xy <- nodes[, c("name", "x", "y")]
   names(from_xy) <- c("from", "x_from", "y_from")
@@ -1542,8 +1578,44 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
             clipped[ord_bot, 4] <- y_bot
           }
         }
+      } else if(model_num == 3L) {
+        # Model 3: same side-preserving Y-lane logic as Model 2, but allow a
+        # slightly deeper lower stack because there are typically more interaction paths.
+        idx_x <- idx_to_y[edge_plot$from_role[idx_to_y] == "x"]
+        if(length(idx_x) > 0) {
+          clipped[idx_x, 4] <- edge_plot$y_to[idx_x]
+        }
+        idx_other <- setdiff(idx_to_y, idx_x)
+        if(length(idx_other) > 0) {
+          x_src_y <- if(length(idx_x) > 0) edge_plot$y_from[idx_x[[1]]] else 0
+          y_mid <- edge_plot$y_to[idx_other][1]
+          h <- edge_plot$hh_to[idx_other][1]
+
+          idx_top <- idx_other[edge_plot$y_from[idx_other] >= x_src_y]
+          idx_bot <- idx_other[edge_plot$y_from[idx_other] < x_src_y]
+
+          if(length(idx_top) > 0) {
+            ord_top <- idx_top[order(-edge_plot$y_from[idx_top], edge_plot$from[idx_top])]
+            y_top <- if(length(ord_top) == 1) {
+              y_mid + 0.30 * h
+            } else {
+              seq(y_mid + 0.72 * h, y_mid + 0.22 * h, length.out = length(ord_top))
+            }
+            clipped[ord_top, 4] <- y_top
+          }
+
+          if(length(idx_bot) > 0) {
+            ord_bot <- idx_bot[order(-edge_plot$y_from[idx_bot], edge_plot$from[idx_bot])]
+            y_bot <- if(length(ord_bot) == 1) {
+              y_mid - 0.60 * h
+            } else {
+              seq(y_mid - 0.22 * h, y_mid - 0.86 * h, length.out = length(ord_bot))
+            }
+            clipped[ord_bot, 4] <- y_bot
+          }
+        }
       } else {
-        # Models 2-3-7: equally space all Y-bound terminations from top to bottom.
+        # Models 2-7 fallback: equally space all Y-bound terminations from top to bottom.
         ord <- idx_to_y[order(-edge_plot$y_from[idx_to_y], edge_plot$from[idx_to_y])]
         y_mid <- edge_plot$y_to[ord][1]
         h <- edge_plot$hh_to[ord][1]
@@ -1821,10 +1893,11 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.50)
     }
     if(model_num == 3L) {
-      # Model 3 baseline pass: keep Y-target coefficients at line midpoints.
-      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.50)
-      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.50)
-      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.50)
+      # Model 3: shift Y-target coefficients leftward (~1/3 along line) to use
+      # wider spacing and reduce overlap when CI/p text is enabled.
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.34)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.34)
+      set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.34)
     }
 
     if(model_num == 5L) {
@@ -2268,7 +2341,7 @@ build_graphviz_statistical_dot <- function(parsed, settings,
                                                    label_map = NULL,
                                                    coef_digits = 3) {
   model_num <- suppressWarnings(as.integer(settings$model))
-  if(!(model_num %in% c(1L, 2L, 7L, 14L))) return(NULL)
+  if(!(model_num %in% c(1L, 2L, 3L, 7L, 14L))) return(NULL)
   edges <- parsed$paths
   if(nrow(edges) == 0) return(NULL)
   edges <- edges[edges$path_kind != "covariate", , drop = FALSE]
@@ -2328,6 +2401,16 @@ build_graphviz_statistical_dot <- function(parsed, settings,
     if(nrow(int_edges) > 0) {
       int_terms <- unique(int_edges$from)
       y_pos <- seq(-0.56, -0.86, length.out = length(int_terms))
+      for(i in seq_along(int_terms)) {
+        add_node(int_terms[[i]], -0.84, y_pos[[i]])
+      }
+    }
+  } else if(model_num == 3L) {
+    if(length(w_var) > 0) add_node(w_var, -0.84, 0.22)
+    if(length(z_var) > 0) add_node(z_var, -0.84, -0.22)
+    if(nrow(int_edges) > 0) {
+      int_terms <- unique(int_edges$from)
+      y_pos <- seq(-0.50, -1.02, length.out = length(int_terms))
       for(i in seq_along(int_terms)) {
         add_node(int_terms[[i]], -0.84, y_pos[[i]])
       }
@@ -2453,14 +2536,19 @@ build_graphviz_statistical_dot <- function(parsed, settings,
           t_pos <- if(length(mediators) == 1) 0.60 else 0.54
         }
       }
-      if(model_num %in% c(1L, 2L) && identical(edges$to[[i]], y_var)) {
+      if(model_num %in% c(1L, 2L, 3L) && identical(edges$to[[i]], y_var)) {
         from_nm <- edges$from[[i]]
-        if(from_nm %in% mod_names) {
-          t_pos <- 0.38
-        } else if(from_nm %in% int_names) {
-          t_pos <- 0.38
-        } else if(identical(from_nm, x_var)) {
-          t_pos <- 0.50
+        if(model_num == 3L) {
+          # Crowded Model 3: move all labels leftward (~1/3 along path).
+          t_pos <- 0.34
+        } else {
+          if(from_nm %in% mod_names) {
+            t_pos <- 0.38
+          } else if(from_nm %in% int_names) {
+            t_pos <- 0.38
+          } else if(identical(from_nm, x_var)) {
+            t_pos <- 0.50
+          }
         }
       }
       if(model_num == 14L && identical(edges$to[[i]], y_var)) {
@@ -2503,7 +2591,7 @@ build_graphviz_statistical_dot <- function(parsed, settings,
     fr <- node_ids[[edges$from[[i]]]]
     to <- node_ids[[edges$to[[i]]]]
     attrs <- c("color=\"black\"", "penwidth=1.6", "arrowsize=0.7")
-    if(model_num %in% c(1L, 2L)) {
+    if(model_num %in% c(1L, 2L, 3L)) {
       from_nm <- edges$from[[i]]
       to_nm <- edges$to[[i]]
       if(identical(to_nm, y_var)) {
@@ -2820,10 +2908,10 @@ output$statistical_diagram_plot <- renderPlot({
 output$graphviz_statistical_ui <- renderUI({
   if(is.null(analysis_results())) return(NULL)
   model_num <- suppressWarnings(as.integer(analysis_results()$settings$model))
-  if(!(model_num %in% c(1L, 2L, 7L, 14L))) {
+  if(!(model_num %in% c(1L, 2L, 3L, 7L, 14L))) {
     return(tags$div(
       style = "margin-top: 8px; color: #666;",
-      "Experimental Graphviz comparison is currently shown for Models 1, 2, 7, and 14 only."
+      "Experimental Graphviz comparison is currently shown for Models 1, 2, 3, 7, and 14 only."
     ))
   }
   if(!requireNamespace("DiagrammeR", quietly = TRUE)) {
@@ -2848,8 +2936,8 @@ if(requireNamespace("DiagrammeR", quietly = TRUE)) {
     req(analysis_results())
     settings <- analysis_results()$settings
     model_num <- suppressWarnings(as.integer(settings$model))
-    if(!(model_num %in% c(1L, 2L, 7L, 14L))) {
-      return(DiagrammeR::grViz("digraph G { graph [bgcolor='white']; note [shape=box, label='Graphviz comparison is currently available for Models 1, 2, 7, and 14 only.']; }"))
+    if(!(model_num %in% c(1L, 2L, 3L, 7L, 14L))) {
+      return(DiagrammeR::grViz("digraph G { graph [bgcolor='white']; note [shape=box, label='Graphviz comparison is currently available for Models 1, 2, 3, 7, and 14 only.']; }"))
     }
     parsed <- diagram_parse_results()
     mode_input <- input$diagram_coef_mode
