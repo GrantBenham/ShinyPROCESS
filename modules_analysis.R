@@ -325,8 +325,24 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       centering = input$centering,
       use_bootstrap = input$use_bootstrap,
       boot_samples = if(isTRUE(input$use_bootstrap)) input$boot_samples else NULL,
+      bootstrap_ci_method = if(isTRUE(input$use_bootstrap) &&
+                                 !is.null(input$bootstrap_ci_method) &&
+                                 length(input$bootstrap_ci_method) > 0 &&
+                                 nzchar(as.character(input$bootstrap_ci_method)[1])) {
+        as.character(input$bootstrap_ci_method)[1]
+      } else {
+        NULL
+      },
       hc_method = input$hc_method,
+      stand = isTRUE(input$stand),
+      normal = isTRUE(input$normal),
       conf_level = input$conf_level,
+      seed = if(!is.null(input$seed) && length(input$seed) > 0 &&
+                  !is.na(input$seed[1]) && suppressWarnings(as.numeric(input$seed[1])) >= 1) {
+        as.numeric(input$seed[1])
+      } else {
+        NULL
+      },
       dataset_name = tools::file_path_sans_ext(basename(input$data_file$name)),
       original_n = nrow(rv$original_dataset),
       outliers_removed = remove_outliers,

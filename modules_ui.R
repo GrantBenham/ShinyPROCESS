@@ -735,7 +735,7 @@ ui <- fluidPage(
                         checkboxInput("diagram_show_interactions", "Show interaction terms", value = TRUE)
                       ),
                       checkboxInput("diagram_include_stars", "Include significance stars", value = TRUE),
-                      checkboxInput("diagram_include_ci", "Include confidence intervals", value = FALSE),
+                      checkboxInput("diagram_include_ci", "Include confidence intervals (PROCESS model-table CIs; not bootstrap CIs)", value = FALSE),
                     checkboxInput("diagram_include_p", "Include p-values", value = FALSE)
                   )
                 )
