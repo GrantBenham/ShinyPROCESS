@@ -3199,7 +3199,8 @@ observe({
   }
   selected <- isolate(input$diagram_coef_mode)
   if(is.null(selected) || !selected %in% unname(choices)) {
-    selected <- if(has_std) "std" else "raw"
+    # Policy: default to unstandardized labels even when standardized values are available.
+    selected <- "raw"
   }
   updateSelectInput(session, "diagram_coef_mode", choices = choices, selected = selected)
 })
