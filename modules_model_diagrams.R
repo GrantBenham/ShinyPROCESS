@@ -1943,9 +1943,15 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         }
       } else if(length(mediators) >= 2 && identical(m_name, mediators[[2]])) {
         # M2 requested lane order on left edge: X top, W middle, INT bottom.
-        if(length(idx_x) > 0) clipped[idx_x, 4] <- y_mid + 0.88 * h
+        if(length(idx_x) > 0) {
+          clipped[idx_x, 3] <- edge_plot$x_to[idx_x] - edge_plot$hw_to[idx_x]
+          clipped[idx_x, 4] <- y_mid + 0.72 * h
+        }
         if(length(idx_mod) > 0) clipped[idx_mod, 4] <- y_mid
-        if(length(idx_int) > 0) clipped[idx_int, 4] <- y_mid - 0.88 * h
+        if(length(idx_int) > 0) {
+          clipped[idx_int, 3] <- edge_plot$x_to[idx_int] - edge_plot$hw_to[idx_int]
+          clipped[idx_int, 4] <- y_mid - 0.72 * h
+        }
       } else {
         if(length(idx_mod) > 0) clipped[idx_mod, 4] <- y_mid - 0.28 * h
         if(length(idx_x) > 0) clipped[idx_x, 4] <- y_mid
@@ -2011,6 +2017,22 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
             seq(y_mid - 0.20 * h, y_mid - 0.88 * h, length.out = length(ord_bot))
           }
           clipped[ord_bot, 4] <- y_bot
+        }
+      }
+
+      # Model 8 (2M): keep lower Y-side convergence ordered as W (higher), INT (middle),
+      # M2 (lower) to prevent the INT->Y lane from crossing the M2->Y lane near Y.
+      if(length(mediators) >= 2) {
+        m2_name <- mediators[[2]]
+        idx_w_y <- idx_to_y[edge_plot$from_role[idx_to_y] == "mod"]
+        idx_int_y <- idx_to_y[edge_plot$from_role[idx_to_y] == "int"]
+        idx_m2_y <- idx_to_y[edge_plot$from[idx_to_y] == m2_name]
+        if(length(idx_w_y) > 0 && length(idx_int_y) > 0 && length(idx_m2_y) > 0) {
+          y_mid_all <- edge_plot$y_to[idx_to_y][1]
+          h_all <- edge_plot$hh_to[idx_to_y][1]
+          clipped[idx_w_y, 4] <- y_mid_all - 0.14 * h_all
+          clipped[idx_int_y, 4] <- y_mid_all - 0.28 * h_all
+          clipped[idx_m2_y, 4] <- y_mid_all - 0.42 * h_all
         }
       }
     }
@@ -2277,7 +2299,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         # Target shape: W->M1 slightly higher than midpoint; INT->M1 just below that.
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.44)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.44)
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.68)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.46)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.46)
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.56)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.52)
@@ -2309,7 +2331,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         # Dense 2-mediator layout: targeted nudges from visual review.
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.42)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.22)
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.22)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.68)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.16)
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.82)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.54)
