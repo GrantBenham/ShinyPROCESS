@@ -1597,7 +1597,9 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           if(length(idx_top) > 0) {
             ord_top <- idx_top[order(-edge_plot$y_from[idx_top], edge_plot$from[idx_top])]
             y_top <- if(length(ord_top) == 1) {
-              y_mid + 0.30 * h
+              # Single top-side path (typically W->Y): bring it closer to X->Y
+              # without collapsing into the center lane.
+              y_mid + 0.22 * h
             } else {
               seq(y_mid + 0.72 * h, y_mid + 0.22 * h, length.out = length(ord_top))
             }
@@ -2204,8 +2206,9 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
   }
   cue_linewidth <- 0.45
   cue_arrow_cm <- 0.12
-  if(identical(diagram_type, "conceptual") && model_num %in% c(7L, 14L)) {
-    # Match moderator cue style to all other path lines for Model 7/14 conceptual diagrams.
+  if(identical(diagram_type, "conceptual") && nrow(mod_cue) > 0) {
+    # Match moderator cue style to all other path lines for conceptual diagrams
+    # whenever cue arrows are present (not just model-specific branches).
     cue_linewidth <- 0.80
     cue_arrow_cm <- 0.15
   }
@@ -2596,6 +2599,11 @@ build_graphviz_statistical_dot <- function(parsed, settings,
       to_nm <- edges$to[[i]]
       if(identical(to_nm, y_var)) {
         attrs <- c(attrs, "tailport=e")
+        if(model_num == 3L) {
+          # Model 3 Graphviz: many converging paths; use a single left-mid Y target
+          # for cleaner, predictable endpoints.
+          attrs <- c(attrs, "headport=w")
+        } else {
         y_from <- get_node_xy(from_nm)[["y"]]
         if(from_nm %in% mod_names && y_from >= 0) {
           attrs <- c(attrs, "headport=nw")
@@ -2603,6 +2611,7 @@ build_graphviz_statistical_dot <- function(parsed, settings,
           attrs <- c(attrs, "headport=sw")
         } else if(identical(from_nm, x_var)) {
           attrs <- c(attrs, "headport=w")
+        }
         }
       }
     }
