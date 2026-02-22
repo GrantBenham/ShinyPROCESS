@@ -1521,7 +1521,9 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           if(length(idx_top) > 0) {
             ord_top <- idx_top[order(-edge_plot$y_from[idx_top], edge_plot$from[idx_top])]
             y_top <- if(length(ord_top) == 1) {
-              y_mid + 0.72 * h
+              # Single top-side path (typically W->Y): keep it above X->Y
+              # but closer to the center lane for better visual grouping.
+              y_mid + 0.30 * h
             } else {
               seq(y_mid + 0.72 * h, y_mid + 0.24 * h, length.out = length(ord_top))
             }
