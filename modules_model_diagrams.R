@@ -2902,7 +2902,7 @@ build_graphviz_statistical_dot <- function(parsed, settings,
           attrs <- c(attrs, "tailport=e", "headport=sw")
         }
         if(identical(from_nm, m1_name) && identical(to_nm, y_var)) {
-          attrs <- c(attrs, "tailport=se", "headport=nw")
+          attrs <- c(attrs, "tailport=se", "headport=w")
         }
       }
       if(length(mediators) >= 2) {
@@ -2914,8 +2914,13 @@ build_graphviz_statistical_dot <- function(parsed, settings,
           attrs <- c(attrs, "tailport=e", "headport=w")
         }
         if(identical(from_nm, m2_name) && identical(to_nm, y_var)) {
-          attrs <- c(attrs, "tailport=se", "headport=sw")
+          attrs <- c(attrs, "tailport=se", "headport=w")
         }
+      }
+      # Model 6 Graphviz: use a shared left-midpoint Y endpoint for all ->Y paths.
+      # This keeps X->Y horizontal and produces cleaner convergence for the serial layout.
+      if(identical(to_nm, y_var)) {
+        attrs <- c(attrs[!grepl("^headport=", attrs)], "headport=w")
       }
     }
     if(model_num == 14L) {
