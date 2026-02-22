@@ -2299,7 +2299,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         # Target shape: W->M1 slightly higher than midpoint; INT->M1 just below that.
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.44)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.44)
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.46)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.00)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.46)
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.56)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.52)
@@ -2329,17 +2329,17 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         m1_name <- mediators[[1]]
         m2_name <- mediators[[2]]
         # Dense 2-mediator layout: targeted nudges from visual review.
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.42)
-        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.22)
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.68)
-        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.16)
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.82)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.55)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.29)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.50)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.26)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.70)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.54)
         set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.48)
         set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.44)
         set_t(edge_plot$to == y_var & edge_plot$from_role == "mod", 0.42)
         set_t(edge_plot$to == y_var & edge_plot$from_role == "int", 0.52)
-        set_t(edge_plot$to == y_var & edge_plot$from_role == "x", 0.46)
+        set_t(edge_plot$to == y_var & edge_plot$from_role == "x", 0.56)
       }
     }
 
