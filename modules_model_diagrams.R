@@ -1446,6 +1446,41 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       }
     }
   }
+  if(!identical(diagram_type, "conceptual") && model_num == 6L && nrow(nodes) > 0) {
+    # Model 6 statistical (2M serial): preserve the established top-row serial layout
+    # while pinning X/Y attachment sides so long labels do not shift the diagram geometry.
+    get_hw <- function(node_name) {
+      j <- match(node_name, node_dims$name)
+      if(is.na(j)) return(0.085)
+      node_dims$hw[[j]]
+    }
+    pin_right <- function(nodes_df, node_name, x_right_ref) {
+      idx <- which(nodes_df$name == node_name)
+      if(length(idx) == 0) return(nodes_df)
+      hw <- get_hw(node_name)
+      nodes_df$x[idx[[1]]] <- x_right_ref - hw
+      nodes_df
+    }
+    pin_left <- function(nodes_df, node_name, x_left_ref) {
+      idx <- which(nodes_df$name == node_name)
+      if(length(idx) == 0) return(nodes_df)
+      hw <- get_hw(node_name)
+      nodes_df$x[idx[[1]]] <- x_left_ref + hw
+      nodes_df
+    }
+    x_right_ref <- -0.72
+    y_left_ref <- 0.72
+    nodes <- pin_right(nodes, x_var, x_right_ref)
+    nodes <- pin_left(nodes, y_var, y_left_ref)
+    if(length(mediators) >= 2) {
+      x0 <- -0.75
+      x1 <- 0.75
+      m1_idx <- which(nodes$name == mediators[[1]])
+      m2_idx <- which(nodes$name == mediators[[2]])
+      if(length(m1_idx) > 0) nodes$x[m1_idx[[1]]] <- x0 + 0.25 * (x1 - x0)
+      if(length(m2_idx) > 0) nodes$x[m2_idx[[1]]] <- x0 + 0.75 * (x1 - x0)
+    }
+  }
 
   from_xy <- nodes[, c("name", "x", "y")]
   names(from_xy) <- c("from", "x_from", "y_from")
@@ -1794,6 +1829,15 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         clipped[idx_int_y, 3] <- edge_plot$x_to[idx_int_y]
         clipped[idx_int_y, 4] <- edge_plot$y_to[idx_int_y] + edge_plot$hh_to[idx_int_y]
       }
+    }
+  } else if(!identical(diagram_type, "conceptual") && model_num == 6L) {
+    # Keep Model 6 direct effect on fixed horizontal side anchors regardless of label width.
+    idx_x_y <- edge_plot$from_role == "x" & edge_plot$to == y_var
+    if(any(idx_x_y)) {
+      clipped[idx_x_y, 1] <- edge_plot$x_from[idx_x_y] + edge_plot$hw_from[idx_x_y]
+      clipped[idx_x_y, 2] <- edge_plot$y_from[idx_x_y]
+      clipped[idx_x_y, 3] <- edge_plot$x_to[idx_x_y] - edge_plot$hw_to[idx_x_y]
+      clipped[idx_x_y, 4] <- edge_plot$y_to[idx_x_y]
     }
   } else if(!identical(diagram_type, "conceptual") && model_num == 7L) {
     # Preserve existing 2-mediator statistical tuning.
@@ -2458,7 +2502,7 @@ build_graphviz_statistical_dot <- function(parsed, settings,
                                                    label_map = NULL,
                                                    coef_digits = 3) {
   model_num <- suppressWarnings(as.integer(settings$model))
-  if(!(model_num %in% c(1L, 2L, 3L, 4L, 5L, 7L, 14L))) return(NULL)
+  if(!(model_num %in% c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 14L))) return(NULL)
   edges <- parsed$paths
   if(nrow(edges) == 0) return(NULL)
   edges <- edges[edges$path_kind != "covariate", , drop = FALSE]
@@ -2564,6 +2608,13 @@ build_graphviz_statistical_dot <- function(parsed, settings,
           add_node(int_terms[[i]], int_base_x + 0.12 * (i - 1), int_base_y - 0.12 * (i - 1))
         }
       }
+    }
+  } else if(model_num == 6L) {
+    if(n_m >= 2) {
+      x0 <- -0.75
+      x1 <- 0.75
+      add_node(mediators[[1]], x0 + 0.25 * (x1 - x0), 0.56)
+      add_node(mediators[[2]], x0 + 0.75 * (x1 - x0), 0.56)
     }
   } else if(model_num == 7L) {
     if(n_m == 1) {
@@ -2836,6 +2887,34 @@ build_graphviz_statistical_dot <- function(parsed, settings,
           attrs <- c(attrs, "tailport=s", "headport=n")
         } else {
           attrs <- c(attrs, "headport=w")
+        }
+      }
+    }
+    if(model_num == 6L) {
+      from_nm <- edges$from[[i]]
+      to_nm <- edges$to[[i]]
+      if(identical(from_nm, x_var) && identical(to_nm, y_var)) {
+        attrs <- c(attrs, "tailport=e", "headport=w")
+      }
+      if(length(mediators) >= 1) {
+        m1_name <- mediators[[1]]
+        if(identical(from_nm, x_var) && identical(to_nm, m1_name)) {
+          attrs <- c(attrs, "tailport=e", "headport=sw")
+        }
+        if(identical(from_nm, m1_name) && identical(to_nm, y_var)) {
+          attrs <- c(attrs, "tailport=se", "headport=nw")
+        }
+      }
+      if(length(mediators) >= 2) {
+        m2_name <- mediators[[2]]
+        if(identical(from_nm, x_var) && identical(to_nm, m2_name)) {
+          attrs <- c(attrs, "tailport=e", "headport=sw")
+        }
+        if(identical(from_nm, m1_name) && identical(to_nm, m2_name)) {
+          attrs <- c(attrs, "tailport=e", "headport=w")
+        }
+        if(identical(from_nm, m2_name) && identical(to_nm, y_var)) {
+          attrs <- c(attrs, "tailport=se", "headport=sw")
         }
       }
     }
@@ -3141,10 +3220,10 @@ output$statistical_diagram_plot <- renderPlot({
 output$graphviz_statistical_ui <- renderUI({
   if(is.null(analysis_results())) return(NULL)
   model_num <- suppressWarnings(as.integer(analysis_results()$settings$model))
-  if(!(model_num %in% c(1L, 2L, 3L, 4L, 5L, 7L, 14L))) {
+  if(!(model_num %in% c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 14L))) {
     return(tags$div(
       style = "margin-top: 8px; color: #666;",
-      "Experimental Graphviz comparison is currently shown for Models 1, 2, 3, 4, 5, 7, and 14 only."
+      "Experimental Graphviz comparison is currently shown for Models 1, 2, 3, 4, 5, 6, 7, and 14 only."
     ))
   }
   if(!requireNamespace("DiagrammeR", quietly = TRUE)) {
@@ -3169,8 +3248,8 @@ if(requireNamespace("DiagrammeR", quietly = TRUE)) {
     req(analysis_results())
     settings <- analysis_results()$settings
     model_num <- suppressWarnings(as.integer(settings$model))
-    if(!(model_num %in% c(1L, 2L, 3L, 4L, 5L, 7L, 14L))) {
-      return(DiagrammeR::grViz("digraph G { graph [bgcolor='white']; note [shape=box, label='Graphviz comparison is currently available for Models 1, 2, 3, 4, 5, 7, and 14 only.']; }"))
+    if(!(model_num %in% c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 14L))) {
+      return(DiagrammeR::grViz("digraph G { graph [bgcolor='white']; note [shape=box, label='Graphviz comparison is currently available for Models 1, 2, 3, 4, 5, 6, 7, and 14 only.']; }"))
     }
     parsed <- diagram_parse_results()
     mode_input <- input$diagram_coef_mode
