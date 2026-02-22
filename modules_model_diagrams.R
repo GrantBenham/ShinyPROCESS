@@ -898,7 +898,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       int_terms <- unique(int_edges$from)
       if(length(int_terms) > 0) {
         int_x <- if(length(mediators) >= 2) -0.56 else -0.30
-        int_y_base <- if(length(mediators) >= 2) -0.66 else -0.92
+        int_y_base <- if(length(mediators) >= 2) -0.74 else -0.84
         for(i in seq_along(int_terms)) {
           int_lbl <- resolve_interaction_label(int_terms[[i]], alias_map)
           int_lbl <- format_interaction_label(int_lbl, settings)
@@ -1513,7 +1513,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     # Keep interaction terms in a stable left-lower lane.
     idx_int <- which(nodes$role == "int")
     if(length(idx_int) > 0) {
-      int_right_ref <- if(length(mediators) >= 2) -0.38 else -0.20
+      int_right_ref <- if(length(mediators) >= 2) -0.38 else -0.30
       for(i in idx_int) {
         nm <- nodes$name[[i]]
         nodes$x[[i]] <- int_right_ref - get_hw(nm)
@@ -1926,15 +1926,31 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
     for(m_name in mediators) {
       idx_to_m <- which(edge_plot$to == m_name)
       if(length(idx_to_m) == 0) next
-      clipped[idx_to_m, 3] <- edge_plot$x_to[idx_to_m] - edge_plot$hw_to[idx_to_m]
       y_mid <- edge_plot$y_to[idx_to_m][1]
       h <- edge_plot$hh_to[idx_to_m][1]
       idx_mod <- idx_to_m[edge_plot$from_role[idx_to_m] == "mod"]
       idx_x <- idx_to_m[edge_plot$from_role[idx_to_m] == "x"]
       idx_int <- idx_to_m[edge_plot$from_role[idx_to_m] == "int"]
-      if(length(idx_mod) > 0) clipped[idx_mod, 4] <- y_mid - 0.28 * h
-      if(length(idx_x) > 0) clipped[idx_x, 4] <- y_mid
-      if(length(idx_int) > 0) clipped[idx_int, 4] <- y_mid + 0.42 * h
+      # Default to left-edge arrivals, then apply mediator-specific lane intent.
+      clipped[idx_to_m, 3] <- edge_plot$x_to[idx_to_m] - edge_plot$hw_to[idx_to_m]
+      if(length(mediators) >= 1 && identical(m_name, mediators[[1]])) {
+        # M1: X/W use left-edge lanes, INT lands middle-bottom.
+        if(length(idx_x) > 0) clipped[idx_x, 4] <- y_mid + 0.18 * h
+        if(length(idx_mod) > 0) clipped[idx_mod, 4] <- y_mid - 0.12 * h
+        if(length(idx_int) > 0) {
+          clipped[idx_int, 3] <- edge_plot$x_to[idx_int]
+          clipped[idx_int, 4] <- edge_plot$y_to[idx_int] - edge_plot$hh_to[idx_int]
+        }
+      } else if(length(mediators) >= 2 && identical(m_name, mediators[[2]])) {
+        # M2 requested lane order on left edge: X top, W middle, INT bottom.
+        if(length(idx_x) > 0) clipped[idx_x, 4] <- y_mid + 0.88 * h
+        if(length(idx_mod) > 0) clipped[idx_mod, 4] <- y_mid
+        if(length(idx_int) > 0) clipped[idx_int, 4] <- y_mid - 0.88 * h
+      } else {
+        if(length(idx_mod) > 0) clipped[idx_mod, 4] <- y_mid - 0.28 * h
+        if(length(idx_x) > 0) clipped[idx_x, 4] <- y_mid
+        if(length(idx_int) > 0) clipped[idx_int, 4] <- y_mid + 0.42 * h
+      }
       idx_other <- setdiff(idx_to_m, c(idx_mod, idx_x, idx_int))
       if(length(idx_other) > 0) {
         ord <- idx_other[order(-edge_plot$y_from[idx_other], edge_plot$from[idx_other])]
@@ -2282,25 +2298,25 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         # farther from Y convergence.
         set_t(edge_plot$to_role == "m" & edge_plot$from_role == "x", 0.34)
         set_t(edge_plot$to_role == "m" & edge_plot$from_role == "mod", 0.18)
-        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "int", 0.28)
+        set_t(edge_plot$to_role == "m" & edge_plot$from_role == "int", 0.74)
         set_t(edge_plot$to_role == "y" & edge_plot$from_role == "x", 0.46)
-        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.28)
+        set_t(edge_plot$to_role == "y" & edge_plot$from_role == "mod", 0.46)
         set_t(edge_plot$to_role == "y" & edge_plot$from_role == "m", 0.56)
         set_t(edge_plot$to_role == "y" & edge_plot$from_role == "int", 0.32)
       } else if(length(mediators) >= 2) {
         m1_name <- mediators[[1]]
         m2_name <- mediators[[2]]
-        # Dense 2-mediator layout: move many labels leftward / downward from Y.
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.32)
-        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.28)
+        # Dense 2-mediator layout: targeted nudges from visual review.
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.42)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.22)
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.22)
-        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.34)
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.22)
-        set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.30)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.16)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.82)
+        set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.54)
         set_t(edge_plot$to == y_var & edge_plot$from == m1_name, 0.48)
         set_t(edge_plot$to == y_var & edge_plot$from == m2_name, 0.44)
-        set_t(edge_plot$to == y_var & edge_plot$from_role == "mod", 0.30)
-        set_t(edge_plot$to == y_var & edge_plot$from_role == "int", 0.26)
+        set_t(edge_plot$to == y_var & edge_plot$from_role == "mod", 0.42)
+        set_t(edge_plot$to == y_var & edge_plot$from_role == "int", 0.52)
         set_t(edge_plot$to == y_var & edge_plot$from_role == "x", 0.46)
       }
     }
