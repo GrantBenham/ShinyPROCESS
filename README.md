@@ -115,6 +115,7 @@ Contact policy:
 - **Flagged-Case Detection by Outcome Type**: Uses standardized residual outliers for continuous outcomes and Cook's distance influential cases for binary outcomes
 - **Bootstrap Confidence Intervals**: Support for percentile and bias-corrected bootstrap methods
 - **Visualization**: Simple slopes plots, conditional effect plots, and Johnson-Neyman plots for moderation models
+- **Model Diagram Tab**: Conceptual and statistical diagrams (ggplot-based for export parity) for models `1,2,3,4,5,6,7,8,14`, with JPG export and an experimental Graphviz comparison
 - **Export Options**: Download results as HTML files and filtered datasets
 - **Settings Management**: Save and load analysis settings as JSON files
 
@@ -140,12 +141,20 @@ This application uses a modular architecture for improved maintainability and or
 - Functions: `is_binary_variable()`, `is_continuous_variable()`, `identify_outliers_assumption()`, `check_normality()`, `test_homoscedasticity()`, `diagnostic_report()`, `generate_assumption_checks_html()`, etc.
 - **Dependencies**: `car` package (VIF, ncvTest), `ggplot2` (Q-Q plots)
 
-**`modules_ui.R`** (~660 lines)
+**`modules_ui.R`** (~900+ lines)
 - Complete UI definition (`fluidPage` structure)
 - All sidebar and main panel components
-- Tab definitions (Assumption Checks, Analysis Results, Plots)
+- Tab definitions (Assumption Checks, Analysis Results, Plots, Model Diagram, User Guide)
 - Conditional panels and styling
 - **Dependencies**: `shiny`, `bslib`, `shinyjs`
+
+**`modules_model_diagrams.R`** (~3,600+ lines)
+- Diagram parsing from PROCESS output
+- Conceptual and statistical diagram rendering (ggplot path used for on-screen and JPG export parity)
+- Model-specific layout/anchor rules for diagram-supported models (`1,2,3,4,5,6,7,8,14`)
+- Experimental Graphviz statistical comparison rendering (optional; guarded by `DiagrammeR`)
+- Diagram JPG download handlers and Diagram tab UI server logic
+- **Dependencies**: `ggplot2`, `grid` (optional `DiagrammeR`)
 
 **`modules_data_management.R`** (~734 lines)
 - File upload handling (CSV, SAV)
@@ -212,8 +221,13 @@ The modules are sourced in the following order in `gbPROCESS.R`:
    - `modules_assumption_outputs.R` - Assumption check outputs
    - `modules_analysis.R` - Analysis execution
    - `modules_results.R` - Results display
+   - `modules_model_diagrams.R` - Diagram parsing/rendering/downloads (CD/SD + experimental Graphviz)
 
 All modules are sourced with `local = TRUE` to ensure proper variable scope within the Shiny server function.
+
+Diagram notes:
+- Statistical diagram JPG export uses the same ggplot geometry pipeline as the on-screen statistical diagram (intended visual match).
+- The Graphviz diagram (when available) is an experimental comparison and does not drive JPG exports.
 
 ### Dependencies
 
@@ -229,6 +243,7 @@ All modules are sourced with `local = TRUE` to ensure proper variable scope with
 - `jsonlite` - JSON file handling (for save/load settings)
 - `grid` - Grid graphics (for plot layouts)
 - `gridExtra` - Extended grid graphics (for stacked plots)
+- `DiagrammeR` - Optional Graphviz comparison in the Model Diagram tab
 - `grDevices` - Graphics devices (for plot downloads)
 
 **Installation**:
@@ -236,6 +251,11 @@ All modules are sourced with `local = TRUE` to ensure proper variable scope with
 install.packages(c("shiny", "bslib", "ggplot2", "stringr", "dplyr", 
                    "shinyjs", "car", "haven", "jsonlite", "grid", 
                    "gridExtra"))
+```
+
+Optional for the experimental Graphviz comparison in the Model Diagram tab:
+```r
+install.packages("DiagrammeR")
 ```
 
 ---

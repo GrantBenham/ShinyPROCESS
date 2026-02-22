@@ -873,10 +873,24 @@ ui <- fluidPage(
                 ": Results are shown in the Analysis Results tab. Plots are generated only for Models 1 and 3."
               ),
               tags$li(
+                tags$strong("Review Model Diagrams"),
+                ": Use the ",
+                tags$code("Model Diagram"),
+                " tab to view conceptual and statistical diagrams for supported models (currently ",
+                tags$code("1,2,3,4,5,6,7,8,14"),
+                "). The statistical diagram uses the same ggplot rendering path for on-screen display and JPG export. An experimental Graphviz comparison may also be shown when DiagrammeR is available."
+              ),
+              tags$li(
                 tags$strong("Adjust Plot Display (Models 1 and 3)"),
                 ": In ",
                 tags$code("Live Plot Settings"),
                 ", you can edit displayed variable labels, change formatting, and turn confidence intervals on or off. These changes are updated in real time."
+              ),
+              tags$li(
+                tags$strong("Adjust Diagram Display"),
+                ": In the ",
+                tags$code("Model Diagram"),
+                " tab, you can choose coefficient mode (unstandardized/standardized when available), edit diagram labels, toggle stars/CIs/p-values, and set coefficient label orientation/font size. Confidence interval labels in diagrams use PROCESS model-table CIs (not bootstrap coefficient CIs)."
               )
             ),
 
@@ -894,6 +908,8 @@ ui <- fluidPage(
               tags$li(tags$strong("Assumption Checks HTML"), ": Download the assumption output text from the Assumption Checks tab."),
               tags$li(tags$strong("Results HTML"), ": Download full PROCESS analysis output from the sidebar."),
               tags$li(tags$strong("Plots (JPG)"), ": Download available plots in the Plots tab (Models 1 and 3 only)."),
+              tags$li(tags$strong("Conceptual Diagram (JPG)"), ": Download from the Model Diagram tab. Uses the same ggplot rendering path as the on-screen conceptual diagram."),
+              tags$li(tags$strong("Statistical Diagram (JPG)"), ": Download from the Model Diagram tab. Uses the same ggplot rendering path as the on-screen statistical diagram."),
               tags$li(tags$strong("Reduced Dataset"), ": Download a dataset with flagged cases removed (standardized residual outliers for continuous outcomes; Cook's distance influential cases for binary outcomes) in CSV or SAV format.")
             ),
 
