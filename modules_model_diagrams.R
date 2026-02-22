@@ -1402,6 +1402,50 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       if(length(idx) > 0) nodes$x[idx[[1]]] <- 0.00
     }
   }
+  if(!identical(diagram_type, "conceptual") && model_num == 5L && nrow(nodes) > 0) {
+    # Model 5 statistical (1M/2M): stabilize X/Y side anchors; preserve mediator centers;
+    # for 2M, keep W/INT vertically aligned to Y for second-stage paths.
+    get_hw <- function(node_name) {
+      j <- match(node_name, node_dims$name)
+      if(is.na(j)) return(0.085)
+      node_dims$hw[[j]]
+    }
+    pin_right <- function(nodes_df, node_name, x_right_ref) {
+      idx <- which(nodes_df$name == node_name)
+      if(length(idx) == 0) return(nodes_df)
+      hw <- get_hw(node_name)
+      nodes_df$x[idx[[1]]] <- x_right_ref - hw
+      nodes_df
+    }
+    pin_left <- function(nodes_df, node_name, x_left_ref) {
+      idx <- which(nodes_df$name == node_name)
+      if(length(idx) == 0) return(nodes_df)
+      hw <- get_hw(node_name)
+      nodes_df$x[idx[[1]]] <- x_left_ref + hw
+      nodes_df
+    }
+    x_right_ref <- -0.74
+    y_left_ref <- 0.74
+    nodes <- pin_right(nodes, x_var, x_right_ref)
+    nodes <- pin_left(nodes, y_var, y_left_ref)
+
+    # Keep mediator center column stable in the intended template lane.
+    for(m_name in mediators[mediators %in% nodes$name]) {
+      idx <- which(nodes$name == m_name)
+      if(length(idx) > 0) nodes$x[idx[[1]]] <- 0.02
+    }
+
+    if(length(mediators) >= 2) {
+      idx_y <- which(nodes$name == y_var)
+      if(length(idx_y) > 0) {
+        y_cx <- nodes$x[idx_y[[1]]]
+        # Align moderator and interaction centers with Y so their paths are vertical.
+        for(i in which(nodes$role %in% c("mod", "int"))) {
+          nodes$x[i] <- y_cx
+        }
+      }
+    }
+  }
 
   from_xy <- nodes[, c("name", "x", "y")]
   names(from_xy) <- c("from", "x_from", "y_from")
@@ -1724,6 +1768,32 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       clipped[idx_x_y, 2] <- edge_plot$y_from[idx_x_y]
       clipped[idx_x_y, 3] <- edge_plot$x_to[idx_x_y] - edge_plot$hw_to[idx_x_y]
       clipped[idx_x_y, 4] <- edge_plot$y_to[idx_x_y]
+    }
+  } else if(!identical(diagram_type, "conceptual") && model_num == 5L) {
+    # Keep Model 5 direct effect on fixed horizontal side anchors regardless of label width.
+    idx_x_y <- edge_plot$from_role == "x" & edge_plot$to == y_var
+    if(any(idx_x_y)) {
+      clipped[idx_x_y, 1] <- edge_plot$x_from[idx_x_y] + edge_plot$hw_from[idx_x_y]
+      clipped[idx_x_y, 2] <- edge_plot$y_from[idx_x_y]
+      clipped[idx_x_y, 3] <- edge_plot$x_to[idx_x_y] - edge_plot$hw_to[idx_x_y]
+      clipped[idx_x_y, 4] <- edge_plot$y_to[idx_x_y]
+    }
+    if(length(mediators) >= 2) {
+      # Explicit vertical second-stage moderation paths to Y (top for INT, bottom for W).
+      idx_mod_y <- edge_plot$from_role == "mod" & edge_plot$to == y_var
+      idx_int_y <- edge_plot$from_role == "int" & edge_plot$to == y_var
+      if(any(idx_mod_y)) {
+        clipped[idx_mod_y, 1] <- edge_plot$x_from[idx_mod_y]
+        clipped[idx_mod_y, 2] <- edge_plot$y_from[idx_mod_y] + edge_plot$hh_from[idx_mod_y]
+        clipped[idx_mod_y, 3] <- edge_plot$x_to[idx_mod_y]
+        clipped[idx_mod_y, 4] <- edge_plot$y_to[idx_mod_y] - edge_plot$hh_to[idx_mod_y]
+      }
+      if(any(idx_int_y)) {
+        clipped[idx_int_y, 1] <- edge_plot$x_from[idx_int_y]
+        clipped[idx_int_y, 2] <- edge_plot$y_from[idx_int_y] - edge_plot$hh_from[idx_int_y]
+        clipped[idx_int_y, 3] <- edge_plot$x_to[idx_int_y]
+        clipped[idx_int_y, 4] <- edge_plot$y_to[idx_int_y] + edge_plot$hh_to[idx_int_y]
+      }
     }
   } else if(!identical(diagram_type, "conceptual") && model_num == 7L) {
     # Preserve existing 2-mediator statistical tuning.
@@ -2071,8 +2141,9 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
       ang <- ifelse(ang > 90, ang - 180, ifelse(ang < -90, ang + 180, ang))
       # Keep labels readable for steep paths.
       edge_plot$label_angle <- pmax(pmin(ang, 75), -75)
-      if(model_num == 14L) {
-        # For Model 14 second-stage paths, follow line orientation exactly (including near-vertical paths).
+      if(model_num %in% c(5L, 14L)) {
+        # For Models 5/14 second-stage paths, follow center-to-center orientation exactly
+        # (including near-vertical paths) so W/INT->Y labels remain aligned after custom anchoring.
         idx_stage2 <- edge_plot$to == y_var & edge_plot$from_role %in% c("mod", "int")
         if(any(idx_stage2)) {
           # Use center-to-center vector (not clipped segment) for robust orientation
@@ -2082,7 +2153,10 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
           ang_stage2 <- atan2(dy_stage2, dx_stage2) * 180 / pi
           ang_stage2 <- ifelse(ang_stage2 > 90, ang_stage2 - 180, ifelse(ang_stage2 < -90, ang_stage2 + 180, ang_stage2))
           # Snap near-vertical paths to true vertical so W->Y / INT->Y labels track the line cleanly.
-          near_vertical <- abs(abs(ang_stage2) - 90) < 8
+          # Use both angle- and dx-based checks because tiny residual x drift can otherwise leave
+          # visibly "almost vertical" labels in 2-mediator layouts.
+          near_vertical <- (abs(abs(ang_stage2) - 90) < 12) |
+            (abs(dx_stage2) < 0.02 & abs(dy_stage2) > 0.08)
           ang_stage2[near_vertical] <- ifelse(ang_stage2[near_vertical] >= 0, 90, -90)
           edge_plot$label_angle[idx_stage2] <- ang_stage2
         }
@@ -2384,7 +2458,7 @@ build_graphviz_statistical_dot <- function(parsed, settings,
                                                    label_map = NULL,
                                                    coef_digits = 3) {
   model_num <- suppressWarnings(as.integer(settings$model))
-  if(!(model_num %in% c(1L, 2L, 3L, 4L, 7L, 14L))) return(NULL)
+  if(!(model_num %in% c(1L, 2L, 3L, 4L, 5L, 7L, 14L))) return(NULL)
   edges <- parsed$paths
   if(nrow(edges) == 0) return(NULL)
   edges <- edges[edges$path_kind != "covariate", , drop = FALSE]
@@ -2464,6 +2538,32 @@ build_graphviz_statistical_dot <- function(parsed, settings,
     } else if(n_m >= 2) {
       add_node(mediators[[1]], 0.00, 0.56)
       add_node(mediators[[2]], 0.00, -0.56)
+    }
+  } else if(model_num == 5L) {
+    if(n_m == 1) {
+      add_node(mediators[[1]], 0.02, 0.58)
+    } else if(n_m >= 2) {
+      add_node(mediators[[1]], 0.02, 0.56)
+      add_node(mediators[[2]], 0.02, -0.56)
+    }
+    if(length(w_var) > 0) {
+      if(n_m >= 2) {
+        add_node(w_var, 0.86, -0.56)
+      } else {
+        add_node(w_var, 0.48, -0.74)
+      }
+    }
+    if(nrow(int_edges) > 0) {
+      int_terms <- unique(int_edges$from)
+      int_base_x <- if(n_m >= 2) 0.86 else 0.20
+      int_base_y <- if(n_m >= 2) 0.56 else -0.38
+      for(i in seq_along(int_terms)) {
+        if(n_m >= 2) {
+          add_node(int_terms[[i]], int_base_x + 0.00 * (i - 1), int_base_y - 0.08 * (i - 1))
+        } else {
+          add_node(int_terms[[i]], int_base_x + 0.12 * (i - 1), int_base_y - 0.12 * (i - 1))
+        }
+      }
     }
   } else if(model_num == 7L) {
     if(n_m == 1) {
@@ -2605,6 +2705,15 @@ build_graphviz_statistical_dot <- function(parsed, settings,
         # Model 4 is simple, but slight left shift gives more room for CI labels.
         t_pos <- 0.42
       }
+      if(model_num == 5L) {
+        from_nm <- edges$from[[i]]
+        to_nm <- edges$to[[i]]
+        if(identical(to_nm, y_var) && from_nm %in% c(w_var, int_names)) {
+          t_pos <- 0.50
+        } else if(identical(to_nm, y_var)) {
+          t_pos <- 0.46
+        }
+      }
       if(model_num == 14L && identical(edges$to[[i]], y_var)) {
         if(edges$from[[i]] %in% mediators) {
           if(length(mediators) == 1) {
@@ -2688,6 +2797,45 @@ build_graphviz_statistical_dot <- function(parsed, settings,
         }
         if(identical(from_nm, m2_name) && identical(to_nm, y_var)) {
           attrs <- c(attrs, "tailport=ne", "headport=sw")
+        }
+      }
+    }
+    if(model_num == 5L) {
+      from_nm <- edges$from[[i]]
+      to_nm <- edges$to[[i]]
+      if(identical(from_nm, x_var) && identical(to_nm, y_var)) {
+        attrs <- c(attrs, "tailport=e", "headport=w")
+      }
+      if(length(mediators) >= 1) {
+        m1_name <- mediators[[1]]
+        if(identical(from_nm, x_var) && identical(to_nm, m1_name)) {
+          attrs <- c(attrs, "tailport=e", "headport=sw")
+        }
+        if(identical(from_nm, m1_name) && identical(to_nm, y_var)) {
+          attrs <- c(attrs, "tailport=se", "headport=nw")
+        }
+      }
+      if(length(mediators) >= 2) {
+        m2_name <- mediators[[2]]
+        if(identical(from_nm, x_var) && identical(to_nm, m2_name)) {
+          attrs <- c(attrs, "tailport=e", "headport=nw")
+        }
+        if(identical(from_nm, m2_name) && identical(to_nm, y_var)) {
+          attrs <- c(attrs, "tailport=ne", "headport=sw")
+        }
+      }
+      if(identical(to_nm, y_var) && from_nm %in% mod_names) {
+        if(length(mediators) >= 2) {
+          attrs <- c(attrs, "tailport=n", "headport=s")
+        } else {
+          attrs <- c(attrs, "headport=sw")
+        }
+      }
+      if(identical(to_nm, y_var) && from_nm %in% int_names) {
+        if(length(mediators) >= 2) {
+          attrs <- c(attrs, "tailport=s", "headport=n")
+        } else {
+          attrs <- c(attrs, "headport=w")
         }
       }
     }
@@ -2993,10 +3141,10 @@ output$statistical_diagram_plot <- renderPlot({
 output$graphviz_statistical_ui <- renderUI({
   if(is.null(analysis_results())) return(NULL)
   model_num <- suppressWarnings(as.integer(analysis_results()$settings$model))
-  if(!(model_num %in% c(1L, 2L, 3L, 4L, 7L, 14L))) {
+  if(!(model_num %in% c(1L, 2L, 3L, 4L, 5L, 7L, 14L))) {
     return(tags$div(
       style = "margin-top: 8px; color: #666;",
-      "Experimental Graphviz comparison is currently shown for Models 1, 2, 3, 4, 7, and 14 only."
+      "Experimental Graphviz comparison is currently shown for Models 1, 2, 3, 4, 5, 7, and 14 only."
     ))
   }
   if(!requireNamespace("DiagrammeR", quietly = TRUE)) {
@@ -3021,8 +3169,8 @@ if(requireNamespace("DiagrammeR", quietly = TRUE)) {
     req(analysis_results())
     settings <- analysis_results()$settings
     model_num <- suppressWarnings(as.integer(settings$model))
-    if(!(model_num %in% c(1L, 2L, 3L, 4L, 7L, 14L))) {
-      return(DiagrammeR::grViz("digraph G { graph [bgcolor='white']; note [shape=box, label='Graphviz comparison is currently available for Models 1, 2, 3, 4, 7, and 14 only.']; }"))
+    if(!(model_num %in% c(1L, 2L, 3L, 4L, 5L, 7L, 14L))) {
+      return(DiagrammeR::grViz("digraph G { graph [bgcolor='white']; note [shape=box, label='Graphviz comparison is currently available for Models 1, 2, 3, 4, 5, 7, and 14 only.']; }"))
     }
     parsed <- diagram_parse_results()
     mode_input <- input$diagram_coef_mode
