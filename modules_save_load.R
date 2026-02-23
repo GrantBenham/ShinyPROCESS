@@ -55,6 +55,10 @@ output$save_settings <- downloadHandler(
       covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else character(0),
       
       # Assumption Checks
+      use_univariate_outlier_screen = if(!is.null(input$use_univariate_outlier_screen)) input$use_univariate_outlier_screen else FALSE,
+      univariate_outlier_method = if(!is.null(input$univariate_outlier_method)) input$univariate_outlier_method else "iqr",
+      univariate_iqr_multiplier = if(!is.null(input$univariate_iqr_multiplier)) input$univariate_iqr_multiplier else 1.5,
+      univariate_mad_threshold = if(!is.null(input$univariate_mad_threshold)) input$univariate_mad_threshold else 3.5,
       residual_threshold = if(!is.null(input$residual_threshold)) input$residual_threshold else 2.0,
       cooks_threshold_type = if(!is.null(input$cooks_threshold_type)) input$cooks_threshold_type else "conservative",
       cooks_threshold_custom = if(!is.null(input$cooks_threshold_custom)) input$cooks_threshold_custom else 0.01,
@@ -393,6 +397,18 @@ observe({
         }
         
         # Restore Assumption Checks
+    if(!is.null(settings$use_univariate_outlier_screen)) {
+      updateCheckboxInput(session, "use_univariate_outlier_screen", value = settings$use_univariate_outlier_screen)
+    }
+    if(!is.null(settings$univariate_outlier_method)) {
+      updateSelectInput(session, "univariate_outlier_method", selected = settings$univariate_outlier_method)
+    }
+    if(!is.null(settings$univariate_iqr_multiplier)) {
+      updateNumericInput(session, "univariate_iqr_multiplier", value = settings$univariate_iqr_multiplier)
+    }
+    if(!is.null(settings$univariate_mad_threshold)) {
+      updateNumericInput(session, "univariate_mad_threshold", value = settings$univariate_mad_threshold)
+    }
     if(!is.null(settings$residual_threshold)) {
       updateNumericInput(session, "residual_threshold", value = settings$residual_threshold)
     }

@@ -311,6 +311,126 @@
       sep = ""
     ))
   })
+
+  # Optional univariate outlier screening summary (detection only)
+  output$univariate_outlier_summary <- renderUI({
+    req(rv$original_dataset, input$process_model)
+
+    if(!isTRUE(input$use_univariate_outlier_screen)) {
+      return(NULL)
+    }
+
+    tryCatch({
+      model_num <- as.numeric(input$process_model)
+      mediator_vars_current <- mediator_vars_collected()
+      validation <- check_required_vars_for_assumptions(
+        model_num, input$predictor_var, input$outcome_var,
+        input$moderator_var, input$moderator2_var, mediator_vars_current
+      )
+
+      if(!validation$valid) {
+        return(NULL)
+      }
+
+      selected_vars <- c(input$outcome_var, input$predictor_var)
+      if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+        selected_vars <- c(selected_vars, mediator_vars_current)
+      }
+      if(!is.null(input$moderator_var) && nzchar(input$moderator_var)) {
+        selected_vars <- c(selected_vars, input$moderator_var)
+      }
+      if(!is.null(input$moderator2_var) && nzchar(input$moderator2_var)) {
+        selected_vars <- c(selected_vars, input$moderator2_var)
+      }
+      if(!is.null(input$covariates) && length(input$covariates) > 0) {
+        selected_vars <- c(selected_vars, input$covariates)
+      }
+      selected_vars <- unique(selected_vars[!is.na(selected_vars) & nzchar(selected_vars)])
+
+      cont_vars <- selected_vars[vapply(selected_vars, function(v) {
+        is_continuous_variable(rv$original_dataset, v)
+      }, logical(1))]
+
+      if(length(cont_vars) == 0) {
+        return(
+          tags$div(
+            style = "background-color: #f7f7f7; padding: 10px; margin-bottom: 15px; border-left: 4px solid #999; font-family: Arial, sans-serif;",
+            tags$strong("Univariate Outlier Screening (Detection Only)"),
+            tags$div(style = "margin-top: 6px;",
+                     "No continuous variables are currently selected, so univariate screening is not shown.")
+          )
+        )
+      }
+
+      method <- if(!is.null(input$univariate_outlier_method) && input$univariate_outlier_method %in% c("iqr", "mad")) {
+        input$univariate_outlier_method
+      } else {
+        "iqr"
+      }
+      iqr_k <- suppressWarnings(as.numeric(input$univariate_iqr_multiplier))
+      if(is.na(iqr_k) || iqr_k < 0.5 || iqr_k > 5) iqr_k <- 1.5
+      mad_thr <- suppressWarnings(as.numeric(input$univariate_mad_threshold))
+      if(is.na(mad_thr) || mad_thr < 2 || mad_thr > 10) mad_thr <- 3.5
+
+      uni_df <- compute_univariate_outlier_summary(
+        data = rv$original_dataset,
+        vars = cont_vars,
+        method = method,
+        iqr_multiplier = iqr_k,
+        mad_threshold = mad_thr
+      )
+
+      if(is.null(uni_df) || !is.data.frame(uni_df) || nrow(uni_df) == 0) {
+        return(NULL)
+      }
+
+      display_df <- uni_df
+      display_df$`Flagged %` <- sprintf("%.1f%%", display_df$flagged_pct)
+      display_df$`Threshold / Rule` <- ifelse(
+        method == "iqr",
+        paste0(display_df$threshold, " | fences ", display_df$rule_detail),
+        paste0(display_df$threshold, " | ", display_df$rule_detail)
+      )
+      display_df <- display_df[, c("variable", "method", "Threshold / Rule", "n_non_missing", "flagged_n", "Flagged %")]
+      names(display_df) <- c("Variable", "Method", "Threshold / Rule", "N (non-missing)", "Flagged (n)", "Flagged %")
+
+      header_note <- if(method == "iqr") {
+        paste0("Method: IQR fences (Tukey), k = ", format(round(iqr_k, 2), nsmall = 1))
+      } else {
+        paste0("Method: MAD-based robust z-score, threshold |z| > ", format(round(mad_thr, 2), nsmall = 1))
+      }
+
+      table_rows <- lapply(seq_len(nrow(display_df)), function(i) {
+        tags$tr(lapply(display_df[i, , drop = FALSE], function(cell) tags$td(as.character(cell), style = "padding: 4px 8px; border: 1px solid #ddd;")))
+      })
+      header_cells <- tags$tr(lapply(names(display_df), function(nm) tags$th(nm, style = "padding: 6px 8px; border: 1px solid #ddd; background: #f0f0f0;")))
+
+      tags$div(
+        style = "background-color: #f7f7f7; padding: 10px; margin-bottom: 15px; border-left: 4px solid #777; font-family: Arial, sans-serif;",
+        tags$strong("Univariate Outlier Screening (Detection Only)"),
+        tags$div(style = "margin-top: 6px; margin-bottom: 4px;", header_note),
+        tags$div(
+          style = "font-size: 12px; color: #555; margin-bottom: 8px;",
+          "These are variable-by-variable screening flags for review only. They do not remove cases from the analysis dataset and do not replace model-based standardized residual / Cook's distance checks. Bootstrapping improves interval estimation but does not correct miscoding or influential/extreme observations."
+        ),
+        tags$div(
+          style = "overflow-x: auto;",
+          tags$table(
+            style = "border-collapse: collapse; width: 100%; font-size: 12px;",
+            tags$thead(header_cells),
+            tags$tbody(table_rows)
+          )
+        )
+      )
+    }, error = function(e) {
+      HTML(paste0(
+        "<div class='alert alert-warning' style='margin-bottom: 15px;'>",
+        "<strong>Univariate outlier screening error:</strong> ",
+        htmltools::htmlEscape(e$message),
+        "</div>"
+      ))
+    })
+  })
   
   # Assumption details output
   output$assumption_details <- renderUI({

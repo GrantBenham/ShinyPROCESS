@@ -121,10 +121,61 @@ ui <- fluidPage(
         tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                     h4(style = "display: inline; margin: 0;", "Assumption Checks")),
         div(style = "margin-left: 15px; margin-top: 10px;",
-          # Outlier detection settings
+          h5("Univariate Outlier Screening (Detection Only)"),
+          tags$div(
+            title = "Optional screening of all selected continuous variables (X, Y, mediators, moderators, and continuous covariates) for unusual values. This flags potential univariate outliers for review only and does not exclude any cases from the analysis dataset.",
+            checkboxInput(
+              "use_univariate_outlier_screen",
+              "Enable univariate outlier screening (detection only)",
+              value = FALSE
+            )
+          ),
+          conditionalPanel(
+            condition = "input.use_univariate_outlier_screen == true",
+            tags$div(
+              title = "Choose a screening rule. IQR fences are common and easy to interpret. MAD-based robust z scores are more robust to skew and extreme values.",
+              selectInput(
+                "univariate_outlier_method",
+                "Univariate screening method",
+                choices = c(
+                  "IQR fences (Tukey)" = "iqr",
+                  "MAD-based robust z-score" = "mad"
+                ),
+                selected = "iqr"
+              )
+            ),
+            conditionalPanel(
+              condition = "input.univariate_outlier_method == 'iqr'",
+              tags$div(
+                title = "Tukey IQR fence multiplier. 1.5 is a common default; larger values flag fewer cases.",
+                numericInput(
+                  "univariate_iqr_multiplier",
+                  "IQR multiplier (k)",
+                  value = 1.5, min = 0.5, max = 5, step = 0.1
+                )
+              )
+            ),
+            conditionalPanel(
+              condition = "input.univariate_outlier_method == 'mad'",
+              tags$div(
+                title = "Threshold for absolute MAD-based robust z scores. 3.5 is a common default; larger values flag fewer cases.",
+                numericInput(
+                  "univariate_mad_threshold",
+                  "MAD robust z threshold (|z| >)",
+                  value = 3.5, min = 2, max = 10, step = 0.1
+                )
+              )
+            ),
+            tags$div(
+              style = "font-size: 12px; color: #555; margin: 6px 0 12px 0;",
+              "Detection only: flagged values are shown in the Assumption Checks tab for review. This does not change the current multivariate standardized residual / Cook's distance filtering workflow."
+            )
+          ),
+
+          # Outlier detection settings (multivariate / model-based)
           conditionalPanel(
             condition = "output.outcome_is_continuous === true",
-            h5("Outlier Detection (Continuous Outcomes)"),
+            h5("Multivariate Outlier Detection (Continuous Outcomes)"),
             tags$div(
               title = "Cases with |standardized residual| > threshold will be identified as outliers. Standardized residuals represent how many standard deviations an observed value deviates from the model's prediction. Common thresholds: |SR| > 2 (standard), |SR| > 2.5 (stringent), |SR| > 3 (very conservative).",
               numericInput("residual_threshold", "Standardized Residual Threshold", 
@@ -133,7 +184,7 @@ ui <- fluidPage(
           ),
           conditionalPanel(
             condition = "output.outcome_is_continuous === false",
-            h5("Influential Case Detection (Binary Outcomes)"),
+            h5("Multivariate Influential Case Detection (Binary Outcomes)"),
             tags$div(
               tags$label("Cook's Distance Threshold:", style = "font-weight: bold;"),
               radioButtons(
@@ -468,6 +519,7 @@ ui <- fluidPage(
             tagList(
               # Blue and Yellow info boxes (appear at top, before Standardized Residual Outliers)
               htmlOutput("assumption_info_boxes"),
+              uiOutput("univariate_outlier_summary"),
               
               # Continuous outcome guidance
               conditionalPanel(
@@ -896,14 +948,31 @@ ui <- fluidPage(
                 ": In the ",
                 tags$code("Model Diagram"),
                 " tab, you can choose coefficient mode (unstandardized/standardized when available), edit diagram labels, toggle stars/CIs/p-values, set coefficient label orientation/font size, and optionally fill variable label boxes light blue. Confidence interval labels in diagrams use PROCESS model-table CIs (not bootstrap coefficient CIs)."
+              ),
+              tags$li(
+                tags$strong("Use Assumption Checks for Screening"),
+                ": The Assumption Checks section includes optional univariate outlier screening (IQR or MAD robust z-score; detection only) and model-based multivariate checks (standardized residuals for continuous outcomes, Cook's distance for binary outcomes). Univariate flags are for review and do not automatically remove cases from analyses."
               )
             ),
 
             tags$hr(),
+            h4("Default Settings Guidance"),
+            tags$ul(
+              tags$li(tags$strong("Bootstrapping"), ": Enabled by default (5000 samples, percentile bootstrap CI) as a practical default for PROCESS analyses and interval estimation."),
+              tags$li(tags$strong("Standard Errors"), ": OLS is the default for comparability with common PROCESS examples. If heteroskedasticity is a concern, consider HC3 (or HC4 for a more conservative option)."),
+              tags$li(tags$strong("Standardized Coefficients"), ": Off by default. Turn on when you want standardized effects reported and available in the Model Diagram tab."),
+              tags$li(tags$strong("Normal Theory Tests"), ": Off by default. Leave off unless you specifically want normal-theory tests (e.g., z-tests) rather than the default t-test framework."),
+              tags$li(tags$strong("Model Diagnostics and Assumptions (PROCESS output option)"), ": Off by default to keep results output concise. Enable only when you want PROCESS's additional regression diagnostics printed in the analysis output.")
+            ),
+            p(style = "color: #555;",
+              "Bootstrapping can improve interval estimation, but it does not correct data-entry errors or eliminate the influence of extreme observations. Use the Assumption Checks tab to review both univariate screening flags and model-based diagnostics."
+            ),
+            tags$hr(),
             h4("Outlier Scope"),
             tags$ul(
               tags$li("Flagged-case removal in this app is based on model diagnostics (standardized residuals for continuous outcomes; Cook's distance for binary outcomes)."),
-              tags$li("The app does not currently include automatic univariate outlier detection/removal. Use violin plots in Assumption Checks to review distributions and optional PROCESS diagnostics output for more detail.")
+              tags$li("The app now includes optional univariate outlier screening (IQR or MAD robust z-score) in the Assumption Checks section, but this is detection-only and does not currently drive case removal."),
+              tags$li("Use violin plots in Assumption Checks to review distributions before deciding whether to run sensitivity analyses with the model-based outlier/influential-case exclusion option.")
             ),
 
             tags$hr(),
