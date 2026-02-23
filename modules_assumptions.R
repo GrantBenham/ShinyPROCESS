@@ -600,6 +600,7 @@ wrap_assumptions_html <- function(content) {
     <!DOCTYPE html>
     <html>
     <head>
+      <meta charset="UTF-8">
       <style>
         body { font-family: Arial, sans-serif; padding: 20px; }
         table { border-collapse: collapse; margin: 10px 0; }

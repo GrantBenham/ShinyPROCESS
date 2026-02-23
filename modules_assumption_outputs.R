@@ -1082,6 +1082,383 @@
   })
   
   # Download handler for assumption checks
+  build_assumption_formula_for_export <- function() {
+    formula_terms <- c(input$outcome_var, "~", input$predictor_var)
+    if(!is.null(input$moderator_var) && input$moderator_var != "") {
+      formula_terms <- c(formula_terms, "*", input$moderator_var)
+    }
+    if(!is.null(input$moderator2_var) && input$moderator2_var != "") {
+      formula_terms <- c(formula_terms, "*", input$moderator2_var)
+    }
+    mediator_vars_current <- mediator_vars_collected()
+    if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+      formula_terms <- c(formula_terms, "+", paste(mediator_vars_current, collapse = " + "))
+    }
+    if(!is.null(input$covariates) && length(input$covariates) > 0) {
+      formula_terms <- c(formula_terms, "+", paste(input$covariates, collapse = " + "))
+    }
+    as.formula(paste(formula_terms, collapse = " "))
+  }
+
+  assumptions_export_validation_ok <- function() {
+    model_num <- suppressWarnings(as.numeric(input$process_model))
+    mediator_vars_current <- mediator_vars_collected()
+    validation <- check_required_vars_for_assumptions(
+      model_num, input$predictor_var, input$outcome_var,
+      input$moderator_var, input$moderator2_var, mediator_vars_current
+    )
+    isTRUE(validation$valid)
+  }
+
+  build_univariate_summary_export_html <- function() {
+    if(!isTRUE(input$use_univariate_outlier_screen)) return("")
+    if(!assumptions_export_validation_ok()) return("")
+
+    selected_vars <- c(input$outcome_var, input$predictor_var)
+    mediator_vars_current <- mediator_vars_collected()
+    if(!is.null(mediator_vars_current) && length(mediator_vars_current) > 0) {
+      selected_vars <- c(selected_vars, mediator_vars_current)
+    }
+    if(!is.null(input$moderator_var) && nzchar(input$moderator_var)) {
+      selected_vars <- c(selected_vars, input$moderator_var)
+    }
+    if(!is.null(input$moderator2_var) && nzchar(input$moderator2_var)) {
+      selected_vars <- c(selected_vars, input$moderator2_var)
+    }
+    if(!is.null(input$covariates) && length(input$covariates) > 0) {
+      selected_vars <- c(selected_vars, input$covariates)
+    }
+    selected_vars <- unique(selected_vars[!is.na(selected_vars) & nzchar(selected_vars)])
+    cont_vars <- selected_vars[vapply(selected_vars, function(v) {
+      is_continuous_variable(rv$original_dataset, v)
+    }, logical(1))]
+
+    if(length(cont_vars) == 0) return("")
+
+    method <- if(!is.null(input$univariate_outlier_method) && input$univariate_outlier_method %in% c("iqr", "mad")) {
+      input$univariate_outlier_method
+    } else {
+      "iqr"
+    }
+    iqr_k <- suppressWarnings(as.numeric(input$univariate_iqr_multiplier))
+    if(is.na(iqr_k) || iqr_k < 0.5 || iqr_k > 5) iqr_k <- 1.5
+    mad_thr <- suppressWarnings(as.numeric(input$univariate_mad_threshold))
+    if(is.na(mad_thr) || mad_thr < 2 || mad_thr > 10) mad_thr <- 3.5
+
+    uni_df <- compute_univariate_outlier_summary(
+      data = rv$original_dataset,
+      vars = cont_vars,
+      method = method,
+      iqr_multiplier = iqr_k,
+      mad_threshold = mad_thr
+    )
+    if(!is.data.frame(uni_df) || nrow(uni_df) == 0) return("")
+
+    display_df <- uni_df
+    display_df$flagged_pct <- sprintf("%.1f%%", display_df$flagged_pct)
+    if(method == "iqr") {
+      display_df$rule <- paste0(display_df$threshold, " | fences ", display_df$rule_detail)
+    } else {
+      display_df$rule <- ifelse(
+        grepl("^MAD = 0", display_df$rule_detail),
+        paste0(display_df$threshold, " | ", display_df$rule_detail),
+        display_df$threshold
+      )
+    }
+    display_df <- display_df[, c("variable", "method", "rule", "n_non_missing", "flagged_n", "flagged_pct")]
+    names(display_df) <- c("Variable", "Method", "Threshold / Rule", "N (non-missing)", "Flagged (n)", "Flagged %")
+
+    header_note <- if(method == "iqr") {
+      paste0("Method: IQR fences (Tukey), k = ", format(round(iqr_k, 2), nsmall = 1))
+    } else {
+      paste0("Method: MAD-based robust z-score, threshold |z| > ", format(round(mad_thr, 2), nsmall = 1))
+    }
+
+    table_html <- paste0(
+      "<div style='overflow-x:auto;'><table style='border-collapse: collapse; width: 100%; font-size: 12px;'>",
+      "<thead><tr>",
+      paste(sprintf("<th style='padding: 6px 8px; border: 1px solid #ddd; background: #f0f0f0;'>%s</th>", names(display_df)), collapse = ""),
+      "</tr></thead><tbody>",
+      paste(apply(display_df, 1, function(row) {
+        paste0("<tr>", paste(sprintf("<td style='padding: 4px 8px; border: 1px solid #ddd;'>%s</td>", htmltools::htmlEscape(as.character(row))), collapse = ""), "</tr>")
+      }), collapse = ""),
+      "</tbody></table></div>"
+    )
+
+    paste0(
+      "<div style='background-color: #f7f7f7; padding: 10px; margin: 15px 0; border-left: 4px solid #777; font-family: Arial, sans-serif;'>",
+      "<strong>Univariate Outlier Screening (Detection Only)</strong>",
+      "<div style='margin-top: 6px; margin-bottom: 4px;'>", htmltools::htmlEscape(header_note), "</div>",
+      "<div style='font-size: 12px; color: #555; margin-bottom: 8px;'>",
+      "Variable-by-variable screening flags for review only (original dataset). These do not remove cases from the analysis dataset and do not replace model-based standardized residual / Cook's distance checks.",
+      "</div>",
+      table_html,
+      "</div>"
+    )
+  }
+
+  save_ggplot_to_data_uri <- function(p, width = 8, height = 6, dpi = 120) {
+    if(is.null(p)) return(NULL)
+    if(!requireNamespace("base64enc", quietly = TRUE)) return(NULL)
+    tmp_png <- tempfile(fileext = ".png")
+    on.exit(unlink(tmp_png), add = TRUE)
+    ggplot2::ggsave(tmp_png, plot = p, device = "png", width = width, height = height, dpi = dpi, units = "in", bg = "white")
+    base64enc::dataURI(file = tmp_png, mime = "image/png")
+  }
+
+  build_export_plot_qq <- function() {
+    if(!assumptions_export_validation_ok()) return(NULL)
+    if(is_binary_variable(rv$original_dataset, input$outcome_var)) return(NULL)
+    model_formula <- build_assumption_formula_for_export()
+    model <- lm(model_formula, data = rv$original_dataset)
+    ggplot(data.frame(residuals = rstandard(model)), aes(sample = residuals)) +
+      stat_qq() +
+      stat_qq_line() +
+      theme_minimal() +
+      labs(title = "Normal Q-Q Plot", x = "Theoretical Quantiles", y = "Sample Quantiles") +
+      theme(
+        text = element_text(size = 12),
+        axis.title = element_text(size = 13),
+        axis.text = element_text(size = 11),
+        plot.title = element_text(size = 14, hjust = 0.5),
+        axis.line = element_line(color = "black", linewidth = 0.4),
+        axis.ticks = element_line(color = "black", linewidth = 0.4)
+      )
+  }
+
+  build_export_plot_residual <- function() {
+    if(!assumptions_export_validation_ok()) return(NULL)
+    model_formula <- build_assumption_formula_for_export()
+    outcome_is_binary <- is_binary_variable(rv$original_dataset, input$outcome_var)
+    if(outcome_is_binary) {
+      model <- glm(model_formula, data = rv$original_dataset, family = binomial())
+      fitted_values <- fitted(model)
+      pearson_resid <- residuals(model, type = "pearson")
+      outliers <- tryCatch(identify_outliers(), error = function(e) NULL)
+      is_outlier <- if(!is.null(outliers) && !is.null(outliers$cases)) seq_along(fitted_values) %in% outliers$cases else rep(FALSE, length(fitted_values))
+      subtitle_text <- if(!is.null(outliers) && !is.null(outliers$count) && outliers$count > 0) {
+        sprintf("Cook's D > %.4f: %d influential case%s highlighted",
+                outliers$threshold, outliers$count, ifelse(outliers$count == 1, "", "s"))
+      } else if(!is.null(outliers) && !is.null(outliers$threshold)) {
+        sprintf("Cook's D <= %.4f: No influential cases detected", outliers$threshold)
+      } else {
+        "No influential cases detected"
+      }
+      plot_data <- data.frame(fitted = fitted_values, residuals = pearson_resid, is_outlier = is_outlier)
+      suppressMessages(
+        ggplot(plot_data, aes(x = fitted, y = residuals)) +
+          geom_point(aes(color = is_outlier), alpha = 0.6) +
+          scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+          geom_smooth(method = "loess", se = FALSE, color = "blue") +
+          geom_hline(yintercept = 0, linetype = "dashed") +
+          theme_minimal() +
+          labs(title = "Residuals vs Fitted (Logistic Regression)",
+               x = "Fitted probabilities", y = "Pearson residuals",
+               subtitle = subtitle_text) +
+          theme(
+            text = element_text(size = 12), axis.title = element_text(size = 13),
+            axis.text = element_text(size = 11), plot.title = element_text(size = 14, hjust = 0.5),
+            plot.subtitle = element_text(size = 10, hjust = 0.5),
+            legend.position = "none"
+          )
+      )
+    } else {
+      model <- lm(model_formula, data = rv$original_dataset)
+      plot_data <- data.frame(
+        fitted = fitted(model),
+        residuals = residuals(model),
+        is_outlier = abs(rstandard(model)) > input$residual_threshold
+      )
+      suppressMessages(
+        ggplot(plot_data, aes(x = fitted, y = residuals)) +
+          geom_point(aes(color = is_outlier), alpha = 0.6) +
+          scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+          geom_smooth(method = "loess", se = FALSE, color = "blue") +
+          geom_hline(yintercept = 0, linetype = "dashed") +
+          theme_minimal() +
+          labs(title = "Residuals vs Fitted", x = "Fitted values", y = "Residuals") +
+          theme(text = element_text(size = 12), axis.title = element_text(size = 13),
+                axis.text = element_text(size = 11), plot.title = element_text(size = 14, hjust = 0.5),
+                legend.position = "none")
+      )
+    }
+  }
+
+  build_export_plot_scale_location <- function() {
+    if(!assumptions_export_validation_ok()) return(NULL)
+    if(is_binary_variable(rv$original_dataset, input$outcome_var)) return(NULL)
+    model_formula <- build_assumption_formula_for_export()
+    model <- lm(model_formula, data = rv$original_dataset)
+    std_residuals <- rstandard(model)
+    plot_data <- data.frame(
+      fitted = fitted(model),
+      sqrt_abs_resid = sqrt(abs(std_residuals)),
+      is_outlier = abs(std_residuals) > input$residual_threshold
+    )
+    suppressMessages(
+      ggplot(plot_data, aes(x = fitted, y = sqrt_abs_resid)) +
+        geom_point(aes(color = is_outlier), alpha = 0.6) +
+        scale_color_manual(values = c("FALSE" = "black", "TRUE" = "red")) +
+        geom_smooth(method = "loess", se = FALSE, color = "blue") +
+        theme_minimal() +
+        labs(title = "Scale-Location Plot",
+             x = "Fitted values",
+             y = expression(sqrt("|Standardized residuals|"))) +
+        theme(text = element_text(size = 12), axis.title = element_text(size = 13),
+              axis.text = element_text(size = 11), plot.title = element_text(size = 14, hjust = 0.5),
+              legend.position = "none")
+    )
+  }
+
+  build_export_plot_violin_main <- function() {
+    req(rv$original_dataset, input$outcome_var, input$predictor_var)
+    selected_vars <- c(input$outcome_var, input$predictor_var)
+    mediator_vars_current <- mediator_vars_collected()
+    if(!is.null(mediator_vars_current)) selected_vars <- c(selected_vars, mediator_vars_current)
+    if(!is.null(input$moderator_var)) selected_vars <- c(selected_vars, input$moderator_var)
+    if(!is.null(input$moderator2_var) && input$moderator2_var != "") selected_vars <- c(selected_vars, input$moderator2_var)
+    cont_vars <- selected_vars[vapply(selected_vars, function(v) is_continuous_variable(rv$original_dataset, v), logical(1))]
+    if(length(cont_vars) == 0) return(NULL)
+
+    orig_long <- do.call(rbind, lapply(cont_vars, function(v) data.frame(variable = v, value = rv$original_dataset[[v]], dataset = "Original", stringsAsFactors = FALSE)))
+    outliers <- tryCatch(identify_outliers(), error = function(e) NULL)
+    filtered_data <- rv$original_dataset
+    if(!is.null(outliers) && length(outliers$cases) > 0) filtered_data <- rv$original_dataset[-outliers$cases, ]
+    analysis_long <- do.call(rbind, lapply(cont_vars, function(v) data.frame(variable = v, value = filtered_data[[v]], dataset = "After removal", stringsAsFactors = FALSE)))
+
+    plot_data <- rbind(orig_long, analysis_long)
+    plot_data <- plot_data[!is.na(plot_data$value), , drop = FALSE]
+    if(nrow(plot_data) == 0) return(NULL)
+    plot_data$value <- suppressWarnings(as.numeric(plot_data$value))
+    plot_data$variable <- factor(plot_data$variable, levels = cont_vars)
+    plot_data$dataset <- factor(plot_data$dataset, levels = c("Original", "After removal"))
+
+    flag_points <- data.frame()
+    if(isTRUE(input$use_univariate_outlier_screen)) {
+      flag_orig <- build_univariate_flag_overlay_long(rv$original_dataset, cont_vars, "Original")
+      flag_after <- build_univariate_flag_overlay_long(filtered_data, cont_vars, "After removal")
+      flag_list <- list(flag_orig, flag_after)
+      flag_list <- flag_list[vapply(flag_list, function(df) is.data.frame(df) && nrow(df) > 0, logical(1))]
+      flag_points <- if(length(flag_list) > 0) do.call(rbind, flag_list) else data.frame()
+      if(is.data.frame(flag_points) && nrow(flag_points) > 0) {
+        flag_points <- flag_points[!is.na(flag_points$value), , drop = FALSE]
+        flag_points$value <- suppressWarnings(as.numeric(flag_points$value))
+        flag_points$variable <- factor(flag_points$variable, levels = cont_vars)
+        flag_points$dataset <- factor(flag_points$dataset, levels = c("Original", "After removal"))
+      }
+    }
+
+    p <- ggplot(plot_data, aes(x = dataset, y = value, fill = dataset)) +
+      geom_violin(trim = FALSE, alpha = 0.5, color = NA) +
+      geom_boxplot(width = 0.12, outlier.shape = NA, alpha = 0.6) +
+      facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+      labs(title = "Continuous Variable Distributions",
+           x = "Dataset (Original vs After removal)", y = "Value", fill = "Dataset") +
+      theme_minimal() +
+      theme(text = element_text(size = 11), axis.title = element_text(size = 12),
+            axis.text = element_text(size = 10), plot.title = element_text(size = 13, hjust = 0.5),
+            strip.text = element_text(size = 11), legend.position = "right")
+
+    if(is.data.frame(flag_points) && nrow(flag_points) > 0) {
+      p <- p + geom_point(
+        data = flag_points, aes(x = dataset, y = value), inherit.aes = FALSE,
+        shape = 21, size = 1.8, stroke = 0.4, fill = "#d32f2f", color = "black",
+        alpha = 0.9, position = ggplot2::position_jitter(width = 0.05, height = 0),
+        show.legend = FALSE
+      )
+    }
+    p
+  }
+
+  build_export_plot_violin_covariates <- function() {
+    if(is.null(input$covariates) || length(input$covariates) == 0) return(NULL)
+    cont_covariates <- input$covariates[vapply(input$covariates, function(v) is_continuous_variable(rv$original_dataset, v), logical(1))]
+    if(length(cont_covariates) == 0) return(NULL)
+
+    orig_long <- do.call(rbind, lapply(cont_covariates, function(v) data.frame(variable = v, value = rv$original_dataset[[v]], dataset = "Original", stringsAsFactors = FALSE)))
+    outliers <- tryCatch(identify_outliers(), error = function(e) NULL)
+    filtered_data <- rv$original_dataset
+    if(!is.null(outliers) && length(outliers$cases) > 0) filtered_data <- rv$original_dataset[-outliers$cases, ]
+    analysis_long <- do.call(rbind, lapply(cont_covariates, function(v) data.frame(variable = v, value = filtered_data[[v]], dataset = "After removal", stringsAsFactors = FALSE)))
+
+    plot_data <- rbind(orig_long, analysis_long)
+    plot_data <- plot_data[!is.na(plot_data$value), , drop = FALSE]
+    if(nrow(plot_data) == 0) return(NULL)
+    plot_data$value <- suppressWarnings(as.numeric(plot_data$value))
+    plot_data$variable <- factor(plot_data$variable, levels = cont_covariates)
+    plot_data$dataset <- factor(plot_data$dataset, levels = c("Original", "After removal"))
+
+    flag_points <- data.frame()
+    if(isTRUE(input$use_univariate_outlier_screen)) {
+      flag_orig <- build_univariate_flag_overlay_long(rv$original_dataset, cont_covariates, "Original")
+      flag_after <- build_univariate_flag_overlay_long(filtered_data, cont_covariates, "After removal")
+      flag_list <- list(flag_orig, flag_after)
+      flag_list <- flag_list[vapply(flag_list, function(df) is.data.frame(df) && nrow(df) > 0, logical(1))]
+      flag_points <- if(length(flag_list) > 0) do.call(rbind, flag_list) else data.frame()
+      if(is.data.frame(flag_points) && nrow(flag_points) > 0) {
+        flag_points <- flag_points[!is.na(flag_points$value), , drop = FALSE]
+        flag_points$value <- suppressWarnings(as.numeric(flag_points$value))
+        flag_points$variable <- factor(flag_points$variable, levels = cont_covariates)
+        flag_points$dataset <- factor(flag_points$dataset, levels = c("Original", "After removal"))
+      }
+    }
+
+    p <- ggplot(plot_data, aes(x = dataset, y = value, fill = dataset)) +
+      geom_violin(trim = FALSE, alpha = 0.5, color = NA) +
+      geom_boxplot(width = 0.12, outlier.shape = NA, alpha = 0.6) +
+      facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+      labs(title = "Covariate Distributions",
+           x = "Dataset (Original vs After removal)", y = "Value", fill = "Dataset") +
+      theme_minimal() +
+      theme(text = element_text(size = 11), axis.title = element_text(size = 12),
+            axis.text = element_text(size = 10), plot.title = element_text(size = 13, hjust = 0.5),
+            strip.text = element_text(size = 11), legend.position = "right")
+
+    if(is.data.frame(flag_points) && nrow(flag_points) > 0) {
+      p <- p + geom_point(
+        data = flag_points, aes(x = dataset, y = value), inherit.aes = FALSE,
+        shape = 21, size = 1.8, stroke = 0.4, fill = "#d32f2f", color = "black",
+        alpha = 0.9, position = ggplot2::position_jitter(width = 0.05, height = 0),
+        show.legend = FALSE
+      )
+    }
+    p
+  }
+
+  build_assumption_export_plots_html <- function() {
+    sections <- list(
+      list(title = "Q-Q Plot", plot = tryCatch(build_export_plot_qq(), error = function(e) NULL), width = 7.0, height = 5.5),
+      list(title = "Residuals vs Fitted", plot = tryCatch(build_export_plot_residual(), error = function(e) NULL), width = 7.0, height = 5.5),
+      list(title = "Scale-Location Plot", plot = tryCatch(build_export_plot_scale_location(), error = function(e) NULL), width = 7.0, height = 5.5),
+      list(title = "Continuous Variable Distributions (Violin Plots)", plot = tryCatch(build_export_plot_violin_main(), error = function(e) NULL), width = 8.5, height = 8.0),
+      list(title = "Covariate Distributions (Violin Plots)", plot = tryCatch(build_export_plot_violin_covariates(), error = function(e) NULL), width = 8.5, height = 6.5)
+    )
+
+    html_parts <- lapply(sections, function(sec) {
+      if(is.null(sec$plot)) return(NULL)
+      uri <- tryCatch(save_ggplot_to_data_uri(sec$plot, width = sec$width, height = sec$height, dpi = 120), error = function(e) NULL)
+      if(is.null(uri) || !nzchar(uri)) {
+        return(paste0(
+          "<div style='margin: 16px 0;'><h3 style='font-family: Arial, sans-serif;'>", htmltools::htmlEscape(sec$title), "</h3>",
+          "<div style='font-family: Arial, sans-serif; color: #666;'>Plot export unavailable (image embedding dependency not available).</div></div>"
+        ))
+      }
+      paste0(
+        "<div style='margin: 16px 0;'>",
+        "<h3 style='font-family: Arial, sans-serif; margin-bottom: 8px;'>", htmltools::htmlEscape(sec$title), "</h3>",
+        "<img src='", uri, "' alt='", htmltools::htmlEscape(sec$title), "' style='max-width: 100%; border: 1px solid #ddd; background: white; padding: 4px;'/>",
+        "</div>"
+      )
+    })
+    html_parts <- Filter(Negate(is.null), html_parts)
+    if(length(html_parts) == 0) return("")
+    paste0(
+      "<hr style='margin: 20px 0;'>",
+      "<h2 style='font-family: Arial, sans-serif;'>Diagnostic Plots</h2>",
+      paste(html_parts, collapse = "")
+    )
+  }
+
   output$download_assumptions <- downloadHandler(
     filename = function() {
       model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
@@ -1097,9 +1474,19 @@
         outlier_summary_func = outlier_summary,
         include_info_boxes = TRUE
       )
+      univariate_html <- tryCatch(build_univariate_summary_export_html(), error = function(e) "")
+      plots_html <- tryCatch(build_assumption_export_plots_html(), error = function(e) {
+        paste0(
+          "<hr style='margin: 20px 0;'><h2 style='font-family: Arial, sans-serif;'>Diagnostic Plots</h2>",
+          "<div style='font-family: Arial, sans-serif; color: #b00;'>Unable to generate embedded plots for export: ",
+          htmltools::htmlEscape(e$message),
+          "</div>"
+        )
+      })
+      export_html <- paste0(assumption_html, univariate_html, plots_html)
       
       # Wrap in complete HTML document
-      writeLines(wrap_assumptions_html(assumption_html), file)
+      writeLines(wrap_assumptions_html(export_html), file)
     },
     contentType = "text/html"
   )
