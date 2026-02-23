@@ -722,6 +722,72 @@
       text(0.5, 0.5, "Error generating scale-location plot", cex = 1.2)
     })
   })
+
+  # Row-level univariate screening flags for violin-plot overlays (detection only)
+  build_univariate_flag_overlay_long <- function(data, vars, dataset_label) {
+    empty_out <- data.frame(
+      variable = character(0),
+      value = numeric(0),
+      dataset = character(0),
+      stringsAsFactors = FALSE
+    )
+    if(is.null(data) || !is.data.frame(data) || length(vars) == 0 ||
+       !isTRUE(input$use_univariate_outlier_screen)) {
+      return(empty_out)
+    }
+
+    method <- if(!is.null(input$univariate_outlier_method) &&
+                 input$univariate_outlier_method %in% c("iqr", "mad")) {
+      input$univariate_outlier_method
+    } else {
+      "iqr"
+    }
+    iqr_k <- suppressWarnings(as.numeric(input$univariate_iqr_multiplier))
+    if(is.na(iqr_k) || iqr_k < 0.5 || iqr_k > 5) iqr_k <- 1.5
+    mad_thr <- suppressWarnings(as.numeric(input$univariate_mad_threshold))
+    if(is.na(mad_thr) || mad_thr < 2 || mad_thr > 10) mad_thr <- 3.5
+
+    rows <- lapply(vars, function(v) {
+      if(!(v %in% names(data))) return(NULL)
+      x_raw <- suppressWarnings(as.numeric(data[[v]]))
+      keep <- !is.na(x_raw)
+      x <- x_raw[keep]
+      if(length(x) == 0) return(NULL)
+
+      if(method == "iqr") {
+        q1 <- as.numeric(stats::quantile(x, 0.25, na.rm = TRUE, type = 7))
+        q3 <- as.numeric(stats::quantile(x, 0.75, na.rm = TRUE, type = 7))
+        iqr_val <- q3 - q1
+        lower <- q1 - (iqr_k * iqr_val)
+        upper <- q3 + (iqr_k * iqr_val)
+        flagged_valid <- (x < lower) | (x > upper)
+      } else {
+        med <- stats::median(x, na.rm = TRUE)
+        mad_val <- stats::mad(x, center = med, constant = 1, na.rm = TRUE)
+        if(is.na(mad_val) || mad_val == 0) {
+          flagged_valid <- rep(FALSE, length(x))
+        } else {
+          robust_z <- 0.6745 * (x - med) / mad_val
+          flagged_valid <- abs(robust_z) > mad_thr
+        }
+      }
+
+      if(!any(flagged_valid, na.rm = TRUE)) return(NULL)
+
+      data.frame(
+        variable = v,
+        value = x[flagged_valid],
+        dataset = dataset_label,
+        stringsAsFactors = FALSE
+      )
+    })
+
+    rows <- rows[!vapply(rows, is.null, logical(1))]
+    if(length(rows) == 0) return(empty_out)
+    out <- do.call(rbind, rows)
+    if(is.null(out)) return(empty_out)
+    out
+  }
   
   output$violin_plot <- renderPlot({
     req(rv$original_dataset, input$outcome_var, input$predictor_var)
@@ -772,14 +838,29 @@
       plot_data$value <- suppressWarnings(as.numeric(plot_data$value))
       plot_data$variable <- factor(plot_data$variable, levels = cont_vars)
       plot_data$dataset <- factor(plot_data$dataset, levels = c("Original", "After removal"))
+
+      flag_points <- data.frame()
+      if(isTRUE(input$use_univariate_outlier_screen)) {
+        flag_orig <- build_univariate_flag_overlay_long(rv$original_dataset, cont_vars, "Original")
+        flag_after <- build_univariate_flag_overlay_long(filtered_data, cont_vars, "After removal")
+        flag_list <- list(flag_orig, flag_after)
+        flag_list <- flag_list[vapply(flag_list, function(df) is.data.frame(df) && nrow(df) > 0, logical(1))]
+        flag_points <- if(length(flag_list) > 0) do.call(rbind, flag_list) else data.frame()
+        if(!is.null(flag_points) && nrow(flag_points) > 0) {
+          flag_points <- flag_points[!is.na(flag_points$value), , drop = FALSE]
+          flag_points$value <- suppressWarnings(as.numeric(flag_points$value))
+          flag_points$variable <- factor(flag_points$variable, levels = cont_vars)
+          flag_points$dataset <- factor(flag_points$dataset, levels = c("Original", "After removal"))
+        }
+      }
       
       if(nrow(plot_data) == 0) {
         plot.new()
         text(0.5, 0.5, "No data available for violin plot.", cex = 1.1)
         return(NULL)
       }
-      
-      ggplot(plot_data, aes(x = dataset, y = value, fill = dataset)) +
+
+      p <- ggplot(plot_data, aes(x = dataset, y = value, fill = dataset)) +
         geom_violin(trim = FALSE, alpha = 0.5, color = NA) +
         geom_boxplot(width = 0.12, outlier.shape = NA, alpha = 0.6) +
         facet_wrap(~ variable, scales = "free_y", ncol = 1) +
@@ -796,6 +877,24 @@
           legend.position = "right",
           strip.text = element_text(size = 14)
         )
+
+      if(is.data.frame(flag_points) && nrow(flag_points) > 0) {
+        p <- p + geom_point(
+          data = flag_points,
+          aes(x = dataset, y = value),
+          inherit.aes = FALSE,
+          shape = 21,
+          size = 2.0,
+          stroke = 0.4,
+          fill = "#d32f2f",
+          color = "black",
+          alpha = 0.9,
+          position = ggplot2::position_jitter(width = 0.05, height = 0),
+          show.legend = FALSE
+        )
+      }
+
+      p
     }, error = function(e) {
       plot.new()
       text(0.5, 0.5, paste("Error generating violin plot:\n", e$message), cex = 1.1)
@@ -848,12 +947,27 @@
       plot_data$value <- suppressWarnings(as.numeric(plot_data$value))
       plot_data$variable <- factor(plot_data$variable, levels = cont_covariates)
       plot_data$dataset <- factor(plot_data$dataset, levels = c("Original", "After removal"))
+
+      flag_points <- data.frame()
+      if(isTRUE(input$use_univariate_outlier_screen)) {
+        flag_orig <- build_univariate_flag_overlay_long(rv$original_dataset, cont_covariates, "Original")
+        flag_after <- build_univariate_flag_overlay_long(filtered_data, cont_covariates, "After removal")
+        flag_list <- list(flag_orig, flag_after)
+        flag_list <- flag_list[vapply(flag_list, function(df) is.data.frame(df) && nrow(df) > 0, logical(1))]
+        flag_points <- if(length(flag_list) > 0) do.call(rbind, flag_list) else data.frame()
+        if(!is.null(flag_points) && nrow(flag_points) > 0) {
+          flag_points <- flag_points[!is.na(flag_points$value), , drop = FALSE]
+          flag_points$value <- suppressWarnings(as.numeric(flag_points$value))
+          flag_points$variable <- factor(flag_points$variable, levels = cont_covariates)
+          flag_points$dataset <- factor(flag_points$dataset, levels = c("Original", "After removal"))
+        }
+      }
       
       if(nrow(plot_data) == 0) {
         return(NULL)
       }
-      
-      ggplot(plot_data, aes(x = dataset, y = value, fill = dataset)) +
+
+      p <- ggplot(plot_data, aes(x = dataset, y = value, fill = dataset)) +
         geom_violin(trim = FALSE, alpha = 0.5, color = NA) +
         geom_boxplot(width = 0.12, outlier.shape = NA, alpha = 0.6) +
         facet_wrap(~ variable, scales = "free_y", ncol = 1) +
@@ -870,6 +984,24 @@
           legend.position = "right",
           strip.text = element_text(size = 14)
         )
+
+      if(is.data.frame(flag_points) && nrow(flag_points) > 0) {
+        p <- p + geom_point(
+          data = flag_points,
+          aes(x = dataset, y = value),
+          inherit.aes = FALSE,
+          shape = 21,
+          size = 2.0,
+          stroke = 0.4,
+          fill = "#d32f2f",
+          color = "black",
+          alpha = 0.9,
+          position = ggplot2::position_jitter(width = 0.05, height = 0),
+          show.legend = FALSE
+        )
+      }
+
+      p
     }, error = function(e) {
       plot.new()
       text(0.5, 0.5, paste("Error generating covariates violin plot:\n", e$message), cex = 1.1)

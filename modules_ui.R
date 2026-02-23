@@ -127,7 +127,7 @@ ui <- fluidPage(
             checkboxInput(
               "use_univariate_outlier_screen",
               "Enable univariate outlier screening (detection only)",
-              value = FALSE
+              value = TRUE
             )
           ),
           conditionalPanel(

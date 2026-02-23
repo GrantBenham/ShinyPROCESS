@@ -55,7 +55,7 @@ output$save_settings <- downloadHandler(
       covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else character(0),
       
       # Assumption Checks
-      use_univariate_outlier_screen = if(!is.null(input$use_univariate_outlier_screen)) input$use_univariate_outlier_screen else FALSE,
+      use_univariate_outlier_screen = if(!is.null(input$use_univariate_outlier_screen)) input$use_univariate_outlier_screen else TRUE,
       univariate_outlier_method = if(!is.null(input$univariate_outlier_method)) input$univariate_outlier_method else "iqr",
       univariate_iqr_multiplier = if(!is.null(input$univariate_iqr_multiplier)) input$univariate_iqr_multiplier else 1.5,
       univariate_mad_threshold = if(!is.null(input$univariate_mad_threshold)) input$univariate_mad_threshold else 3.5,
