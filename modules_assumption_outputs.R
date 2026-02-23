@@ -386,11 +386,17 @@
 
       display_df <- uni_df
       display_df$`Flagged %` <- sprintf("%.1f%%", display_df$flagged_pct)
-      display_df$`Threshold / Rule` <- ifelse(
-        method == "iqr",
-        paste0(display_df$threshold, " | fences ", display_df$rule_detail),
-        paste0(display_df$threshold, " | ", display_df$rule_detail)
-      )
+      if(method == "iqr") {
+        # Keep variable-specific fence cutoffs visible for transparency.
+        display_df$`Threshold / Rule` <- paste0(display_df$threshold, " | fences ", display_df$rule_detail)
+      } else {
+        # For MAD rows, threshold text is sufficient unless MAD is zero.
+        display_df$`Threshold / Rule` <- ifelse(
+          grepl("^MAD = 0", display_df$rule_detail),
+          paste0(display_df$threshold, " | ", display_df$rule_detail),
+          display_df$threshold
+        )
+      }
       display_df <- display_df[, c("variable", "method", "Threshold / Rule", "n_non_missing", "flagged_n", "Flagged %")]
       names(display_df) <- c("Variable", "Method", "Threshold / Rule", "N (non-missing)", "Flagged (n)", "Flagged %")
 
