@@ -70,7 +70,7 @@ build_path_row <- function(model, outcome_block, from, to, path_kind,
     ""
   }
   label_std <- if(!is.na(estimate_std)) {
-    paste0("beta = ", sprintf("%.3f", estimate_std), st)
+    paste0("\u03B2 = ", sprintf("%.3f", estimate_std), st)
   } else {
     ""
   }
@@ -459,7 +459,7 @@ compose_path_label <- function(edge_row, label_mode = "auto",
   }
   
   est <- if(identical(use_mode, "std")) edge_row$estimate_std else edge_row$estimate_raw
-  prefix <- if(identical(use_mode, "std")) "beta" else "b"
+  prefix <- if(identical(use_mode, "std")) "\u03B2" else "b"
   
   if(is.na(est)) return("")
 
@@ -3550,7 +3550,7 @@ output$conceptual_diagram_plot <- renderImage({
     width = width_in,
     height = height_in,
     units = "in",
-    res = 192,
+    res = 240,
     bg = "white"
   )
   on.exit(try(grDevices::dev.off(), silent = TRUE), add = TRUE)
@@ -3588,7 +3588,7 @@ output$statistical_diagram_plot <- renderImage({
     width = width_in,
     height = height_in,
     units = "in",
-    res = 192,
+    res = 240,
     bg = "white"
   )
   on.exit(try(grDevices::dev.off(), silent = TRUE), add = TRUE)
