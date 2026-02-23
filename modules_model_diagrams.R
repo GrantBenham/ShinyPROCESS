@@ -3400,13 +3400,29 @@ observeEvent(input$diagram_regenerate, {
 get_plot_dims_px <- function(output_id, fallback_w, fallback_h) {
   w <- suppressWarnings(as.numeric(session$clientData[[paste0("output_", output_id, "_width")]]))
   h <- suppressWarnings(as.numeric(session$clientData[[paste0("output_", output_id, "_height")]]))
-  if(is.na(w) || w <= 0) w <- fallback_w
-  if(is.na(h) || h <= 0) h <- fallback_h
+  raw_w <- w
+  raw_h <- h
+  # Hidden tabs/conditional panels can report tiny positive dimensions (e.g., 1 px)
+  # in newer Shiny versions; those are not usable for diagram layout scaling.
+  if(length(w) != 1 || is.na(w) || !is.finite(w) || w < 200) w <- fallback_w
+  if(length(h) != 1 || is.na(h) || !is.finite(h) || h < 200) h <- fallback_h
   list(width_px = w, height_px = h)
 }
 
+# Shiny 1.11.x can occasionally leave ggplot outputs blank when first rendered
+# in nested hidden tabs/conditional panels. Nudge diagram plot reactives when the
+# Model Diagram tab is activated so they redraw with stable visible dimensions.
+diagram_tab_refresh_nonce <- reactiveVal(0L)
+observeEvent(input$tabset_panel, {
+  if(identical(input$tabset_panel, "Model Diagram")) {
+    diagram_tab_refresh_nonce(isolate(diagram_tab_refresh_nonce()) + 1L)
+  }
+}, ignoreInit = TRUE)
+
 conceptual_diagram_plot_obj <- reactive({
   req(analysis_results())
+  # Force a fresh draw when the Model Diagram tab is activated (Shiny hidden-tab render robustness).
+  diagram_tab_refresh_nonce()
   parsed <- diagram_parse_results()
   settings <- analysis_results()$settings
   mode_input <- input$diagram_coef_mode
@@ -3430,8 +3446,15 @@ conceptual_diagram_plot_obj <- reactive({
   )
 })
 
+diagram_coef_font_size_debounced <- debounce(
+  reactive(input$diagram_coef_font_size),
+  millis = 250
+)
+
 statistical_diagram_plot_obj <- reactive({
   req(analysis_results())
+  # Force a fresh draw when the Model Diagram tab is activated (Shiny hidden-tab render robustness).
+  diagram_tab_refresh_nonce()
   parsed <- diagram_parse_results()
   settings <- analysis_results()$settings
   mode_input <- input$diagram_coef_mode
@@ -3443,7 +3466,7 @@ statistical_diagram_plot_obj <- reactive({
   include_stars_opt <- if(is.null(input$diagram_include_stars)) TRUE else isTRUE(input$diagram_include_stars)
   coef_digits_opt <- suppressWarnings(as.integer(input$diagram_coef_digits))
   if(is.na(coef_digits_opt) || !(coef_digits_opt %in% c(2L, 3L))) coef_digits_opt <- 3L
-  coef_label_size_opt <- suppressWarnings(as.numeric(input$diagram_coef_font_size))
+  coef_label_size_opt <- suppressWarnings(as.numeric(diagram_coef_font_size_debounced()))
   if(is.na(coef_label_size_opt) || coef_label_size_opt < 2.0 || coef_label_size_opt > 5.0) coef_label_size_opt <- 3.3
   coef_label_orient_opt <- tolower(trimws(as.character(input$diagram_coef_orientation)))
   if(!coef_label_orient_opt %in% c("line", "horizontal")) coef_label_orient_opt <- "line"
@@ -3501,23 +3524,83 @@ observe({
   updateSelectInput(session, "diagram_coef_mode", choices = choices, selected = selected)
 })
 
-output$conceptual_diagram_plot <- renderPlot({
-  if(is.null(analysis_results())) {
-    plot.new()
-    text(0.5, 0.5, "Run an analysis to generate the conceptual diagram.", col = "#666666")
-    return(invisible(NULL))
+output$conceptual_diagram_plot <- renderImage({
+  req(analysis_results())
+  close_leaked_png_devices <- function() {
+    devs <- grDevices::dev.list()
+    if(is.null(devs) || length(devs) == 0) return(invisible(NULL))
+    dev_names <- names(devs)
+    png_like <- dev_names %in% c("png", "CairoPNG", "agg_png")
+    if(!any(png_like, na.rm = TRUE)) return(invisible(NULL))
+    for(dev_id in rev(unname(devs[png_like]))) {
+      try(grDevices::dev.off(dev_id), silent = TRUE)
+    }
+    invisible(NULL)
   }
-  print(conceptual_diagram_plot_obj())
-}, bg = "white", res = 96)
+  close_leaked_png_devices()
+  dims <- get_plot_dims_px("conceptual_diagram_plot", 1200, 620)
+  width_in <- dims$width_px / 96
+  height_in <- dims$height_px / 96
+  tmp <- tempfile(fileext = ".png")
+  p <- conceptual_diagram_plot_obj()
+  # Draw to an explicit PNG device so we always close it, even if a reactive
+  # invalidation interrupts a render and retriggers quickly.
+  grDevices::png(
+    filename = tmp,
+    width = width_in,
+    height = height_in,
+    units = "in",
+    res = 192,
+    bg = "white"
+  )
+  on.exit(try(grDevices::dev.off(), silent = TRUE), add = TRUE)
+  print(p)
+  list(
+    src = normalizePath(tmp, winslash = "/", mustWork = TRUE),
+    contentType = "image/png",
+    width = "100%",
+    height = "620px",
+    alt = "Conceptual diagram"
+  )
+}, deleteFile = TRUE)
 
-output$statistical_diagram_plot <- renderPlot({
-  if(is.null(analysis_results())) {
-    plot.new()
-    text(0.5, 0.5, "Run an analysis to generate the statistical diagram.", col = "#666666")
-    return(invisible(NULL))
+output$statistical_diagram_plot <- renderImage({
+  req(analysis_results())
+  close_leaked_png_devices <- function() {
+    devs <- grDevices::dev.list()
+    if(is.null(devs) || length(devs) == 0) return(invisible(NULL))
+    dev_names <- names(devs)
+    png_like <- dev_names %in% c("png", "CairoPNG", "agg_png")
+    if(!any(png_like, na.rm = TRUE)) return(invisible(NULL))
+    for(dev_id in rev(unname(devs[png_like]))) {
+      try(grDevices::dev.off(dev_id), silent = TRUE)
+    }
+    invisible(NULL)
   }
-  print(statistical_diagram_plot_obj())
-}, bg = "white", res = 96)
+  close_leaked_png_devices()
+  dims <- get_plot_dims_px("statistical_diagram_plot", 1500, 860)
+  width_in <- dims$width_px / 96
+  height_in <- dims$height_px / 96
+  tmp <- tempfile(fileext = ".png")
+  p <- statistical_diagram_plot_obj()
+  grDevices::png(
+    filename = tmp,
+    width = width_in,
+    height = height_in,
+    units = "in",
+    res = 192,
+    bg = "white"
+  )
+  on.exit(try(grDevices::dev.off(), silent = TRUE), add = TRUE)
+  print(p)
+  list(
+    src = normalizePath(tmp, winslash = "/", mustWork = TRUE),
+    contentType = "image/png",
+    width = "100%",
+    height = "860px",
+    alt = "Statistical diagram"
+  )
+}, deleteFile = TRUE)
 
 output$graphviz_statistical_ui <- renderUI({
   if(is.null(analysis_results())) return(NULL)
@@ -3629,3 +3712,7 @@ observe({
   shinyjs::toggleState("download_conceptual_diagram", condition = can_download)
   shinyjs::toggleState("download_statistical_diagram", condition = can_download)
 })
+
+# Keep diagram outputs live while hidden; they rely on browser dimensions for layout.
+outputOptions(output, "conceptual_diagram_plot", suspendWhenHidden = FALSE)
+outputOptions(output, "statistical_diagram_plot", suspendWhenHidden = FALSE)

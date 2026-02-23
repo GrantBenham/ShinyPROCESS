@@ -811,7 +811,7 @@ ui <- fluidPage(
             ),
             htmlOutput("diagram_eligibility_msg"),
             h5("Conceptual Diagram"),
-            plotOutput("conceptual_diagram_plot", height = "620px", width = "100%"),
+            imageOutput("conceptual_diagram_plot", height = "620px", width = "100%"),
             div(
               style = "margin: 8px 0 18px 0;",
               downloadButton(
@@ -823,7 +823,7 @@ ui <- fluidPage(
             ),
             br(),
             h5("Statistical Diagram"),
-            plotOutput("statistical_diagram_plot", height = "860px", width = "100%"),
+            imageOutput("statistical_diagram_plot", height = "860px", width = "100%"),
             div(
               style = "margin: 8px 0 8px 0;",
               downloadButton(

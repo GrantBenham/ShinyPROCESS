@@ -81,6 +81,15 @@ If this returns `character(0)`, required packages are installed.
 
 Use this workflow if you want to create a browser-based Shinylive bundle that other users can run without installing R/RStudio.
 
+Before exporting (recommended each time):
+
+```r
+renv::restore()
+renv::status()
+```
+
+This ensures the active project library contains all required packages for dependency scanning during Shinylive export.
+
 1. Follow the export/update checklist in `SHINYLIVE_UPDATE_WORKFLOW.txt`.
 2. Run the export script from R:
 

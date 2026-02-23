@@ -16,6 +16,22 @@ STEP 0: Open project in RStudio
 Open the gbPROCESS project/folder in RStudio first.
 
 
+STEP 0.5: Sync the project package library (recommended before every export)
+---------------------------------------------------------------------------
+Run in R console:
+
+renv::restore()
+renv::status()
+
+Why this matters:
+- Shinylive export scans package dependencies in the active project library.
+- If packages are installed in your user library but not in the renv project library,
+  export can fail with missing-package errors (for example ggplot2/DiagrammeR dependencies).
+- After feature updates, run:
+  renv::snapshot()
+  and commit renv.lock so future restores are repeatable.
+
+
 STEP 1: Save and commit your app code changes (optional but recommended)
 ------------------------------------------------------------------------
 Run in terminal (or use Cursor Source Control):
