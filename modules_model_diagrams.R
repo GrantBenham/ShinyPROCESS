@@ -2301,7 +2301,7 @@ build_template_diagram <- function(parsed, settings, diagram_type = c("conceptua
         # Target shape: W->M1 slightly higher than midpoint; INT->M1 just below that.
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "x", 0.44)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "x", 0.44)
-        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.00)
+        set_t(edge_plot$to == m1_name & edge_plot$from_role == "mod", 0.6)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "mod", 0.46)
         set_t(edge_plot$to == m1_name & edge_plot$from_role == "int", 0.56)
         set_t(edge_plot$to == m2_name & edge_plot$from_role == "int", 0.52)
