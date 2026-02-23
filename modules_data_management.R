@@ -1,6 +1,7 @@
 # ============================================================================
 # DATA MANAGEMENT MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module contains data upload, variable selection, and state management
 # Extracted from gbPROCESS.R as part of Stage 3 modularization
 #

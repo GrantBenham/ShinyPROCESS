@@ -1,6 +1,7 @@
 # ============================================================================
 # ASSUMPTION CHECKS MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module contains all helper functions for assumption checking
 # Extracted from gbPROCESS.R as part of Stage 1 modularization
 

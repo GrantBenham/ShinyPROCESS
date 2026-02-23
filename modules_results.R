@@ -1,6 +1,7 @@
 # ============================================================================
 # RESULTS MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module contains all results display and download functionality,
 # including formatting functions and output renderers.
 # Extracted from gbPROCESS.R as part of Stage 6 modularization.

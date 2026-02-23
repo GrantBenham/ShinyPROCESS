@@ -1,6 +1,7 @@
 # Integrated PROCESS V5 Shiny Application
 # Combines moderation and mediation analyses using Hayes PROCESS V5
 # Based on previous gbMod (app.R) and gbMed (gbMed.R) applications
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 
 # Load necessary libraries
 library(shiny)

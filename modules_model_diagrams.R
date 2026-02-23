@@ -1,6 +1,7 @@
 # ============================================================================
 # MODEL DIAGRAMS MODULE (PARSER SCAFFOLD)
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # Purpose:
 # - Parse PROCESS output into a diagram-friendly path table schema.
 # - Provide metadata for downstream rendering and fallback notes.

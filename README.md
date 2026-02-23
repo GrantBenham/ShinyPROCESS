@@ -42,7 +42,7 @@ Use this if you do not want to use `renv`. This may still work, but version diff
 ```r
 install.packages(c(
   "shiny", "bslib", "ggplot2", "stringr", "dplyr",
-  "shinyjs", "car", "haven", "jsonlite", "gridExtra"
+  "shinyjs", "car", "haven", "jsonlite", "gridExtra", "base64enc"
 ))
 shiny::runApp("gbPROCESS.R")
 ```
@@ -51,7 +51,7 @@ Optional dependency check:
 
 ```r
 needed <- c("shiny", "bslib", "ggplot2", "stringr", "dplyr",
-            "shinyjs", "car", "haven", "jsonlite", "gridExtra")
+            "shinyjs", "car", "haven", "jsonlite", "gridExtra", "base64enc")
 setdiff(needed, rownames(installed.packages()))
 ```
 
@@ -106,6 +106,17 @@ If users only receive files and no hosting:
 Contact policy:
 - Questions about this Shiny app (UI/workflow/integration): contact Dr. Grant Benham.
 - Questions about PROCESS methodology or the PROCESS macro itself: consult PROCESS resources and contact Dr. Hayes as appropriate.
+
+### License and Citation (Read Before Sharing/Using)
+
+- This repository is distributed under a **source-available academic/research use license** (see `LICENSE`).
+- Allowed without additional permission: personal use, teaching/classroom use, and non-commercial academic/research use.
+- Required: attribution to **Dr. Grant Benham** and citation in research/scholarly outputs that use this software.
+- Not allowed without prior written permission: commercial use, redistribution beyond direct-use copies, or integration/bundling into other software/codebases.
+- Citation metadata is provided in `CITATION.cff` (a DOI/paper citation can be added later and the citation metadata will be updated).
+
+Suggested interim citation (until DOI is available):
+- Benham, G. (2026). *ShinyPROCESS: Interface for Hayes PROCESS for R v5.0* (Version 1.0.0-rc1) [Software].
 
 ### Key Features
 
@@ -243,6 +254,7 @@ Diagram notes:
 - `jsonlite` - JSON file handling (for save/load settings)
 - `grid` - Grid graphics (for plot layouts)
 - `gridExtra` - Extended grid graphics (for stacked plots)
+- `base64enc` - Embedded plot images in downloaded Assumption Checks HTML reports
 - `DiagrammeR` - Optional Graphviz comparison in the Model Diagram tab
 - `grDevices` - Graphics devices (for plot downloads)
 
@@ -250,7 +262,7 @@ Diagram notes:
 ```r
 install.packages(c("shiny", "bslib", "ggplot2", "stringr", "dplyr", 
                    "shinyjs", "car", "haven", "jsonlite", "grid", 
-                   "gridExtra"))
+                   "gridExtra", "base64enc"))
 ```
 
 Optional for the experimental Graphviz comparison in the Model Diagram tab:

@@ -1,6 +1,7 @@
 # ============================================================================
 # MODEL SPECS MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # Canonical PROCESS model metadata used to centralize model capabilities.
 # Phase 1: definition only (no behavior changes yet).
 # ============================================================================

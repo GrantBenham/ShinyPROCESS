@@ -1,6 +1,7 @@
 # ============================================================================
 # SAVE/LOAD ANALYSIS SETTINGS MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module handles saving and loading analysis settings to/from JSON files.
 # Source this file in gbPROCESS.R after defining the UI and server function.
 #

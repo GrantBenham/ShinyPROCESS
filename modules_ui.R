@@ -1,6 +1,7 @@
 ﻿# ============================================================================
 # UI DEFINITION MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module contains the complete UI definition for the gbPROCESS application
 # Extracted from gbPROCESS.R as part of Stage 2 modularization
 

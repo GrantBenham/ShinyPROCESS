@@ -1,6 +1,7 @@
 # ============================================================================
 # ASSUMPTION OUTPUTS MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module contains server logic related to assumption check outputs,
 # including outlier identification, diagnostic plots, and download handlers.
 # Extracted from gbPROCESS.R as part of Stage 4 modularization.

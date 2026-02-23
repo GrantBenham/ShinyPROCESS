@@ -1,6 +1,7 @@
 # ============================================================================
 # ANALYSIS MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module contains all analysis execution logic, including the shared
 # run_process_analysis() function and the eventReactives for both original
 # and outliers-removed analyses.
