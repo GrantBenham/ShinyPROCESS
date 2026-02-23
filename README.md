@@ -77,6 +77,28 @@ If this returns `character(0)`, required packages are installed.
 - Use `tools/export_shinylive.R` for browser export; it hard-stops if root `process.R` exists and restores `runtime.txt` after export.
 - Repeatable update steps are documented in `SHINYLIVE_UPDATE_WORKFLOW.txt`.
 
+### Creating a Standalone Shinylive Browser Version (Maintainers)
+
+Use this workflow if you want to create a browser-based Shinylive bundle that other users can run without installing R/RStudio.
+
+1. Follow the export/update checklist in `SHINYLIVE_UPDATE_WORKFLOW.txt`.
+2. Run the export script from R:
+
+```r
+source("tools/export_shinylive.R")
+```
+
+The export script will:
+- verify required app files are present (including diagram module files)
+- hard-stop if `process.R` exists in the repo root (to avoid bundling copyrighted code)
+- temporarily switch `runtime.txt` to `shinylive`
+- export the Shinylive app to `docs/`
+- copy `LICENSE` and `CITATION.cff` into `docs/` (if present)
+- generate `docs/README_LAUNCH.txt` with end-user launch instructions
+- restore `runtime.txt` to `rshiny`
+
+The generated `docs/README_LAUNCH.txt` explains how end users can launch the exported browser version locally (including the requirement to upload `process.R` v5.0 in each session).
+
 ### Sharing the Browser Version (No R Required for End Users)
 
 If you want others to run the app without installing R/RStudio, share the **Shinylive export** (the `docs/` output), not the R project.

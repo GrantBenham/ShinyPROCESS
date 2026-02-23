@@ -7,6 +7,51 @@
 # - Export app to docs/
 # - Restore runtime.txt to rshiny on exit (safe local default)
 
+write_launch_readme <- function(dest_dir) {
+  launch_path <- file.path(dest_dir, "README_LAUNCH.txt")
+  launch_lines <- c(
+    "ShinyPROCESS Browser Launcher (No R Required)",
+    "==============================================",
+    "",
+    "What this package includes:",
+    "- A browser-based ShinyPROCESS app (Shinylive build)",
+    "- A double-click launcher for Windows:",
+    "  - Launch_Shinylive.bat",
+    "  - Launch_Shinylive.ps1",
+    "- License and citation metadata (if included in the export bundle):",
+    "  - LICENSE",
+    "  - CITATION.cff",
+    "",
+    "What users need:",
+    "- Windows computer with a modern browser (Edge/Chrome/Firefox)",
+    "- Hayes PROCESS file: process.R (version 5.0)",
+    "",
+    "How to run:",
+    "1) Extract this folder to your computer.",
+    "2) Double-click \"Launch_Shinylive.bat\".",
+    "3) A browser window should open at:",
+    "   http://127.0.0.1:8008",
+    "4) In the app, upload your dataset.",
+    "5) Upload process.R (v5.0) in the PROCESS warning panel/status area.",
+    "6) Run analyses normally.",
+    "",
+    "Important:",
+    "- Keep the launcher/terminal window open while using the app.",
+    "- Close that window (or press Ctrl+C) when you are done.",
+    "- You need to upload process.R each new app launch/session.",
+    "",
+    "If browser does not open automatically:",
+    "- Manually open:",
+    "  http://127.0.0.1:8008",
+    "",
+    "If the app seems stale or blank:",
+    "- Refresh with Ctrl+F5.",
+    "- Close and relaunch using Launch_Shinylive.bat."
+  )
+  writeLines(launch_lines, con = launch_path, useBytes = TRUE)
+  message("Generated launch instructions: ", launch_path)
+}
+
 main <- function() {
   app_root <- normalizePath(".", winslash = "/", mustWork = TRUE)
   process_path <- file.path(app_root, "process.R")
@@ -36,6 +81,7 @@ main <- function() {
     "modules_assumptions.R",
     "modules_assumption_outputs.R",
     "modules_data_management.R",
+    "modules_model_diagrams.R",
     "modules_results.R",
     "modules_save_load.R",
     "runtime.txt"
@@ -109,6 +155,33 @@ main <- function() {
   
   message("Exporting with shinylive::export(appdir=temp_app_dir, destdir='docs') ...")
   shinylive::export(appdir = export_appdir, destdir = "docs")
+
+  # Copy supporting files into docs/ for direct file-sharing distributions.
+  # These are not required for app execution but should travel with the bundle.
+  support_files <- c("LICENSE", "CITATION.cff")
+  copied_support <- character(0)
+  missing_support <- character(0)
+  for (f in support_files) {
+    src <- file.path(app_root, f)
+    dst <- file.path(dest_dir, f)
+    if (!file.exists(src)) {
+      missing_support <- c(missing_support, f)
+      next
+    }
+    ok <- file.copy(src, dst, overwrite = TRUE)
+    if (!isTRUE(ok)) {
+      warning("Failed to copy support file into docs/: ", f, call. = FALSE)
+      next
+    }
+    copied_support <- c(copied_support, f)
+  }
+  if (length(copied_support) > 0) {
+    message("Copied support files to docs/: ", paste(copied_support, collapse = ", "))
+  }
+  if (length(missing_support) > 0) {
+    message("Support files not found (skipped): ", paste(missing_support, collapse = ", "))
+  }
+  write_launch_readme(dest_dir)
   
   message("Shinylive export complete: ", dest_dir)
 }

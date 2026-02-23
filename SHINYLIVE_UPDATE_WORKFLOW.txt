@@ -51,6 +51,8 @@ What this does:
 - hard-stops if process.R exists
 - temporarily sets runtime.txt = shinylive
 - exports Shinylive site to docs/
+- copies LICENSE / CITATION.cff into docs/ when present
+- generates docs/README_LAUNCH.txt automatically
 - restores runtime.txt to its original value
 
 
@@ -73,8 +75,12 @@ In Shinylive app, confirm:
 1) PROCESS warning appears at startup.
 2) Uploading process.R (v5.0) changes status to Ready.
 3) Analysis runs successfully after upload.
-4) Downloads work (results html + plot jpg if model supports plots).
-5) Plot downloads have white background.
+4) Assumption Checks tab loads and univariate outlier screening controls work.
+5) Assumption Checks HTML export downloads and includes plots/tables.
+6) Model Diagram tab loads and renders conceptual/statistical diagrams.
+7) Diagram JPG downloads work.
+8) Plot downloads work (results html + plot jpg if model supports plots).
+9) Plot downloads have white background.
 
 
 STEP 6: Restore local R Shiny setup
@@ -109,9 +115,8 @@ Quick Troubleshooting
    - Clear site storage for 127.0.0.1:8008 and reload.
 
 3) Download buttons fail in Shinylive
-   - Re-export with latest code.
+   - Re-export with latest code (including tools/export_shinylive.R updates).
    - Hard refresh browser and retest.
 
 4) App loads but analysis fails with PROCESS errors
    - Upload the correct process.R version 5.0 in the app session.
-
