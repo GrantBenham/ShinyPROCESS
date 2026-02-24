@@ -15,7 +15,6 @@ abstract: >
   ShinyPROCESS is a Shiny interface for Hayes PROCESS for R v5.0, supporting
   moderated mediation and mediation workflows, diagnostics, plots, and model
   diagrams in local R Shiny and Shinylive runtimes.
-license: "LicenseRef-gbPROCESS-Academic-Research-Use-2026"
 keywords:
   - mediation
   - moderation
