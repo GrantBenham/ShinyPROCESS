@@ -7,9 +7,9 @@ authors:
     given-names: Grant
     affiliation: "The University of Texas Rio Grande Valley"
     email: "grant.benham@utrgv.edu"
-version: "1.0.0-rc1"
-date-released: 2026-02-23
-repository-code: "https://github.com/GrantBenham/ShinyPROCESS"
+version: "1.0.1"
+date-released: 2026-02-24
+url: "https://github.com/GrantBenham/ShinyPROCESS"
 abstract: >
   ShinyPROCESS is a Shiny interface for Hayes PROCESS for R v5.0, supporting
   moderated mediation and mediation workflows, diagnostics, plots, and model
@@ -27,7 +27,7 @@ preferred-citation:
     - family-names: Benham
       given-names: Grant
   title: "ShinyPROCESS: Interface for Hayes PROCESS for R v5.0"
-  version: "1.0.0-rc1"
-  date-released: 2026-02-23
-  repository-code: "https://github.com/GrantBenham/ShinyPROCESS"
+  version: "1.0.1"
+  date-released: 2026-02-24
+  url: "https://github.com/GrantBenham/ShinyPROCESS"
   notes: "Update this citation with a DOI when one becomes available."
