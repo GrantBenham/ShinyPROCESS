@@ -1,6 +1,7 @@
 # Integrated PROCESS V5 Shiny Application
 # Combines moderation and mediation analyses using Hayes PROCESS V5
 # Based on previous gbMod (app.R) and gbMed (gbMed.R) applications
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 
 # Load necessary libraries
 library(shiny)
@@ -88,6 +89,29 @@ check_process_file <- function(path = "process.R", expected_version = "5.0", sca
   )
 }
 
+# Runtime mode detection via runtime.txt in repo root.
+# Defaults to "rshiny" if missing/unreadable/invalid.
+get_runtime <- function(path = "runtime.txt") {
+  runtime_value <- tryCatch({
+    if(!file.exists(path)) {
+      return("rshiny")
+    }
+    lines <- readLines(path, n = 1L, warn = FALSE)
+    if(length(lines) == 0) {
+      return("rshiny")
+    }
+    normalized <- tolower(trimws(lines[[1]]))
+    sub("^\ufeff", "", normalized)
+  }, error = function(e) {
+    "rshiny"
+  })
+  
+  if(!runtime_value %in% c("rshiny", "shinylive")) {
+    return("rshiny")
+  }
+  runtime_value
+}
+
 # Source assumption checks module (helper functions)
 source("modules_assumptions.R", local = TRUE)
 
@@ -102,6 +126,7 @@ source("modules_ui.R", local = TRUE)
 # ============================================================================
 
 server <- function(input, output, session) {
+  server_env <- environment()
   
   # Reactive values for data management
   rv <- reactiveValues(
@@ -136,20 +161,40 @@ server <- function(input, output, session) {
     mediator_restore_cooldown_time = NULL,
     process_ready = FALSE,
     process_status = NULL,
-    process_detected_version = NULL
+    process_detected_version = NULL,
+    process_source = NULL,
+    app_runtime = "rshiny",
+    # When TRUE, analysis_results() must not recover cached eventReactive output.
+    # This is used during JSON settings loads to prevent stale results from reappearing.
+    suppress_results_recovery = FALSE
   )
   
-  # Validate and load PROCESS function
-  process_check <- check_process_file(path = "process.R", expected_version = "5.0", scan_lines = 80L)
-  process_ready_flag <- isTRUE(process_check$ready)
-  rv$process_ready <- process_ready_flag
-  rv$process_status <- process_check$status
-  rv$process_detected_version <- process_check$detected_version
+  # Detect runtime mode from runtime.txt
+  app_runtime <- get_runtime(path = "runtime.txt")
+  rv$app_runtime <- app_runtime
   
-  if(process_ready_flag) {
-    source("process.R", local = TRUE)
+  # Validate and load PROCESS function (runtime-aware).
+  # - rshiny: keep existing root-file auto-load behavior
+  # - shinylive: rely on session upload fallback
+  if(identical(app_runtime, "rshiny")) {
+    process_check <- check_process_file(path = "process.R", expected_version = "5.0", scan_lines = 80L)
+    process_ready_flag <- isTRUE(process_check$ready)
+    rv$process_ready <- process_ready_flag
+    rv$process_status <- process_check$status
+    rv$process_detected_version <- process_check$detected_version
+    rv$process_source <- if(process_ready_flag) "root" else NULL
+    
+    if(process_ready_flag) {
+      source("process.R", local = server_env)
+    } else {
+      dbg(paste("DEBUG: PROCESS check failed:", process_check$message))
+    }
   } else {
-    dbg(paste("DEBUG: PROCESS check failed:", process_check$message))
+    rv$process_ready <- FALSE
+    rv$process_status <- "missing"
+    rv$process_detected_version <- NULL
+    rv$process_source <- NULL
+    dbg("DEBUG: Runtime is shinylive; waiting for session upload of process.R")
   }
 
   # Load save/load settings module
@@ -166,6 +211,9 @@ server <- function(input, output, session) {
   
   # Load results module
   source("modules_results.R", local = TRUE)
+  
+  # Load model diagrams parser scaffold module (no UI wiring yet)
+  source("modules_model_diagrams.R", local = TRUE)
 
   # Helper for Model-Has-Z checks used by plot/label observers in this file.
   # Uses canonical specs when available, with a minimal fallback.
@@ -216,29 +264,118 @@ server <- function(input, output, session) {
   })
   outputOptions(output, "process_ready", suspendWhenHidden = FALSE)
   
+  output$process_status_line <- renderUI({
+    runtime_label <- if(identical(rv$app_runtime, "shinylive")) "Shinylive" else "R Shiny"
+    readiness_label <- if(isTRUE(rv$process_ready)) "Ready" else "Not ready"
+    source_label <- if(isTRUE(rv$process_ready) && !is.null(rv$process_source)) {
+      paste0("Loaded from: ", rv$process_source)
+    } else {
+      "Loaded from: not loaded"
+    }
+    version_label <- if(!is.null(rv$process_detected_version)) {
+      paste0("Detected version: ", rv$process_detected_version)
+    } else {
+      "Detected version: unknown"
+    }
+    
+    div(
+      style = "margin-top: 6px; margin-bottom: 12px; padding: 8px; background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; color: #333;",
+      HTML(paste0(
+        "<strong>PROCESS status</strong><br/>",
+        "Runtime: ", runtime_label, " | ",
+        "State: ", readiness_label, "<br/>",
+        source_label, "<br/>",
+        version_label
+      ))
+    )
+  })
+  
   output$process_warning <- renderUI({
     if(isTRUE(rv$process_ready)) {
       return(NULL)
     }
     
-    detected_text <- if(!is.null(rv$process_detected_version)) {
-      paste0("Detected version: ", rv$process_detected_version, ". ")
+    runtime_instruction <- if(identical(rv$app_runtime, "shinylive")) {
+      HTML(paste0(
+        "<strong>Shinylive runtime:</strong> Upload <code>process.R</code> each time you launch the app. ",
+        "Placing it in the app root is not applicable in browser runtime."
+      ))
     } else {
-      ""
+      HTML(paste0(
+        "<strong>R Shiny runtime:</strong> Permanent fix: place <code>process.R</code> in the app folder ",
+        "(same folder as <code>gbPROCESS.R</code>)."
+      ))
     }
     
-    HTML(paste0(
-      "<div style='padding:16px; border:2px solid #b71c1c; background:#ffebee; color:#7f0000; border-radius:8px; margin-bottom:12px;'>",
-      "<h4 style='margin-top:0;'>PROCESS for R v5.0 Required</h4>",
-      "<p style='margin-bottom:8px;'>ShinyPROCESS requires <strong>process.R (PROCESS for R version 5.0)</strong> in the same folder as <code>gbPROCESS.R</code>. ",
-      detected_text, "Version is read from the header text in <code>process.R</code>. ",
-      "You may still browse inputs, but analysis execution is blocked until a valid file is available.</p>",
-      "<p style='margin-bottom:4px;'>Download PROCESS for R from: ",
-      "<a href='https://haskayne.ucalgary.ca/CCRAM/resource-hub' target='_blank'>https://haskayne.ucalgary.ca/CCRAM/resource-hub</a></p>",
-      "<p style='margin-bottom:0;'>More information: ",
-      "<a href='https://processmacro.org/index.html' target='_blank'>https://processmacro.org/index.html</a></p>",
-      "</div>"
-    ))
+    div(
+      style = "padding:16px; border:2px solid #b71c1c; background:#ffebee; color:#7f0000; border-radius:8px; margin-bottom:12px;",
+      h4(style = "margin-top:0;", "PROCESS for R v5.0 Required"),
+      p(
+        style = "margin-bottom:8px;",
+        HTML("ShinyPROCESS requires <strong>process.R (PROCESS for R version 5.0)</strong>. "),
+        if(!is.null(rv$process_detected_version)) {
+          paste0("Detected version: ", rv$process_detected_version, ". ")
+        } else {
+          NULL
+        },
+        HTML("Version is read from the header text in <code>process.R</code>. You may still browse inputs, but analysis execution is blocked until a valid file is available.")
+      ),
+      p(style = "margin-bottom:8px;", runtime_instruction),
+      p(
+        style = "margin-bottom:4px;",
+        "Download PROCESS for R from: ",
+        tags$a(
+          href = "https://haskayne.ucalgary.ca/CCRAM/resource-hub",
+          target = "_blank",
+          "https://haskayne.ucalgary.ca/CCRAM/resource-hub"
+        )
+      ),
+      p(
+        style = "margin-bottom:8px;",
+        "More information: ",
+        tags$a(
+          href = "https://processmacro.org/index.html",
+          target = "_blank",
+          "https://processmacro.org/index.html"
+        )
+      ),
+      fileInput(
+        "process_upload",
+        "Upload process.R (session only)",
+        accept = c(".R")
+      )
+    )
+  })
+  
+  observeEvent(input$process_upload, {
+    upload_info <- input$process_upload
+    if(is.null(upload_info) || is.null(upload_info$datapath) || !nzchar(upload_info$datapath)) {
+      return(invisible(NULL))
+    }
+    
+    process_check <- check_process_file(path = upload_info$datapath, expected_version = "5.0", scan_lines = 80L)
+    
+    if(isTRUE(process_check$ready)) {
+      source(upload_info$datapath, local = server_env)
+      rv$process_ready <- TRUE
+      rv$process_status <- "ok"
+      rv$process_detected_version <- process_check$detected_version
+      rv$process_source <- "upload"
+      showNotification("PROCESS for R v5.0 loaded from uploaded file for this session.", type = "message", duration = 7)
+    } else {
+      rv$process_ready <- FALSE
+      rv$process_status <- process_check$status
+      rv$process_detected_version <- process_check$detected_version
+      rv$process_source <- NULL
+      showNotification(
+        paste0(
+          "Uploaded file is not a valid PROCESS for R v5.0 file. ",
+          if(!is.null(process_check$message)) process_check$message else ""
+        ),
+        type = "error",
+        duration = 10
+      )
+    }
   })
   
   # Disable run controls unless PROCESS v5.0 is ready
@@ -1071,7 +1208,7 @@ server <- function(input, output, session) {
     
     if(length(plot_list) > 0) {
       p <- do.call(gridExtra::arrangeGrob, c(plot_list, ncol = 1))
-      grDevices::jpeg(file, width = 10, height = 8 * length(plot_list), units = "in", res = 600)
+      grDevices::jpeg(file, width = 10, height = 8 * length(plot_list), units = "in", res = 600, bg = "white")
       on.exit(grDevices::dev.off(), add = TRUE)
       grid::grid.draw(p)
     } else {
@@ -2338,7 +2475,8 @@ server <- function(input, output, session) {
   # Download handlers for plots
   output$download_jn <- downloadHandler(
     filename = function() {
-      paste0("jn_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+      model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
+      paste0("model_", model_txt, "_jn_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
     },
     contentType = "image/jpeg",
     content = function(file) {
@@ -2361,7 +2499,7 @@ server <- function(input, output, session) {
           stop("Could not generate JN plot. Please ensure analysis has been run and JN technique is enabled.")
         }
         
-        ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
+        ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in", bg = "white")
       }, error = function(e) {
         print(paste("Error saving JN plot:", e$message))
         # Create an error message file instead
@@ -2374,11 +2512,12 @@ server <- function(input, output, session) {
     filename = function() {
       # Determine if this is a conditional effect plot or simple slopes plot
       model_num <- tryCatch(as.numeric(input$process_model), error = function(e) NULL)
+      model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
       has_second_mod <- !is.null(model_num) && has_second_moderator_model(model_num)
       if(has_second_mod && !is.null(input$moderator2_var) && input$moderator2_var != "") {
-        paste0("stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+        paste0("model_", model_txt, "_stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
       } else {
-        paste0("simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+        paste0("model_", model_txt, "_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
       }
     },
     contentType = "image/jpeg",
@@ -2434,7 +2573,7 @@ server <- function(input, output, session) {
             }
           }
           
-          grDevices::jpeg(file, width = 10, height = plot_height, units = "in", res = 600)
+          grDevices::jpeg(file, width = 10, height = plot_height, units = "in", res = 600, bg = "white")
           on.exit(grDevices::dev.off(), add = TRUE)
           grid::grid.draw(p)
         } else {
@@ -2445,7 +2584,7 @@ server <- function(input, output, session) {
             stop("Could not generate simple slopes plot. Please ensure analysis has been run for Model 1.")
           }
           
-          ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
+          ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in", bg = "white")
         }
       }, error = function(e) {
         print(paste("Error saving slopes plot:", e$message))
@@ -2457,7 +2596,8 @@ server <- function(input, output, session) {
   
   output$download_stacked_slopes <- downloadHandler(
     filename = function() {
-      paste0("stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+      model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
+      paste0("model_", model_txt, "_stacked_simple_slopes_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
     },
     contentType = "image/jpeg",
     content = function(file) {
@@ -2510,7 +2650,7 @@ server <- function(input, output, session) {
           plot_height <- 8
         }
         
-        grDevices::jpeg(file, width = 10, height = plot_height, units = "in", res = 600)
+        grDevices::jpeg(file, width = 10, height = plot_height, units = "in", res = 600, bg = "white")
         on.exit(grDevices::dev.off(), add = TRUE)
         grid::grid.draw(p)
       }, error = function(e) {
@@ -2522,7 +2662,8 @@ server <- function(input, output, session) {
   
   output$download_conditional_effect <- downloadHandler(
     filename = function() {
-      paste0("conditional_effect_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
+      model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
+      paste0("model_", model_txt, "_conditional_effect_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".jpg")
     },
     contentType = "image/jpeg",
     content = function(file) {
@@ -2545,7 +2686,7 @@ server <- function(input, output, session) {
           stop("Could not generate conditional effect plot. Please ensure analysis has been run for Model 3.")
         }
         
-        ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in")
+        ggsave(file, plot = p, device = "jpeg", width = 10, height = 8, dpi = 600, units = "in", bg = "white")
       }, error = function(e) {
         print(paste("Error saving conditional effect plot:", e$message))
         writeLines(paste("Error generating plot:", e$message), file)

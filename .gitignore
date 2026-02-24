@@ -16,3 +16,6 @@ Archived files/**
 Archived\ files/**
 .vscode/settings.json
 process.R
+process_rename.R
+docs/
+manuscript/psyarxiv/ShinyPROCESS_PsyArXiv_Preprint.docx

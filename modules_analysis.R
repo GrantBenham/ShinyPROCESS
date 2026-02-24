@@ -1,6 +1,7 @@
 # ============================================================================
 # ANALYSIS MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module contains all analysis execution logic, including the shared
 # run_process_analysis() function and the eventReactives for both original
 # and outliers-removed analyses.
@@ -25,7 +26,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
   # Block analysis when PROCESS is unavailable or wrong version
   if(!isTRUE(rv$process_ready)) {
     showNotification(
-      "PROCESS for R v5.0 is required. Please place process.R (version 5.0) in this app folder.",
+      "PROCESS for R v5.0 is required. Place process.R (version 5.0) in this app folder or upload process.R using the warning panel.",
       type = "error",
       duration = 10
     )
@@ -325,8 +326,24 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       centering = input$centering,
       use_bootstrap = input$use_bootstrap,
       boot_samples = if(isTRUE(input$use_bootstrap)) input$boot_samples else NULL,
+      bootstrap_ci_method = if(isTRUE(input$use_bootstrap) &&
+                                 !is.null(input$bootstrap_ci_method) &&
+                                 length(input$bootstrap_ci_method) > 0 &&
+                                 nzchar(as.character(input$bootstrap_ci_method)[1])) {
+        as.character(input$bootstrap_ci_method)[1]
+      } else {
+        NULL
+      },
       hc_method = input$hc_method,
+      stand = isTRUE(input$stand),
+      normal = isTRUE(input$normal),
       conf_level = input$conf_level,
+      seed = if(!is.null(input$seed) && length(input$seed) > 0 &&
+                  !is.na(input$seed[1]) && suppressWarnings(as.numeric(input$seed[1])) >= 1) {
+        as.numeric(input$seed[1])
+      } else {
+        NULL
+      },
       dataset_name = tools::file_path_sans_ext(basename(input$data_file$name)),
       original_n = nrow(rv$original_dataset),
       outliers_removed = remove_outliers,
@@ -440,8 +457,8 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
       }
     }
     
-    # Add moderators
-    if(model_num %in% c(1, 2, 3, 5, 14, 15, 16, 17, 18, 58, 59, 74, 83:92)) {
+    # Add moderators (driven by canonical model specs via local helper checks)
+    if(model_requires_w_local(model_num) || model_requires_z_local(model_num) || model_num == 74) {
       if(is_nonempty_scalar(input$moderator_var)) {
         process_args$w <- input$moderator_var
         # Always set jn=1 for moderation models when probing is enabled to ensure JN plot data is generated
@@ -565,8 +582,11 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
     }
     if(isTRUE(input$total)) process_args$total <- 1
     
-    # Check if this is a moderation model
-    is_mod_model <- model_num %in% c(1, 2, 3, 5, 14, 15, 58, 59, 74)
+    # Check if this is a moderation model (driven by canonical model specs)
+    is_mod_model <- model_requires_w_local(model_num) ||
+      model_requires_z_local(model_num) ||
+      model_num == 74 ||
+      (model_num == 4 && isTRUE(input$xmint))
     
     # For moderation models, set plot=2 and save=2 to get plot data
     if(is_mod_model) {
@@ -792,6 +812,7 @@ run_process_analysis <- function(analysis_dataset, remove_outliers = FALSE, outl
 # ============================================================================
 original_analysis <- eventReactive(input$run_analysis, {
   req(rv$original_dataset)
+  rv$suppress_results_recovery <- FALSE
   result <- run_process_analysis(rv$original_dataset, remove_outliers = FALSE, outliers_info = NULL)
   if(!is.null(result)) {
     rv$analysis_results <- result
@@ -807,6 +828,7 @@ original_analysis <- eventReactive(input$run_analysis, {
 # Analysis with outliers removed
 outliers_analysis <- eventReactive(input$run_analysis_no_outliers, {
   req(rv$original_dataset)
+  rv$suppress_results_recovery <- FALSE
   
   # Identify outliers
   outliers <- identify_outliers()
@@ -899,6 +921,13 @@ observeEvent(outliers_analysis(), {
 # Combined results reactive - use stored results from rv
 analysis_results <- reactive({
   dbg(paste("DEBUG: analysis_results reactive called. rv$analysis_results is NULL?", is.null(rv$analysis_results)))
+  
+  # During JSON load/reset flows, never recover from cached eventReactives.
+  # This prevents stale output from reappearing until user runs a new analysis.
+  if(isTRUE(rv$suppress_results_recovery)) {
+    dbg("DEBUG: Results recovery suppressed; returning NULL")
+    return(NULL)
+  }
   
   # Get current model number
   current_model_num <- if(!is.null(input$process_model) && input$process_model != "") {

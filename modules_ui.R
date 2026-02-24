@@ -1,6 +1,7 @@
 ﻿# ============================================================================
 # UI DEFINITION MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module contains the complete UI definition for the gbPROCESS application
 # Extracted from gbPROCESS.R as part of Stage 2 modularization
 
@@ -16,6 +17,36 @@ process_model_choices <- if(exists("VALID_USER_MODELS", inherits = TRUE)) {
     setNames(as.character(c(1:22, 28:29, 58:73, 75:76, 80:92)),
              c(1:22, 28:29, 58:73, 75:76, 80:92))
   )
+}
+
+# Runtime-aware download button helper:
+# - Shinylive (Chromium): remove HTML5 "download" attribute to avoid failed downloads.
+# - Local R Shiny: keep default shiny::downloadButton behavior.
+is_shinylive_runtime <- local({
+  runtime_val <- tryCatch({
+    if(!file.exists("runtime.txt")) {
+      return("rshiny")
+    }
+    lines <- readLines("runtime.txt", n = 1L, warn = FALSE)
+    if(length(lines) == 0) {
+      return("rshiny")
+    }
+    val <- tolower(trimws(lines[[1]]))
+    sub("^\ufeff", "", val)
+  }, error = function(e) {
+    "rshiny"
+  })
+  identical(runtime_val, "shinylive")
+})
+
+downloadButton <- if(is_shinylive_runtime) {
+  function(...) {
+    tag <- shiny::downloadButton(...)
+    tag$attribs$download <- NULL
+    tag
+  }
+} else {
+  shiny::downloadButton
 }
 
 ui <- fluidPage(
@@ -35,6 +66,7 @@ ui <- fluidPage(
         id = "file_input_div",
         fileInput("data_file", "Choose CSV or SAV File", accept = c(".csv", ".sav"))
       ),
+      htmlOutput("process_status_line"),
       
       # Save/Load Analysis Settings
       h4("Analysis Settings"),
@@ -90,10 +122,61 @@ ui <- fluidPage(
         tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
                     h4(style = "display: inline; margin: 0;", "Assumption Checks")),
         div(style = "margin-left: 15px; margin-top: 10px;",
-          # Outlier detection settings
+          h5("Univariate Outlier Screening (Detection Only)"),
+          tags$div(
+            title = "Optional screening of all selected continuous variables (X, Y, mediators, moderators, and continuous covariates) for unusual values. This flags potential univariate outliers for review only and does not exclude any cases from the analysis dataset.",
+            checkboxInput(
+              "use_univariate_outlier_screen",
+              "Enable univariate outlier screening (detection only)",
+              value = TRUE
+            )
+          ),
+          conditionalPanel(
+            condition = "input.use_univariate_outlier_screen == true",
+            tags$div(
+              title = "Choose a screening rule. IQR fences are common and easy to interpret. MAD-based robust z scores are more robust to skew and extreme values.",
+              selectInput(
+                "univariate_outlier_method",
+                "Univariate screening method",
+                choices = c(
+                  "IQR fences (Tukey)" = "iqr",
+                  "MAD-based robust z-score" = "mad"
+                ),
+                selected = "iqr"
+              )
+            ),
+            conditionalPanel(
+              condition = "input.univariate_outlier_method == 'iqr'",
+              tags$div(
+                title = "Tukey IQR fence multiplier. 1.5 is a common default; larger values flag fewer cases.",
+                numericInput(
+                  "univariate_iqr_multiplier",
+                  "IQR multiplier (k)",
+                  value = 1.5, min = 0.5, max = 5, step = 0.1
+                )
+              )
+            ),
+            conditionalPanel(
+              condition = "input.univariate_outlier_method == 'mad'",
+              tags$div(
+                title = "Threshold for absolute MAD-based robust z scores. 3.5 is a common default; larger values flag fewer cases.",
+                numericInput(
+                  "univariate_mad_threshold",
+                  "MAD robust z threshold (|z| >)",
+                  value = 3.5, min = 2, max = 10, step = 0.1
+                )
+              )
+            ),
+            tags$div(
+              style = "font-size: 12px; color: #555; margin: 6px 0 12px 0;",
+              "Detection only: flagged values are shown in the Assumption Checks tab for review. This does not change the current multivariate standardized residual / Cook's distance filtering workflow."
+            )
+          ),
+
+          # Outlier detection settings (multivariate / model-based)
           conditionalPanel(
             condition = "output.outcome_is_continuous === true",
-            h5("Outlier Detection (Continuous Outcomes)"),
+            h5("Multivariate Outlier Detection (Continuous Outcomes)"),
             tags$div(
               title = "Cases with |standardized residual| > threshold will be identified as outliers. Standardized residuals represent how many standard deviations an observed value deviates from the model's prediction. Common thresholds: |SR| > 2 (standard), |SR| > 2.5 (stringent), |SR| > 3 (very conservative).",
               numericInput("residual_threshold", "Standardized Residual Threshold", 
@@ -102,7 +185,7 @@ ui <- fluidPage(
           ),
           conditionalPanel(
             condition = "output.outcome_is_continuous === false",
-            h5("Influential Case Detection (Binary Outcomes)"),
+            h5("Multivariate Influential Case Detection (Binary Outcomes)"),
             tags$div(
               tags$label("Cook's Distance Threshold:", style = "font-weight: bold;"),
               radioButtons(
@@ -369,33 +452,6 @@ ui <- fluidPage(
           )
         ),
         
-        # Live Plot Settings (renamed from Plot Options) - Only for moderation models
-        conditionalPanel(
-          condition = "output.is_plot_model === true",
-          tags$details(
-            tags$summary(style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9; margin-top: 15px;", 
-                        "Live Plot Settings"),
-            div(style = "margin-left: 15px; margin-top: 10px;",
-              h5("Simple Slopes Plot Settings"),
-              checkboxInput("use_color_lines", "Use color for lines", value = TRUE),
-              checkboxInput("custom_y_axis", "Customize y-axis range", value = FALSE),
-              conditionalPanel(
-                condition = "input.custom_y_axis == true",
-                numericInput("y_axis_min", "Y-axis minimum", value = 0),
-                numericInput("y_axis_max", "Y-axis maximum", value = 100)
-              ),
-              textInput("x_label", "Label for Predictor", ""),
-              textInput("y_label", "Label for Outcome", ""),
-              textInput("moderator_label", "Label for Moderator", ""),
-              conditionalPanel(
-                condition = "output.has_second_moderator === true",
-                textInput("moderator2_label", "Label for Second Moderator (Z)", "")
-              ),
-              numericInput("decimal_places", "Decimal Places for Moderator Levels", 2, min = 0, max = 5),
-              checkboxInput("show_confidence_intervals", "Show confidence intervals", value = TRUE)
-            )
-          )
-        )
       ),
       
       # Run Analysis buttons
@@ -464,6 +520,7 @@ ui <- fluidPage(
             tagList(
               # Blue and Yellow info boxes (appear at top, before Standardized Residual Outliers)
               htmlOutput("assumption_info_boxes"),
+              uiOutput("univariate_outlier_summary"),
               
               # Continuous outcome guidance
               conditionalPanel(
@@ -597,6 +654,36 @@ ui <- fluidPage(
         ),
         tabPanel("Plots",
           conditionalPanel(
+            condition = "output.is_plot_model === true",
+            div(style = "margin-bottom: 18px;",
+              tags$details(
+                tags$summary(
+                  style = "cursor: pointer; font-weight: bold; background-color: #e3f2fd; color: #1976d2; padding: 8px; border-radius: 4px; border: 1px solid #90caf9;",
+                  "Live Plot Settings"
+                ),
+                div(style = "margin-left: 15px; margin-top: 10px;",
+                  h5("Simple Slopes Plot Settings"),
+                  checkboxInput("use_color_lines", "Use color for lines", value = TRUE),
+                  checkboxInput("custom_y_axis", "Customize y-axis range", value = FALSE),
+                  conditionalPanel(
+                    condition = "input.custom_y_axis == true",
+                    numericInput("y_axis_min", "Y-axis minimum", value = 0),
+                    numericInput("y_axis_max", "Y-axis maximum", value = 100)
+                  ),
+                  textInput("x_label", "Label for Predictor", ""),
+                  textInput("y_label", "Label for Outcome", ""),
+                  textInput("moderator_label", "Label for Moderator", ""),
+                  conditionalPanel(
+                    condition = "output.has_second_moderator === true",
+                    textInput("moderator2_label", "Label for Second Moderator (Z)", "")
+                  ),
+                  numericInput("decimal_places", "Decimal Places for Moderator Levels", 2, min = 0, max = 5),
+                  checkboxInput("show_confidence_intervals", "Show confidence intervals", value = TRUE)
+                )
+              )
+            )
+          ),
+          conditionalPanel(
             condition = "output.is_plot_model === true && output.analysis_ready === true",
             # Only show JN plot for Model 1
             conditionalPanel(
@@ -653,6 +740,107 @@ ui <- fluidPage(
             p("Run an analysis to see plots here.")
           )
         ),
+        tabPanel("Model Diagram",
+          conditionalPanel(
+            condition = "output.analysis_ready === true",
+            div(style = "margin-bottom: 15px;",
+              h4("Model Diagram"),
+              p("Black-and-white conceptual and statistical diagrams generated from current analysis output."),
+              fluidRow(
+                column(
+                  4,
+                  selectInput(
+                    "diagram_coef_mode",
+                    "Coefficient Mode",
+                    choices = c(
+                      "Unstandardized coefficients" = "raw"
+                    ),
+                    selected = "raw"
+                  )
+                ),
+                column(
+                  4,
+                    tags$div(
+                      style = "padding-top: 4px;",
+                      selectInput(
+                        "diagram_coef_digits",
+                        "Diagram Decimal Places (b, CI)",
+                        choices = c("3" = "3", "2" = "2"),
+                        selected = "3"
+                      ),
+                      sliderInput(
+                        "diagram_coef_font_size",
+                        "Coefficient Label Font Size",
+                        min = 2.6,
+                        max = 3.8,
+                        value = 3.3,
+                        step = 0.1
+                      ),
+                      selectInput(
+                        "diagram_coef_orientation",
+                        "Coefficient Label Orientation",
+                        choices = c(
+                          "Follow path" = "line",
+                          "Horizontal" = "horizontal"
+                        ),
+                        selected = "line"
+                      ),
+                      conditionalPanel(
+                        condition = "output.diagram_show_mod_controls === true",
+                        checkboxInput("diagram_show_mod_main_effects", "Show moderator main effects", value = TRUE),
+                        checkboxInput("diagram_show_interactions", "Show interaction terms", value = TRUE)
+                      ),
+                      checkboxInput("diagram_include_stars", "Include significance stars", value = TRUE),
+                      checkboxInput("diagram_include_ci", "Include confidence intervals (PROCESS model-table CIs; not bootstrap CIs)", value = FALSE),
+                      checkboxInput("diagram_include_p", "Include p-values", value = FALSE),
+                      checkboxInput("diagram_fill_variable_boxes_blue", "Fill variable label boxes (light blue)", value = FALSE)
+                  )
+                )
+              ),
+              NULL
+            ),
+            uiOutput("diagram_label_editor"),
+            tags$div(
+              title = "Use this after renaming variables or changing diagram display checkboxes so interaction labels and path annotations refresh from current settings.",
+              actionButton(
+                "diagram_regenerate",
+                "Regenerate Diagrams",
+                class = "btn-primary"
+              ),
+              style = "margin: 6px 0 12px 0;"
+            ),
+            htmlOutput("diagram_eligibility_msg"),
+            h5("Conceptual Diagram"),
+            imageOutput("conceptual_diagram_plot", height = "620px", width = "100%"),
+            div(
+              style = "margin: 8px 0 18px 0;",
+              downloadButton(
+                "download_conceptual_diagram",
+                "Download Conceptual (JPG)",
+                class = "btn-success",
+                style = "background-color: #90EE90; border-color: #90EE90; color: #000;"
+              )
+            ),
+            br(),
+            h5("Statistical Diagram"),
+            imageOutput("statistical_diagram_plot", height = "860px", width = "100%"),
+            div(
+              style = "margin: 8px 0 8px 0;",
+              downloadButton(
+                "download_statistical_diagram",
+                "Download Statistical (JPG)",
+                class = "btn-success",
+                style = "background-color: #90EE90; border-color: #90EE90; color: #000;"
+              )
+            ),
+            uiOutput("graphviz_statistical_ui"),
+            htmlOutput("model_diagram_notes")
+          ),
+          conditionalPanel(
+            condition = "output.analysis_ready === false",
+            p("Run an analysis to generate a model diagram.")
+          )
+        ),
         tabPanel("User Guide",
           div(style = "padding: 10px 5px;",
             h3("ShinyPROCESS User Guide"),
@@ -688,6 +876,14 @@ ui <- fluidPage(
                 "https://processmacro.org/index.html"
               )
             ),
+            p(
+              tags$strong("Runtime note: "),
+              "In local R Shiny, placing ",
+              tags$code("process.R"),
+              " in the app folder can satisfy this requirement automatically. In Shinylive (browser build), upload ",
+              tags$code("process.R"),
+              " each launch/session."
+            ),
 
             tags$hr(),
             h4("Workflow"),
@@ -696,7 +892,7 @@ ui <- fluidPage(
                 tags$strong("Upload Data"),
                 ": Use the ",
                 tags$code("Choose CSV or SAV File"),
-                " control in the sidebar to load your dataset."
+                " control in the sidebar to load your dataset. The PROCESS status box under Upload Data shows whether PROCESS is ready."
               ),
               tags$li(
                 tags$strong("Save Analysis Settings (then Load Later)"),
@@ -733,18 +929,51 @@ ui <- fluidPage(
                 ": Results are shown in the Analysis Results tab. Plots are generated only for Models 1 and 3."
               ),
               tags$li(
+                tags$strong("Review Model Diagrams"),
+                ": Use the ",
+                tags$code("Model Diagram"),
+                " tab to view conceptual and statistical diagrams for supported models (currently ",
+                tags$code("1,2,3,4,5,6,7,8,14"),
+                "). The statistical diagram uses the same ggplot rendering path for on-screen display and JPG export. An experimental Graphviz comparison may also be shown when DiagrammeR is available."
+              ),
+              tags$li(
                 tags$strong("Adjust Plot Display (Models 1 and 3)"),
-                ": In ",
+                ": At the top of the ",
+                tags$code("Plots"),
+                " tab (",
                 tags$code("Live Plot Settings"),
-                ", you can edit displayed variable labels, change formatting, and turn confidence intervals on or off. These changes are updated in real time."
+                "), you can edit displayed variable labels, change formatting, and turn confidence intervals on or off. These changes are updated in real time."
+              ),
+              tags$li(
+                tags$strong("Adjust Diagram Display"),
+                ": In the ",
+                tags$code("Model Diagram"),
+                " tab, you can choose coefficient mode (unstandardized/standardized when available), edit diagram labels, toggle stars/CIs/p-values, set coefficient label orientation/font size, and optionally fill variable label boxes light blue. Confidence interval labels in diagrams use PROCESS model-table CIs (not bootstrap coefficient CIs)."
+              ),
+              tags$li(
+                tags$strong("Use Assumption Checks for Screening"),
+                ": The Assumption Checks section includes optional univariate outlier screening (IQR or MAD robust z-score; detection only) and model-based multivariate checks (standardized residuals for continuous outcomes, Cook's distance for binary outcomes). Univariate flags are for review and do not automatically remove cases from analyses."
               )
             ),
 
             tags$hr(),
+            h4("Default Settings Guidance"),
+            tags$ul(
+              tags$li(tags$strong("Bootstrapping"), ": Enabled by default (5000 samples, percentile bootstrap CI) as a practical default for PROCESS analyses and interval estimation."),
+              tags$li(tags$strong("Standard Errors"), ": OLS is the default for comparability with common PROCESS examples. If heteroskedasticity is a concern, consider HC3 (or HC4 for a more conservative option)."),
+              tags$li(tags$strong("Standardized Coefficients"), ": Off by default. Turn on when you want standardized effects reported and available in the Model Diagram tab."),
+              tags$li(tags$strong("Normal Theory Tests"), ": Off by default. Leave off unless you specifically want normal-theory tests (e.g., z-tests) rather than the default t-test framework."),
+              tags$li(tags$strong("Model Diagnostics and Assumptions (PROCESS output option)"), ": Off by default to keep results output concise. Enable only when you want PROCESS's additional regression diagnostics printed in the analysis output.")
+            ),
+            p(style = "color: #555;",
+              "Bootstrapping can improve interval estimation, but it does not correct data-entry errors or eliminate the influence of extreme observations. Use the Assumption Checks tab to review both univariate screening flags and model-based diagnostics."
+            ),
+            tags$hr(),
             h4("Outlier Scope"),
             tags$ul(
               tags$li("Flagged-case removal in this app is based on model diagnostics (standardized residuals for continuous outcomes; Cook's distance for binary outcomes)."),
-              tags$li("The app does not currently include automatic univariate outlier detection/removal. Use violin plots in Assumption Checks to review distributions and optional PROCESS diagnostics output for more detail.")
+              tags$li("The app now includes optional univariate outlier screening (IQR or MAD robust z-score) in the Assumption Checks section, but this is detection-only and does not currently drive case removal."),
+              tags$li("Use violin plots in Assumption Checks to review distributions before deciding whether to run sensitivity analyses with the model-based outlier/influential-case exclusion option.")
             ),
 
             tags$hr(),
@@ -754,6 +983,8 @@ ui <- fluidPage(
               tags$li(tags$strong("Assumption Checks HTML"), ": Download the assumption output text from the Assumption Checks tab."),
               tags$li(tags$strong("Results HTML"), ": Download full PROCESS analysis output from the sidebar."),
               tags$li(tags$strong("Plots (JPG)"), ": Download available plots in the Plots tab (Models 1 and 3 only)."),
+              tags$li(tags$strong("Conceptual Diagram (JPG)"), ": Download from the Model Diagram tab. Uses the same ggplot rendering path as the on-screen conceptual diagram."),
+              tags$li(tags$strong("Statistical Diagram (JPG)"), ": Download from the Model Diagram tab. Uses the same ggplot rendering path as the on-screen statistical diagram."),
               tags$li(tags$strong("Reduced Dataset"), ": Download a dataset with flagged cases removed (standardized residual outliers for continuous outcomes; Cook's distance influential cases for binary outcomes) in CSV or SAV format.")
             ),
 

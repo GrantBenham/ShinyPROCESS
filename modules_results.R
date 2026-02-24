@@ -1,6 +1,7 @@
 # ============================================================================
 # RESULTS MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module contains all results display and download functionality,
 # including formatting functions and output renderers.
 # Extracted from gbPROCESS.R as part of Stage 6 modularization.
@@ -225,7 +226,11 @@ create_formatted_output <- function(analysis_results) {
         "Standard Errors: OLS"
       }
     },
-    if(!is.null(settings$stand) && isTRUE(settings$stand)) "Standardized coefficients: Yes",
+    if(!is.null(settings$stand) && isTRUE(settings$stand)) {
+      "Coefficient type: Standardized coefficients"
+    } else {
+      "Coefficient type: Unstandardized coefficients"
+    },
     if(!is.null(settings$normal) && isTRUE(settings$normal)) "Normal theory tests: Yes",
     if(!is.null(settings$pairwise_contrasts) && isTRUE(settings$pairwise_contrasts)) "Pairwise contrasts of indirect effects: Yes",
     if(!is.null(settings$xmint) && isTRUE(settings$xmint)) "Allow X by M interaction: Yes",
@@ -438,7 +443,8 @@ output$analysis_output <- renderUI({
 # Download handlers
 output$download_results <- downloadHandler(
   filename = function() {
-    paste0("process_results_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".html")
+    model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
+    paste0("model_", model_txt, "_process_results_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".html")
   },
   content = function(file) {
     req(analysis_results())
@@ -477,7 +483,8 @@ observe({
 output$download_filtered_data <- downloadHandler(
   filename = function() {
     ext <- if(input$filtered_data_format == "sav") "sav" else "csv"
-    paste0("filtered_dataset_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", ext)
+    model_txt <- if(!is.null(input$process_model) && input$process_model != "") input$process_model else "unknown"
+    paste0("model_", model_txt, "_filtered_dataset_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", ext)
   },
   content = function(file) {
     req(rv$original_dataset, input$outcome_var, input$predictor_var)

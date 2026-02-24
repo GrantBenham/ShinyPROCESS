@@ -1,6 +1,7 @@
 # ============================================================================
 # SAVE/LOAD ANALYSIS SETTINGS MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module handles saving and loading analysis settings to/from JSON files.
 # Source this file in gbPROCESS.R after defining the UI and server function.
 #
@@ -55,6 +56,10 @@ output$save_settings <- downloadHandler(
       covariates = if(!is.null(input$covariates) && length(input$covariates) > 0) input$covariates else character(0),
       
       # Assumption Checks
+      use_univariate_outlier_screen = if(!is.null(input$use_univariate_outlier_screen)) input$use_univariate_outlier_screen else TRUE,
+      univariate_outlier_method = if(!is.null(input$univariate_outlier_method)) input$univariate_outlier_method else "iqr",
+      univariate_iqr_multiplier = if(!is.null(input$univariate_iqr_multiplier)) input$univariate_iqr_multiplier else 1.5,
+      univariate_mad_threshold = if(!is.null(input$univariate_mad_threshold)) input$univariate_mad_threshold else 3.5,
       residual_threshold = if(!is.null(input$residual_threshold)) input$residual_threshold else 2.0,
       cooks_threshold_type = if(!is.null(input$cooks_threshold_type)) input$cooks_threshold_type else "conservative",
       cooks_threshold_custom = if(!is.null(input$cooks_threshold_custom)) input$cooks_threshold_custom else 0.01,
@@ -167,6 +172,30 @@ observeEvent(input$load_settings_file, {
       return()
     }
     
+    # CRITICAL: Prevent stale outputs from prior runs when loading a new JSON.
+    # Keep recovery suppressed until the user runs a new analysis.
+    rv$suppress_results_recovery <- TRUE
+    rv$analysis_results <- NULL
+    rv$results_model <- NULL
+    rv$validation_error <- NULL
+    rv$full_result <- NULL
+    rv$load_settings_pending <- FALSE
+    rv$settings_to_load <- NULL
+    rv$restore_mediators_pending <- FALSE
+    rv$mediator_vars_to_restore <- NULL
+    rv$expected_mediator_count <- NULL
+    rv$mediator_restore_retry_count <- NULL
+    rv$restore_labels_pending <- FALSE
+    rv$labels_to_restore <- NULL
+    rv$previous_predictor_var <- NULL
+    rv$previous_outcome_var <- NULL
+    rv$previous_moderator_var <- NULL
+    rv$previous_moderator2_var <- NULL
+    if(exists("reset_model_diagram_state", mode = "function", inherits = TRUE)) {
+      get("reset_model_diagram_state", mode = "function", inherits = TRUE)()
+    }
+    dbg("DEBUG: JSON load started - hard-cleared analysis/diagram state and suppressed recovery")
+    
     # Step 3.5: Ensure Variable Selection section is visible before restoration
     # This prevents hidden UI from delaying mediator_count/mediator inputs
     shinyjs::runjs("
@@ -261,6 +290,27 @@ observe({
         dbg(paste("DEBUG: moderator_var to restore:", settings$moderator_var))
         dbg(paste("DEBUG: moderator2_var to restore:", settings$moderator2_var))
         
+        # Hard-clear variable selections first so same-model JSON loads do not retain stale values.
+        updateSelectInput(session, "predictor_var",
+                         choices = c("Select variable" = "", vars),
+                         selected = "")
+        updateSelectInput(session, "outcome_var",
+                         choices = c("Select variable" = "", vars),
+                         selected = "")
+        updateSelectInput(session, "moderator_var",
+                         choices = c("Select variable" = "", vars),
+                         selected = "")
+        updateSelectInput(session, "moderator2_var",
+                         choices = c("Select variable" = "", vars),
+                         selected = "")
+        updateSelectInput(session, "covariates", choices = vars, selected = character(0))
+        updateSelectInput(session, "mediator_count", selected = "")
+        for(i in 1:10) {
+          updateSelectInput(session, paste0("mediator_m", i),
+                           choices = c("Select variable" = "", vars),
+                           selected = "")
+        }
+
         # Restore variables (in correct order)
         if(!is.null(settings$predictor_var) && settings$predictor_var != "" && settings$predictor_var %in% vars) {
           updateSelectInput(session, "predictor_var", 
@@ -343,9 +393,23 @@ observe({
             updateSelectInput(session, "covariates", choices = vars, selected = valid_covariates)
             dbg(paste("DEBUG: Restored covariates:", paste(valid_covariates, collapse=", ")))
           }
+        } else {
+          updateSelectInput(session, "covariates", choices = vars, selected = character(0))
         }
         
         # Restore Assumption Checks
+    if(!is.null(settings$use_univariate_outlier_screen)) {
+      updateCheckboxInput(session, "use_univariate_outlier_screen", value = settings$use_univariate_outlier_screen)
+    }
+    if(!is.null(settings$univariate_outlier_method)) {
+      updateSelectInput(session, "univariate_outlier_method", selected = settings$univariate_outlier_method)
+    }
+    if(!is.null(settings$univariate_iqr_multiplier)) {
+      updateNumericInput(session, "univariate_iqr_multiplier", value = settings$univariate_iqr_multiplier)
+    }
+    if(!is.null(settings$univariate_mad_threshold)) {
+      updateNumericInput(session, "univariate_mad_threshold", value = settings$univariate_mad_threshold)
+    }
     if(!is.null(settings$residual_threshold)) {
       updateNumericInput(session, "residual_threshold", value = settings$residual_threshold)
     }
@@ -625,15 +689,15 @@ observe({
             NULL
           }
           
-          # If model doesn't require mediators, safe to clear now
-          if(is.null(current_model) || current_model < 4 || current_model > 92) {
+          # If mediator restoration is not pending, safe to clear now.
+          if(!isTRUE(rv$restore_mediators_pending)) {
             rv$load_settings_pending <- FALSE
             rv$settings_to_load <- NULL
-            dbg("DEBUG: load_settings_pending cleared - no mediators required")
+            dbg("DEBUG: load_settings_pending cleared - mediator restoration not pending")
             showNotification("Analysis settings loaded successfully!", type = "default", duration = 3)
             dbg("DEBUG: Settings restoration completed (including labels)")
           } else {
-            # Model requires mediators - wait for mediator restoration observer to clear it
+            # Mediators are still being restored - wait for mediator restoration observer.
             dbg("DEBUG: Waiting for mediators to restore before clearing load_settings_pending")
             # Don't show notification yet - mediator observer will show it when done
           }

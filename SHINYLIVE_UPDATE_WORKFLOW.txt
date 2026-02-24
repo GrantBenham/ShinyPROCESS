@@ -1,0 +1,138 @@
+SHINYLIVE UPDATE WORKFLOW (COPY/PASTE GUIDE)
+===========================================
+
+Use this every time you update the app and want a new Shinylive build.
+
+Important
+---------
+1) Keep process.R in your local folder for normal R Shiny use.
+2) For Shinylive export, process.R must NOT exist in repo root.
+   The export script hard-stops if process.R is present.
+3) runtime.txt is handled automatically by the export script.
+
+
+STEP 0: Open project in RStudio
+-------------------------------
+Open the gbPROCESS project/folder in RStudio first.
+
+
+STEP 0.5: Sync the project package library (recommended before every export)
+---------------------------------------------------------------------------
+Run in R console:
+
+renv::restore()
+renv::status()
+
+Why this matters:
+- Shinylive export scans package dependencies in the active project library.
+- If packages are installed in your user library but not in the renv project library,
+  export can fail with missing-package errors (for example ggplot2/DiagrammeR dependencies).
+- After feature updates, run:
+  renv::snapshot()
+  and commit renv.lock so future restores are repeatable.
+
+
+STEP 1: Save and commit your app code changes (optional but recommended)
+------------------------------------------------------------------------
+Run in terminal (or use Cursor Source Control):
+
+git status
+git add gbPROCESS.R modules_ui.R modules_analysis.R modules_results.R modules_assumption_outputs.R model_specs.R README.md runtime.txt tools/export_shinylive.R .gitignore
+git commit -m "Update app logic"
+git push origin main
+
+
+STEP 2: Prepare for Shinylive export
+------------------------------------
+In repo root, make sure process.R is not present.
+Example: temporarily rename it.
+
+In terminal:
+git status
+
+In R (or file explorer), rename:
+process.R -> process_local_backup.R
+
+Do NOT commit this rename.
+
+
+STEP 3: Export Shinylive build
+------------------------------
+Run in R console:
+
+source("tools/export_shinylive.R")
+
+What this does:
+- checks required app files
+- hard-stops if process.R exists
+- temporarily sets runtime.txt = shinylive
+- exports Shinylive site to docs/
+- copies LICENSE / CITATION.cff into docs/ when present
+- generates docs/README_LAUNCH.txt automatically
+- restores runtime.txt to its original value
+
+
+STEP 4: Test Shinylive locally
+------------------------------
+Run in R console:
+
+httpuv::runStaticServer("docs", host = "127.0.0.1", port = 8008)
+
+Open browser:
+http://127.0.0.1:8008
+
+Stop server:
+- Press Esc in RStudio console (or Ctrl+C in terminal)
+
+
+STEP 5: Validate critical behaviors
+-----------------------------------
+In Shinylive app, confirm:
+1) PROCESS warning appears at startup.
+2) Uploading process.R (v5.0) changes status to Ready.
+3) Analysis runs successfully after upload.
+4) Assumption Checks tab loads and univariate outlier screening controls work.
+5) Assumption Checks HTML export downloads and includes plots/tables.
+6) Model Diagram tab loads and renders conceptual/statistical diagrams.
+7) Diagram JPG downloads work.
+8) Plot downloads work (results html + plot jpg if model supports plots).
+9) Plot downloads have white background.
+
+
+STEP 6: Restore local R Shiny setup
+-----------------------------------
+Rename your local file back:
+process_local_backup.R -> process.R
+
+Then run local app as usual:
+source("gbPROCESS.R")
+# or click Run App in RStudio
+
+
+STEP 7: Publish updated Shinylive build (only if you host docs/)
+-----------------------------------------------------------------
+If your hosting uses docs/ (for example GitHub Pages), commit docs output:
+
+git add docs
+git commit -m "Update Shinylive build"
+git push origin main
+
+If docs/ is gitignored and you do not host from this repo, skip this step.
+
+
+Quick Troubleshooting
+---------------------
+1) "HARD STOP: process.R exists in repo root"
+   - Rename/move process.R out of repo root, then run export again.
+
+2) Browser shows stale/old app
+   - Hard refresh (Ctrl+F5).
+   - If needed: open browser devtools -> Application -> Service Workers -> Unregister.
+   - Clear site storage for 127.0.0.1:8008 and reload.
+
+3) Download buttons fail in Shinylive
+   - Re-export with latest code (including tools/export_shinylive.R updates).
+   - Hard refresh browser and retest.
+
+4) App loads but analysis fails with PROCESS errors
+   - Upload the correct process.R version 5.0 in the app session.

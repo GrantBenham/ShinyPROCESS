@@ -1,6 +1,7 @@
 # ============================================================================
 # ASSUMPTION CHECKS MODULE
 # ============================================================================
+# Copyright (c) 2026 Dr. Grant Benham. See LICENSE for usage terms.
 # This module contains all helper functions for assumption checking
 # Extracted from gbPROCESS.R as part of Stage 1 modularization
 
@@ -27,6 +28,80 @@ is_continuous_variable <- function(data, var_name) {
   if(is_binary_variable(data, var_name)) return(FALSE)
   v <- data[[var_name]]
   is.numeric(v) || is.integer(v) || inherits(v, "labelled")
+}
+
+# Univariate outlier screening (detection only) for selected continuous variables
+# Returns one summary row per variable.
+compute_univariate_outlier_summary <- function(data, vars,
+                                               method = c("iqr", "mad"),
+                                               iqr_multiplier = 1.5,
+                                               mad_threshold = 3.5) {
+  method <- match.arg(method)
+  if(is.null(data) || !is.data.frame(data) || is.null(vars) || length(vars) == 0) {
+    return(data.frame())
+  }
+
+  vars <- unique(vars[vars %in% names(data)])
+  if(length(vars) == 0) return(data.frame())
+
+  rows <- lapply(vars, function(v) {
+    x <- suppressWarnings(as.numeric(data[[v]]))
+    x <- x[!is.na(x)]
+    n_non_missing <- length(x)
+    if(n_non_missing == 0) {
+      return(data.frame(
+        variable = v,
+        method = if(method == "iqr") "IQR fences" else "MAD robust z",
+        threshold = if(method == "iqr") paste0("k = ", format(round(iqr_multiplier, 2), nsmall = 1)) else paste0("|z| > ", format(round(mad_threshold, 2), nsmall = 1)),
+        n_non_missing = 0L,
+        flagged_n = 0L,
+        flagged_pct = 0,
+        rule_detail = "No non-missing values",
+        stringsAsFactors = FALSE
+      ))
+    }
+
+    if(method == "iqr") {
+      q1 <- as.numeric(stats::quantile(x, 0.25, na.rm = TRUE, type = 7))
+      q3 <- as.numeric(stats::quantile(x, 0.75, na.rm = TRUE, type = 7))
+      iqr_val <- q3 - q1
+      lower <- q1 - (iqr_multiplier * iqr_val)
+      upper <- q3 + (iqr_multiplier * iqr_val)
+      flagged <- (x < lower) | (x > upper)
+      rule_detail <- sprintf("[%.3f, %.3f]", lower, upper)
+      threshold_txt <- paste0("k = ", format(round(iqr_multiplier, 2), nsmall = 1))
+      method_txt <- "IQR fences"
+    } else {
+      med <- stats::median(x, na.rm = TRUE)
+      mad_val <- stats::mad(x, center = med, constant = 1, na.rm = TRUE)
+      if(is.na(mad_val) || mad_val == 0) {
+        flagged <- rep(FALSE, length(x))
+        rule_detail <- "MAD = 0 (no flags)"
+      } else {
+        robust_z <- 0.6745 * (x - med) / mad_val
+        flagged <- abs(robust_z) > mad_threshold
+        rule_detail <- sprintf("|robust z| > %.2f", mad_threshold)
+      }
+      threshold_txt <- paste0("|z| > ", format(round(mad_threshold, 2), nsmall = 1))
+      method_txt <- "MAD robust z"
+    }
+
+    flagged_n <- sum(flagged, na.rm = TRUE)
+    data.frame(
+      variable = v,
+      method = method_txt,
+      threshold = threshold_txt,
+      n_non_missing = n_non_missing,
+      flagged_n = flagged_n,
+      flagged_pct = if(n_non_missing > 0) (100 * flagged_n / n_non_missing) else 0,
+      rule_detail = rule_detail,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  out <- do.call(rbind, rows)
+  rownames(out) <- NULL
+  out
 }
 
 # Function to identify outliers based on model type
@@ -526,6 +601,7 @@ wrap_assumptions_html <- function(content) {
     <!DOCTYPE html>
     <html>
     <head>
+      <meta charset="UTF-8">
       <style>
         body { font-family: Arial, sans-serif; padding: 20px; }
         table { border-collapse: collapse; margin: 10px 0; }

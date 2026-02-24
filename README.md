@@ -42,7 +42,7 @@ Use this if you do not want to use `renv`. This may still work, but version diff
 ```r
 install.packages(c(
   "shiny", "bslib", "ggplot2", "stringr", "dplyr",
-  "shinyjs", "car", "haven", "jsonlite", "gridExtra"
+  "shinyjs", "car", "haven", "jsonlite", "gridExtra", "base64enc"
 ))
 shiny::runApp("gbPROCESS.R")
 ```
@@ -51,7 +51,7 @@ Optional dependency check:
 
 ```r
 needed <- c("shiny", "bslib", "ggplot2", "stringr", "dplyr",
-            "shinyjs", "car", "haven", "jsonlite", "gridExtra")
+            "shinyjs", "car", "haven", "jsonlite", "gridExtra", "base64enc")
 setdiff(needed, rownames(installed.packages()))
 ```
 
@@ -69,6 +69,61 @@ If this returns `character(0)`, required packages are installed.
 - App launches but errors on startup:
   - Restart RStudio, reopen the project, and rerun the setup commands above.
 
+### Shinylive Runtime Notes
+
+- Local R Shiny can auto-load `process.R` v5.0 from the app root (same folder as `gbPROCESS.R`).
+- Shinylive requires uploading `process.R` each session using the in-app upload control.
+- Uploaded `process.R` is session-only and is not persisted by the app.
+- Use `tools/export_shinylive.R` for browser export; it hard-stops if root `process.R` exists and restores `runtime.txt` after export.
+- Repeatable update steps are documented in `SHINYLIVE_UPDATE_WORKFLOW.txt`.
+
+### Creating a Standalone Shinylive Browser Version (Maintainers)
+
+Use this workflow if you want to create a browser-based Shinylive bundle that other users can run without installing R/RStudio.
+
+Before exporting (recommended each time):
+
+```r
+renv::restore()
+renv::status()
+```
+
+This ensures the active project library contains all required packages for dependency scanning during Shinylive export.
+
+1. Follow the export/update checklist in `SHINYLIVE_UPDATE_WORKFLOW.txt`.
+2. Run the export script from R:
+
+```r
+source("tools/export_shinylive.R")
+```
+
+The export script will:
+- verify required app files are present (including diagram module files)
+- hard-stop if `process.R` exists in the repo root (to avoid bundling copyrighted code)
+- temporarily switch `runtime.txt` to `shinylive`
+- export the Shinylive app to `docs/`
+- copy `LICENSE` and `CITATION.cff` into `docs/` (if present)
+- generate `docs/README_LAUNCH.txt` with end-user launch instructions
+- restore `runtime.txt` to `rshiny`
+
+The generated `docs/README_LAUNCH.txt` explains how end users can launch the exported browser version locally (including the requirement to upload `process.R` v5.0 in each session).
+
+### Sharing the Browser Version (No R Required for End Users)
+
+If you want others to run the app without installing R/RStudio, share the **Shinylive export** (the `docs/` output), not the R project.
+
+Important:
+- Shinylive files must be served over `http://` (not opened with `file://`).
+- End users should expect to upload `process.R` v5.0 in each browser session before running analysis.
+
+Recommended sharing methods:
+1. Host the exported `docs/` folder on any static web host and send users the URL.
+2. Send users the exported folder plus a lightweight local web-server method for their OS.
+
+If users only receive files and no hosting:
+- They cannot reliably run by double-clicking files directly.
+- They need a local static server, then open the local URL in a browser.
+
 ## Important: Attribution, Licensing, and Required File
 
 - **Shiny app developer**: Dr. Grant Benham, The University of Texas Rio Grande Valley  
@@ -83,6 +138,17 @@ Contact policy:
 - Questions about this Shiny app (UI/workflow/integration): contact Dr. Grant Benham.
 - Questions about PROCESS methodology or the PROCESS macro itself: consult PROCESS resources and contact Dr. Hayes as appropriate.
 
+### License and Citation (Read Before Sharing/Using)
+
+- This repository is distributed under a **source-available academic/research use license** (see `LICENSE`).
+- Allowed without additional permission: personal use, teaching/classroom use, and non-commercial academic/research use.
+- Required: attribution to **Dr. Grant Benham** and citation in research/scholarly outputs that use this software.
+- Not allowed without prior written permission: commercial use, redistribution beyond direct-use copies, or integration/bundling into other software/codebases.
+- Citation metadata is provided in `CITATION.cff` (a DOI/paper citation can be added later and the citation metadata will be updated).
+
+Suggested interim citation (until DOI is available):
+- Benham, G. (2026). *ShinyPROCESS: Interface for Hayes PROCESS for R v5.0* (Version 1.0.0-rc1) [Software].
+
 ### Key Features
 
 - **Comprehensive Model Support**: Selectable models `1-22, 28-29, 58-73, 75-76, 80-92` (Model 74 is internal-only via Model 4 + X by M interaction)
@@ -91,6 +157,7 @@ Contact policy:
 - **Flagged-Case Detection by Outcome Type**: Uses standardized residual outliers for continuous outcomes and Cook's distance influential cases for binary outcomes
 - **Bootstrap Confidence Intervals**: Support for percentile and bias-corrected bootstrap methods
 - **Visualization**: Simple slopes plots, conditional effect plots, and Johnson-Neyman plots for moderation models
+- **Model Diagram Tab**: Conceptual and statistical diagrams (ggplot-based for export parity) for models `1,2,3,4,5,6,7,8,14`, with JPG export and an experimental Graphviz comparison
 - **Export Options**: Download results as HTML files and filtered datasets
 - **Settings Management**: Save and load analysis settings as JSON files
 
@@ -116,12 +183,20 @@ This application uses a modular architecture for improved maintainability and or
 - Functions: `is_binary_variable()`, `is_continuous_variable()`, `identify_outliers_assumption()`, `check_normality()`, `test_homoscedasticity()`, `diagnostic_report()`, `generate_assumption_checks_html()`, etc.
 - **Dependencies**: `car` package (VIF, ncvTest), `ggplot2` (Q-Q plots)
 
-**`modules_ui.R`** (~660 lines)
+**`modules_ui.R`** (~900+ lines)
 - Complete UI definition (`fluidPage` structure)
 - All sidebar and main panel components
-- Tab definitions (Assumption Checks, Analysis Results, Plots)
+- Tab definitions (Assumption Checks, Analysis Results, Plots, Model Diagram, User Guide)
 - Conditional panels and styling
 - **Dependencies**: `shiny`, `bslib`, `shinyjs`
+
+**`modules_model_diagrams.R`** (~3,600+ lines)
+- Diagram parsing from PROCESS output
+- Conceptual and statistical diagram rendering (ggplot path used for on-screen and JPG export parity)
+- Model-specific layout/anchor rules for diagram-supported models (`1,2,3,4,5,6,7,8,14`)
+- Experimental Graphviz statistical comparison rendering (optional; guarded by `DiagrammeR`)
+- Diagram JPG download handlers and Diagram tab UI server logic
+- **Dependencies**: `ggplot2`, `grid` (optional `DiagrammeR`)
 
 **`modules_data_management.R`** (~734 lines)
 - File upload handling (CSV, SAV)
@@ -188,8 +263,13 @@ The modules are sourced in the following order in `gbPROCESS.R`:
    - `modules_assumption_outputs.R` - Assumption check outputs
    - `modules_analysis.R` - Analysis execution
    - `modules_results.R` - Results display
+   - `modules_model_diagrams.R` - Diagram parsing/rendering/downloads (CD/SD + experimental Graphviz)
 
 All modules are sourced with `local = TRUE` to ensure proper variable scope within the Shiny server function.
+
+Diagram notes:
+- Statistical diagram JPG export uses the same ggplot geometry pipeline as the on-screen statistical diagram (intended visual match).
+- The Graphviz diagram (when available) is an experimental comparison and does not drive JPG exports.
 
 ### Dependencies
 
@@ -205,13 +285,20 @@ All modules are sourced with `local = TRUE` to ensure proper variable scope with
 - `jsonlite` - JSON file handling (for save/load settings)
 - `grid` - Grid graphics (for plot layouts)
 - `gridExtra` - Extended grid graphics (for stacked plots)
+- `base64enc` - Embedded plot images in downloaded Assumption Checks HTML reports
+- `DiagrammeR` - Optional Graphviz comparison in the Model Diagram tab
 - `grDevices` - Graphics devices (for plot downloads)
 
 **Installation**:
 ```r
 install.packages(c("shiny", "bslib", "ggplot2", "stringr", "dplyr", 
                    "shinyjs", "car", "haven", "jsonlite", "grid", 
-                   "gridExtra"))
+                   "gridExtra", "base64enc"))
+```
+
+Optional for the experimental Graphviz comparison in the Model Diagram tab:
+```r
+install.packages("DiagrammeR")
 ```
 
 ---
