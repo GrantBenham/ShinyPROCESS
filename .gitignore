@@ -19,3 +19,7 @@ process.R
 process_rename.R
 docs/
 manuscript/psyarxiv/ShinyPROCESS_PsyArXiv_Preprint.docx
+.Renviron
+.env
+.env.*
+.Renviron.example
