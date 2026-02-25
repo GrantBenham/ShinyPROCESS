@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env Rscript
+#!/usr/bin/env Rscript
 
 # Export Shinylive build safely from repo root.
 # - Hard stop if process.R exists (copyrighted; must not be bundled)
